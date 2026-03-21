@@ -1,0 +1,32 @@
+TokenDNA — Zero Trust Token Integrity & Behavioral Fingerprinting Platform
+Copyright (c) 2024 Ryan Wallace. All rights reserved.
+
+This product is licensed under the Business Source License 1.1.
+See the LICENSE file for full terms.
+
+For commercial licensing inquiries: ryanwallac33@gmail.com
+
+-------------------------------------------------------------------------------
+Third-Party Components
+-------------------------------------------------------------------------------
+
+FastAPI (MIT License)
+  https://github.com/tiangolo/fastapi
+
+redis-py (MIT License)
+  https://github.com/redis/redis-py
+
+clickhouse-driver (MIT License)
+  https://github.com/mymarilyn/clickhouse-driver
+
+python-jose (MIT License)
+  https://github.com/mpdavis/python-jose
+
+boto3 (Apache 2.0)
+  https://github.com/boto/boto3
+
+user-agents (MIT License)
+  https://github.com/selwin/python-user-agents
+
+geoip2 (Apache 2.0)
+  https://github.com/maxmind/GeoIP2-python
