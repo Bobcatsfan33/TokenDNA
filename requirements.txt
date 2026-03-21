@@ -1,28 +1,32 @@
 # TokenDNA — Python dependencies
-# Pin major versions for reproducibility; use `pip install -r requirements.txt`
+# All versions pinned for SBOM reproducibility and supply-chain security.
+# Generated for: TokenDNA v2.5.0 / Python 3.11+
 
 # ── Web framework ─────────────────────────────────────────────────────────────
-fastapi==0.111.0
-uvicorn[standard]==0.29.0
-python-multipart==0.0.9
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+python-multipart==0.0.12
+starlette==0.41.3                # pinned separately — FastAPI transitive dep
 
 # ── JWT / OIDC ────────────────────────────────────────────────────────────────
 python-jose[cryptography]==3.3.0
-cryptography==42.0.8
+cryptography==44.0.0
 
 # ── HTTP client (JWKS fetch, webhooks, AbuseIPDB, ip-api) ────────────────────
 requests==2.32.3
-httpx==0.27.0                    # async-capable alternative used by some deps
+httpx==0.27.2                    # async-capable alternative used by some deps
+certifi==2024.12.14              # CA bundle pinned for supply-chain trust
 
 # ── Redis ─────────────────────────────────────────────────────────────────────
-redis==5.0.4
+redis==5.2.1
 
 # ── ClickHouse ────────────────────────────────────────────────────────────────
-clickhouse-connect==0.7.16
+clickhouse-connect==0.7.19
 
 # ── AWS connector (optional — only needed when using AWS onboarding) ──────────
-boto3==1.34.100
-botocore==1.34.100
+boto3==1.35.95
+botocore==1.35.95
+s3transfer==0.10.4               # boto3 transitive dep
 
 # ── GeoIP (optional — only needed when GEOIP_PROVIDER=maxmind) ───────────────
 # geoip2==4.8.0                  # uncomment + download GeoLite2-City.mmdb
@@ -34,5 +38,14 @@ user-agents==2.2.0
 numpy==1.26.4                    # lightweight — used for profile distance math
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
-pydantic==2.7.1                  # FastAPI model validation (v2 API)
+pydantic==2.10.3                 # FastAPI model validation (v2 API)
+pydantic-settings==2.6.1
 python-dotenv==1.0.1             # load .env in development
+anyio==4.7.0                     # FastAPI async runtime dep
+click==8.1.8                     # uvicorn dep
+typing_extensions==4.12.2        # pinned to avoid version conflicts
+
+# ── Token Trap + Preflight Gate (v2.5) ────────────────────────────────────────
+# No additional dependencies — both modules use existing packages above:
+#   token_trap.py  → redis, hashlib, hmac, secrets, threading (all stdlib/redis)
+#   preflight.py   → redis, math (haversine), existing geo_intel/threat_intel/ml modules
