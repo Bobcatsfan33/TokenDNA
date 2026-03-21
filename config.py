@@ -75,3 +75,20 @@ TOKEN_REVOKE_SECRET: str = os.getenv("TOKEN_REVOKE_SECRET", "")
 # ── Rate Limiting ─────────────────────────────────────────────────────────────
 RATE_LIMIT_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
 RATE_LIMIT_BURST: int = int(os.getenv("RATE_LIMIT_BURST", "10"))
+# ── Production Safety Guard ────────────────────────────────────────────────────
+# IL6 / FedRAMP: DEV_MODE must NEVER be active in production.
+# This block terminates the process immediately if DEV_MODE is set
+# and the ENVIRONMENT variable indicates a non-development context.
+import sys as _sys
+
+_ENVIRONMENT = os.getenv("ENVIRONMENT", "dev").lower()
+_PROD_ENVIRONMENTS = {"production", "staging", "prod", "stage", "il2", "il4", "il5", "il6"}
+
+if DEV_MODE and _ENVIRONMENT in _PROD_ENVIRONMENTS:
+    print(
+        f"FATAL: DEV_MODE=true is set but ENVIRONMENT={_ENVIRONMENT}. "
+        "DEV_MODE bypasses all authentication and is prohibited in production. "
+        "Unset DEV_MODE or set ENVIRONMENT=dev to proceed.",
+        file=_sys.stderr,
+    )
+    _sys.exit(1)

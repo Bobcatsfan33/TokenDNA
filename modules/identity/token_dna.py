@@ -18,8 +18,17 @@ DNA schema v2:
 """
 
 import hashlib
+import hmac
+import os
 import re
 from typing import Optional
+
+# ── HMAC key for privacy-preserving IP/UA hashing ────────────────────────────
+# Plain SHA-256 of an IPv4 address is reversible (rainbow table over 4B addrs).
+# HMAC-SHA256 with a platform secret prevents reversal even with full DB access.
+# Set DNA_HMAC_KEY in production (load from AWS Secrets Manager or Vault).
+# FedRAMP SC-28 / privacy requirement.
+_DNA_HMAC_KEY: bytes = os.getenv("DNA_HMAC_KEY", "").encode() or b"dev-only-insecure-key"
 
 
 # ── Schema version — bump when DNA structure changes ─────────────────────────
@@ -71,11 +80,20 @@ def _is_mobile(ua: str) -> bool:
 # ── Hashing ───────────────────────────────────────────────────────────────────
 
 def _sha256(val: str) -> str:
-    """Return the first 16 bytes (32 hex chars) of SHA-256(val).
-    Truncation keeps stored values compact while preserving collision resistance
-    for comparison purposes — we are not using this as a cryptographic MAC.
+    """HMAC-SHA256(val, platform_key) → first 32 hex chars.
+
+    Using HMAC-SHA256 instead of plain SHA-256 prevents rainbow table
+    reversal of IP addresses (the 32-bit IPv4 space is fully enumerable).
+    Truncation to 32 chars preserves uniqueness for comparison while
+    keeping stored fingerprints compact.
+
+    FedRAMP SC-28 / IL6 privacy requirement.
     """
-    return hashlib.sha256(val.encode("utf-8")).hexdigest()[:32]
+    return hmac.new(
+        _DNA_HMAC_KEY,
+        val.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:32]
 
 
 # ── Public API ────────────────────────────────────────────────────────────────

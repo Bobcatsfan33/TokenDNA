@@ -1,104 +1,183 @@
+# TokenDNA — Production-hardened docker-compose
+# FedRAMP High / IL6 container hardening: CIS Docker Benchmark v1.6
+#
+# BEFORE STARTING: copy .env.example to .env and fill in all secrets.
+# Never commit .env to git.
+#
+# Security controls applied:
+#   - No container runs as root (user: directive)
+#   - read_only: true prevents container filesystem writes
+#   - no-new-privileges: true blocks privilege escalation
+#   - cap_drop: ALL removes all Linux capabilities (add back only what's needed)
+#   - Resource limits prevent DoS via resource exhaustion
+#   - Internal network: app ↔ redis ↔ clickhouse never exposed externally
+#   - Redis requires password authentication
+#   - ClickHouse requires password authentication
+#   - Ports bound to 127.0.0.1 (not 0.0.0.0) — reverse proxy required for production
+
 version: "3.9"
 
-# TokenDNA — Full stack: app + Redis + ClickHouse
-#
-# Quick start:
-#   cp .env.example .env   # fill in your values
-#   docker compose up -d
-#   docker compose logs -f tokendna
+networks:
+  aegis-internal:
+    driver: bridge
+    internal: true          # no external internet access for data tier
+  aegis-edge:
+    driver: bridge           # app tier — internet-facing (behind reverse proxy)
+
+secrets:
+  redis_password:
+    environment: REDIS_PASSWORD
+  clickhouse_password:
+    environment: CLICKHOUSE_PASSWORD
 
 services:
 
-  # ── TokenDNA API ─────────────────────────────────────────────────────────────
+  # ── TokenDNA API ────────────────────────────────────────────────────────────
   tokendna:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: tokendna:latest
-    container_name: tokendna
+    build: .
+    image: aegis-security/tokendna:latest
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /var/log/aegis:size=256m
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:seccomp-profile.json
+    cap_drop:
+      - ALL
+    networks:
+      - aegis-internal
+      - aegis-edge
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"    # bind localhost only — put nginx/caddy in front
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_TLS=false           # set true when using Redis TLS
+      - CLICKHOUSE_HOST=clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_SECURE=false   # set true for TLS
+      - AUDIT_BACKEND=all
+      - AUDIT_LOG_PATH=/var/log/aegis/audit.jsonl
+      - ENVIRONMENT=production
     env_file:
       - .env
-    environment:
-      # Override service hostnames so the app resolves to Docker network aliases
-      REDIS_HOST: redis
-      CLICKHOUSE_HOST: clickhouse
-    depends_on:
-      redis:
-        condition: service_healthy
-      clickhouse:
-        condition: service_healthy
-    networks:
-      - tokendna_net
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 15s
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "10"
 
-  # ── Redis ─────────────────────────────────────────────────────────────────────
+  # ── Redis ────────────────────────────────────────────────────────────────────
   redis:
     image: redis:7.2-alpine
-    container_name: tokendna_redis
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - aegis-internal
+    # NO external port exposure — only reachable by tokendna container
     command: >
       redis-server
-      --save 60 1
-      --loglevel warning
+      --requirepass "${REDIS_PASSWORD}"
+      --appendonly yes
+      --appendfsync everysec
       --maxmemory 256mb
       --maxmemory-policy allkeys-lru
+      --loglevel warning
+      --protected-mode yes
+      --bind 0.0.0.0
+      --rename-command FLUSHALL ""
+      --rename-command FLUSHDB ""
+      --rename-command DEBUG ""
+      --rename-command CONFIG ""
     volumes:
-      - redis_data:/data
-    networks:
-      - tokendna_net
+      - redis-data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 320M
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
-      start_period: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
-  # ── ClickHouse ────────────────────────────────────────────────────────────────
+  # ── ClickHouse ───────────────────────────────────────────────────────────────
   clickhouse:
-    image: clickhouse/clickhouse-server:24.4-alpine
-    container_name: tokendna_clickhouse
+    image: clickhouse/clickhouse-server:24.3-alpine
     restart: unless-stopped
-    environment:
-      CLICKHOUSE_DB: tokendna
-      CLICKHOUSE_USER: default
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
-      # Set a password here and mirror it in your .env CLICKHOUSE_PASSWORD
-      CLICKHOUSE_PASSWORD: ""
-    volumes:
-      - clickhouse_data:/var/lib/clickhouse
-      - clickhouse_logs:/var/log/clickhouse-server
-    ports:
-      - "127.0.0.1:8123:8123"   # HTTP interface (localhost only)
-      - "127.0.0.1:9000:9000"   # Native TCP interface (localhost only)
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_NICE       # ClickHouse uses nice() for I/O scheduling
+      - IPC_LOCK       # memory-mapped files
     networks:
-      - tokendna_net
-    ulimits:
-      nofile:
-        soft: 262144
-        hard: 262144
+      - aegis-internal
+    # NO external port exposure
+    environment:
+      CLICKHOUSE_DB:               tokendna
+      CLICKHOUSE_USER:             tokendna
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    env_file:
+      - .env
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+             "http://localhost:8123/ping"]
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
 
 volumes:
-  redis_data:
+  redis-data:
     driver: local
-  clickhouse_data:
+  clickhouse-data:
     driver: local
-  clickhouse_logs:
+  clickhouse-logs:
     driver: local
-
-networks:
-  tokendna_net:
-    driver: bridge

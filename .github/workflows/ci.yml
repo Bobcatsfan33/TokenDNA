@@ -1,0 +1,146 @@
+name: Aegis Security — CI Pipeline
+
+on:
+  push:
+    branches: [ master, main, "release/**" ]
+  pull_request:
+    branches: [ master, main ]
+
+permissions:
+  contents: read
+  security-events: write    # for CodeQL SARIF upload
+  pull-requests: read
+
+jobs:
+
+  # ── Lint + Import Check ─────────────────────────────────────────────────────
+  lint:
+    name: Lint & Import Verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt ruff
+
+      - name: Ruff lint
+        run: ruff check . --output-format=github
+
+      - name: Import verification
+        run: |
+          python -c "
+          import importlib, sys
+          mods = [
+            'config', 'auth',
+            'modules.tenants.models', 'modules.tenants.store', 'modules.tenants.middleware',
+            'modules.identity.cache_redis', 'modules.identity.ml_model',
+            'modules.identity.session_graph', 'modules.identity.async_pipeline',
+            'modules.security.audit_log', 'modules.security.rbac', 'modules.security.headers',
+            'onboarding.aws_connector',
+          ]
+          failed = []
+          for m in mods:
+            try: importlib.import_module(m)
+            except Exception as e: failed.append(f'{m}: {e}')
+          if failed:
+            print('FAILED:', '\n'.join(failed))
+            sys.exit(1)
+          print(f'All {len(mods)} modules imported successfully')
+          "
+
+  # ── Dependency Vulnerability Scan ───────────────────────────────────────────
+  dependency-scan:
+    name: Dependency Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: pip-audit
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt --format=json --output=pip-audit-results.json || true
+          pip-audit -r requirements.txt
+
+      - name: Upload audit results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pip-audit-results
+          path: pip-audit-results.json
+
+  # ── CodeQL Static Analysis ──────────────────────────────────────────────────
+  codeql:
+    name: CodeQL Security Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          queries: security-extended,security-and-quality
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python"
+
+  # ── Secret Scanning ─────────────────────────────────────────────────────────
+  secrets-scan:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0      # full history for git log scanning
+
+      - name: TruffleHog OSS — scan for leaked secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --only-verified
+
+  # ── Docker Image Build Verification ─────────────────────────────────────────
+  docker-build:
+    name: Docker Build Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build --no-cache -t aegis-tokendna:ci .
+
+      - name: Trivy container scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "aegis-tokendna:ci"
+          format: "sarif"
+          output: "trivy-results.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"           # fail on CRITICAL/HIGH vulns
+
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "trivy-results.sarif"
