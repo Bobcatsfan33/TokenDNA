@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2024 Ryan Wallace
+// This file is part of the TokenDNA edge layer and is separately licensed
+// under the MIT License (see edge/LICENSE-MIT).  The core TokenDNA platform
+// (../LICENSE) is licensed under the Business Source License 1.1.
 /**
  * TokenDNA — Cloudflare Worker: Edge Authentication Layer
  *
