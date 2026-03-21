@@ -1,5 +1,5 @@
 """
-TokenDNA / Aegis Security Platform -- FastAPI v2.7.0
+TokenDNA / Aegis Security Platform -- FastAPI v2.8.0
 
 Endpoints
 ─────────
@@ -64,6 +64,16 @@ v2.7.0 — mTLS Service Mesh:
   - Expired-cert rejection with AU-2 audit log emission.
   - NIST SC-8, SC-8(1), IA-3, SC-17, MA-3, SC-23 coverage.
   - get_uvicorn_ssl_config() helper for native Uvicorn mTLS deployment.
+
+v2.8.0 — Encryption at Rest:
+  - AES-256-GCM field-level envelope encryption for ClickHouse + SQLite columns.
+  - Envelope: unique 256-bit DEK per record, wrapped by KEK from key provider.
+  - Key providers: AWS KMS (ENC_PROVIDER=aws), Azure Key Vault (azure),
+    HashiCorp Vault transit (vault), local env-var (env; dev/air-gap only).
+  - Transparent EncryptedColumn descriptor + SQLAlchemy EncryptedType adapter.
+  - POST /admin/encryption/rotate — re-encrypt specified columns under new DEK.
+  - GET /admin/encryption/status — provider health and configuration status.
+  - NIST SC-28, SC-28(1), SC-12, SC-12(1), AU-9(3) coverage.
 """
 
 import asyncio
@@ -125,6 +135,13 @@ from modules.transport.mtls import (
     get_uvicorn_ssl_config,
     start_cert_watcher,
 )
+from modules.security.encryption import (
+    check_encryption_config,
+    decrypt_field,
+    encrypt_field,
+    is_encrypted,
+    KeyRotator,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -137,7 +154,7 @@ _DASHBOARD_PATH = Path(__file__).parent / "dashboard" / "index.html"
 app = FastAPI(
     title="Aegis Security Platform",
     description="TokenDNA zero-trust session integrity + Aegis cloud posture management",
-    version="2.7.0",
+    version="2.8.0",
     docs_url="/api/docs" if DEV_MODE else None,
     redoc_url="/api/redoc" if DEV_MODE else None,
 )
@@ -271,16 +288,25 @@ async def startup_checks():
             "Set MTLS_MODE=proxy or MTLS_MODE=native for IL4/IL5 transport security (SC-8)."
         )
 
+    # v2.8: Encryption at rest configuration check (SC-28)
+    enc_summary: dict = {}
+    try:
+        enc_summary = check_encryption_config()
+    except Exception as exc:
+        logger.error("Encryption at rest config error: %s", exc)
+
     # Emit startup audit event (AU-2: application startup)
     log_event(AuditEventType.STARTUP, AuditOutcome.SUCCESS,
               detail={
-                  "version": "2.7.0",
+                  "version": "2.8.0",
                   "dev_mode": DEV_MODE,
                   "fips_active": fips_summary.get("fips_active", False),
                   "dpop_required": dpop_required,
                   "trap_hmac_configured": trap_hmac_set,
                   "mtls_mode": mtls_mode or "disabled",
                   "mtls_allowed_cns": list(mtls_summary.get("allowed_cns") or []),
+                  "enc_provider": enc_summary.get("provider", "unknown"),
+                  "enc_provider_ready": enc_summary.get("provider_ready", False),
               })
 
 
@@ -309,17 +335,18 @@ async def health():
     from modules.identity.cache_redis import is_available as redis_ok
     fips_info = _fips.compliance_summary()
     return {
-        "service":       "TokenDNA",
-        "version":       "2.7.0",
-        "redis":         redis_ok(),
-        "clickhouse":    clickhouse_client.is_available(),
-        "dev_mode":      DEV_MODE,
-        "fips_active":   fips_info.get("fips_active", False),
-        "dpop_required": os.getenv("DPOP_REQUIRED", "false").lower() == "true",
-        "trap_active":   True,
+        "service":        "TokenDNA",
+        "version":        "2.8.0",
+        "redis":          redis_ok(),
+        "clickhouse":     clickhouse_client.is_available(),
+        "dev_mode":       DEV_MODE,
+        "fips_active":    fips_info.get("fips_active", False),
+        "dpop_required":  os.getenv("DPOP_REQUIRED", "false").lower() == "true",
+        "trap_active":    True,
         "preflight_gate": True,
-        "mtls_enabled":  os.getenv("MTLS_MODE", "").lower() in ("proxy", "native"),
-        "mtls_mode":     os.getenv("MTLS_MODE", "disabled"),
+        "mtls_enabled":   os.getenv("MTLS_MODE", "").lower() in ("proxy", "native"),
+        "mtls_mode":      os.getenv("MTLS_MODE", "disabled"),
+        "enc_provider":   os.getenv("ENC_PROVIDER", "env"),
     }
 
 
@@ -1212,3 +1239,126 @@ async def attribution_dashboard_ui():
     if not path.exists():
         raise HTTPException(status_code=404, detail="Attribution Dashboard not found")
     return FileResponse(path)
+
+
+# ── Encryption at rest (v2.8.0) ───────────────────────────────────────────────
+# SC-28 (Protection of Information at Rest), SC-28(1) (Cryptographic Protection)
+# SC-12 (Cryptographic Key Management), AU-9(3) (Audit Information Protection)
+
+@app.get("/admin/encryption/status")
+async def encryption_status(
+    caller: dict = Depends(require_role(Role.ADMIN)),
+):
+    """
+    Return encryption-at-rest provider status and configuration summary.
+    Includes provider type, key ID (never key material), and provider readiness.
+
+    NIST SC-28(1) — ADMIN+ only.
+    """
+    from modules.security.encryption import ENC_PROVIDER, ENC_KMS_KEY_ID, ENC_VAULT_KEY
+    from modules.security.encryption import _get_provider
+    provider_ready = False
+    provider_name  = "unknown"
+    try:
+        p = _get_provider()
+        provider_name  = p.provider_name()
+        provider_ready = True
+    except Exception as exc:
+        provider_name = f"ERROR: {exc}"
+
+    log_event(
+        AuditEventType.ACCESS,
+        AuditOutcome.SUCCESS,
+        user_id=caller.get("sub"),
+        resource="/admin/encryption/status",
+        detail={"provider": ENC_PROVIDER},
+    )
+    return {
+        "provider":       ENC_PROVIDER,
+        "provider_name":  provider_name,
+        "provider_ready": provider_ready,
+        "kms_key_set":    bool(ENC_KMS_KEY_ID),
+        "vault_key":      ENC_VAULT_KEY,
+        # Never expose key material — only metadata
+        "master_key_set": bool(os.getenv("ENC_MASTER_KEY")),
+        "nist":           ["SC-28", "SC-28(1)", "SC-12"],
+    }
+
+
+@app.post("/admin/encryption/rotate")
+async def rotate_encryption_keys(
+    request: Request,
+    caller: dict = Depends(require_role(Role.OWNER)),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+):
+    """
+    Trigger key rotation for specified ClickHouse table columns.
+
+    Re-encrypts each ciphertext blob: decrypt with current provider →
+    plaintext → re-encrypt with fresh DEK (new envelope under current KEK).
+
+    For KEK rotation (e.g., new KMS key): update ENC_KMS_KEY_ID first,
+    set the old key ID in ENC_OLD_KMS_KEY_ID, then call this endpoint.
+
+    OWNER only — irreversible, audit-logged operation.
+
+    Body (JSON):
+      {
+        "table":   "sessions",          // ClickHouse table name
+        "columns": ["ip", "ua"],        // columns to rotate
+        "batch_size": 1000              // optional, default 1000
+      }
+    """
+    body: dict = await request.json()
+    table    = body.get("table", "")
+    columns  = body.get("columns", [])
+    batch_sz = int(body.get("batch_size", 1000))
+
+    if not table or not columns:
+        raise HTTPException(status_code=422, detail="'table' and 'columns' are required")
+
+    # Validate column names (no SQL injection via column names)
+    import re as _re
+    for col in columns:
+        if not _re.match(r"^[a-zA-Z_][a-zA-Z0-9_]{0,63}$", col):
+            raise HTTPException(status_code=422, detail=f"Invalid column name: {col!r}")
+    if not _re.match(r"^[a-zA-Z_][a-zA-Z0-9_.]{0,127}$", table):
+        raise HTTPException(status_code=422, detail=f"Invalid table name: {table!r}")
+
+    log_event(
+        AuditEventType.CONFIG_CHANGE,
+        AuditOutcome.SUCCESS,
+        user_id=caller.get("sub"),
+        resource="/admin/encryption/rotate",
+        detail={"table": table, "columns": columns, "batch_size": batch_sz},
+    )
+
+    def _run_rotation() -> None:
+        try:
+            rotator = KeyRotator()
+            result  = rotator.rotate_clickhouse(table=table, columns=columns, batch_size=batch_sz)
+            logger.info(
+                "Key rotation complete: table=%s columns=%s result=%s caller=%s",
+                table, columns, result, caller.get("sub"),
+            )
+            log_event(
+                AuditEventType.CONFIG_CHANGE,
+                AuditOutcome.SUCCESS,
+                user_id=caller.get("sub"),
+                resource="/admin/encryption/rotate",
+                detail={"table": table, "columns": columns, **result},
+            )
+        except Exception as exc:
+            logger.error("Key rotation failed: table=%s error=%s", table, exc)
+
+    import threading
+    t = threading.Thread(target=_run_rotation, daemon=True, name="key-rotator")
+    t.start()
+
+    return {
+        "status":  "rotation_started",
+        "table":   table,
+        "columns": columns,
+        "message": "Rotation running in background. Monitor logs and call "
+                   "GET /admin/encryption/status for completion.",
+    }
