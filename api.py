@@ -1,5 +1,5 @@
 """
-TokenDNA / Aegis Security Platform -- FastAPI v2.4.0
+TokenDNA / Aegis Security Platform -- FastAPI v2.5.0
 
 Endpoints
 ─────────
@@ -21,6 +21,9 @@ GET  /admin/hvip/{uid}          get HVIP profile for user (ADMIN+)
 PUT  /admin/hvip/{uid}          create/update HVIP profile (ADMIN+)
 DELETE /admin/hvip/{uid}        delete HVIP profile (OWNER only)
 
+POST /admin/traps               issue trap token(s) for a user (ADMIN+)
+GET  /admin/traps/hits          recent trap hit telemetry (ADMIN+)
+
 POST /admin/tenants             create tenant  (returns raw API key, show once)
 GET  /admin/tenants             list all tenants
 GET  /admin/tenants/{id}/keys   list API keys for a tenant
@@ -30,6 +33,9 @@ DELETE /admin/tenants/{id}/keys/{kid}  revoke a key
 POST /onboarding/aws/external-id   generate ExternalId for CloudFormation
 POST /onboarding/aws/test          test IAM role + quick posture scan
 
+POST /webhook/preflight/{idp}  pre-issuance risk gate webhook
+                                idp ∈ "auth0" | "okta" | "keycloak" | "generic"
+
 v2.4.0 — IL5 Foundation:
   - FIPS 140-2 startup enforcement (FATAL in IL5/IL6 if not FIPS-active).
   - DPoP RFC 9449 token binding wired into /secure (optional_dpop) and
@@ -37,6 +43,17 @@ v2.4.0 — IL5 Foundation:
   - HVIP enforcer applied in scoring pipeline — OWNER/ADMIN identities
     checked against hardened profile policies (geo, DPoP, MFA, score thresholds).
   - /admin/hvip/* endpoints for HVIP profile management.
+
+v2.5.0 — Active Defense + Pre-Issuance Gate:
+  - Token Trap (SC-26 honeypot): trap token middleware intercepts stolen-
+    credential use before verify_token runs; issues synthetic response to
+    attacker while revoking all real tokens for that uid/tenant and firing
+    SIEM + Slack alerts.
+  - Pre-issuance Risk Gate: /webhook/preflight/{idp} evaluates 8 risk signals
+    (impossible travel, threat intel, new device, cred stuffing, velocity, HVIP,
+    ML score, global block) before IdP issues a token.  Returns IdP-native
+    response format (Auth0 / Okta / Keycloak / generic).
+  - Token Trap admin endpoints: POST /admin/traps (issue), GET /admin/traps/hits.
 """
 
 import asyncio
@@ -44,11 +61,11 @@ import logging
 import os
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from auth import verify_token
 from config import DEV_MODE, OIDC_ISSUER, RATE_LIMIT_PER_MINUTE
@@ -78,6 +95,20 @@ from modules.security.headers import RequestValidationMiddleware, SecurityHeader
 from modules.security.rbac import Role, require_role
 from modules.identity.dpop import optional_dpop, require_dpop, DPoPClaims
 from modules.identity.hvip import enforcer as _hvip_enforcer, registry as _hvip_registry, HVIPConfig, HVIPDecision
+from modules.defense.token_trap import (
+    TrapHitRecord,
+    _store as _trap_store,
+    trap_token_check as _trap_token_check,
+    get_synthetic_response,
+    issue_trap,
+    issue_trap_batch,
+    recent_trap_hits,
+)
+from modules.identity.preflight import (
+    GateDecision,
+    build_preflight_context,
+    evaluate_preflight,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -90,10 +121,55 @@ _DASHBOARD_PATH = Path(__file__).parent / "dashboard" / "index.html"
 app = FastAPI(
     title="Aegis Security Platform",
     description="TokenDNA zero-trust session integrity + Aegis cloud posture management",
-    version="2.4.0",
+    version="2.5.0",
     docs_url="/api/docs" if DEV_MODE else None,
     redoc_url="/api/redoc" if DEV_MODE else None,
 )
+
+
+# ── Token Trap Middleware (must register before route middleware) ───────────────
+# SC-26 (Honeypots), IR-4 (Incident Handling), AU-2 (Event Logging)
+# Intercepts trap-token requests BEFORE verify_token so the attacker never gets
+# a meaningful 401 — they receive a plausible synthetic 200 instead.
+@app.middleware("http")
+async def trap_token_middleware(request: Request, call_next: Any):
+    """
+    Transparent trap-token interceptor.
+
+    1. Checks Bearer token against the trap store (O(1) SHA-256 lookup).
+    2. If match → fires TrapMonitor (HMAC verify, revoke real tokens, SIEM alert).
+    3. Returns synthetic API response that looks like a real 200 success.
+    4. If not a trap → lets request proceed normally to route handlers.
+
+    Placed as a raw ASGI middleware so it runs before FastAPI dependency
+    injection (including verify_token), giving zero-leak deception.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        raw_token = auth_header[7:].strip()
+        if raw_token and _trap_store.is_trap(raw_token):
+            # Token is a trap — run full inspection pipeline before verify_token
+            try:
+                hit = await _trap_token_check(request)
+                if hit is not None:
+                    synthetic = get_synthetic_response(hit)
+                    logger.warning(
+                        "[TrapToken] HIT uid=%s tenant=%s ip=%s trap_id=%s "
+                        "real_tokens_revoked=%d",
+                        hit.uid, hit.tenant_id,
+                        hit.attacker_ip, hit.trap_id,
+                        hit.real_tokens_revoked,
+                    )
+                    return JSONResponse(content=synthetic, status_code=200)
+            except Exception as exc:
+                logger.error("[TrapToken] Monitor error: %s", exc)
+                # Return synthetic response even on monitor error — never leak trap status
+                return JSONResponse(
+                    content={"status": "ok", "message": "Request processed."},
+                    status_code=200,
+                )
+
+    return await call_next(request)
 
 # Security middleware (order matters — validation runs first, then headers)
 app.add_middleware(SecurityHeadersMiddleware)
@@ -142,13 +218,22 @@ async def startup_checks():
     loop = asyncio.get_event_loop()
     loop.run_in_executor(None, threat_intel._ensure_tor_list)
 
+    # v2.5: Token Trap + Preflight gate readiness
+    trap_hmac_set = bool(os.getenv("TRAP_HMAC_KEY"))
+    logger.info(
+        "Token Trap (SC-26 honeypot): ACTIVE — TRAP_HMAC_KEY %s",
+        "SET (secure)" if trap_hmac_set else "NOT SET (ephemeral key — set TRAP_HMAC_KEY in production!)",
+    )
+    logger.info("Pre-issuance Risk Gate: ACTIVE — webhook endpoints: /webhook/preflight/{idp}")
+
     # Emit startup audit event (AU-2: application startup)
     log_event(AuditEventType.STARTUP, AuditOutcome.SUCCESS,
               detail={
-                  "version": "2.4.0",
+                  "version": "2.5.0",
                   "dev_mode": DEV_MODE,
                   "fips_active": fips_summary.get("fips_active", False),
                   "dpop_required": dpop_required,
+                  "trap_hmac_configured": trap_hmac_set,
               })
 
 
@@ -177,13 +262,15 @@ async def health():
     from modules.identity.cache_redis import is_available as redis_ok
     fips_info = _fips.compliance_summary()
     return {
-        "service":    "TokenDNA",
-        "version":    "2.4.0",
-        "redis":      redis_ok(),
-        "clickhouse": clickhouse_client.is_available(),
-        "dev_mode":   DEV_MODE,
-        "fips_active": fips_info.get("fips_active", False),
+        "service":      "TokenDNA",
+        "version":      "2.5.0",
+        "redis":        redis_ok(),
+        "clickhouse":   clickhouse_client.is_available(),
+        "dev_mode":     DEV_MODE,
+        "fips_active":  fips_info.get("fips_active", False),
         "dpop_required": os.getenv("DPOP_REQUIRED", "false").lower() == "true",
+        "trap_active":  True,
+        "preflight_gate": True,
     }
 
 
@@ -775,3 +862,304 @@ async def api_audit_log(
         pass
 
     return {"entries": entries[-limit:], "total": len(entries)}
+
+
+# ── Token Trap Admin Endpoints ────────────────────────────────────────────────
+# SC-26 (Honeypots) / IR-4 (Incident Handling) / AU-2 (Event Logging)
+# ADMIN+ required: trap tokens are sensitive operational security tooling.
+
+@app.post("/admin/traps", status_code=201)
+async def create_trap_tokens(
+    body: dict,
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """
+    Issue one or more trap tokens for a user identity.
+
+    Request body:
+      uid    (str)  — user id to impersonate in trap token
+      label  (str)  — human label for the trap, e.g. "s3-backup" (optional)
+      count  (int)  — number of trap tokens to issue; 1=single, 2-5=batch (optional)
+
+    Returns the issued trap token(s) including the raw bearer token value.
+    Store these tokens in realistic-looking locations (S3, Git history, env files)
+    to catch credential-exfiltration attackers.
+
+    SECURITY: Trap tokens are signed with TRAP_HMAC_KEY (separate from real JWT key).
+    The raw token value is shown only on issuance — store securely.
+    """
+    uid   = body.get("uid", "").strip()
+    label = body.get("label", "default").strip()
+    count = max(1, min(int(body.get("count", 1)), 5))  # cap at 5
+
+    if not uid:
+        raise HTTPException(status_code=400, detail="'uid' field required")
+
+    log_event(AuditEventType.ACCESS_GRANTED, AuditOutcome.SUCCESS,
+              tenant_id=tenant.tenant_id, subject=tenant.owner_email,
+              resource=f"trap:{uid}",
+              detail={"action": "issue_trap", "count": count, "label": label})
+
+    if count == 1:
+        trap = issue_trap(uid, tenant.tenant_id, label=label)
+        return {
+            "status":   "issued",
+            "uid":      uid,
+            "trap_id":  trap.trap_id,
+            "token":    trap.token,
+            "expires_at": trap.expires_at,
+            "label":    trap.label,
+            "warning":  (
+                "Store this token in a realistic location (env file, git history, "
+                "S3 object) to bait credential-theft attackers. "
+                "Any use of this token will trigger full incident response."
+            ),
+        }
+    else:
+        traps = issue_trap_batch(uid, tenant.tenant_id, count=count)
+        return {
+            "status": "issued",
+            "uid":    uid,
+            "count":  len(traps),
+            "traps": [
+                {
+                    "trap_id":   t.trap_id,
+                    "token":     t.token,
+                    "label":     t.label,
+                    "expires_at": t.expires_at,
+                }
+                for t in traps
+            ],
+            "warning": (
+                "Distribute these tokens across different exfiltration paths "
+                "(env files, Git history, S3 objects, CI/CD secrets) to "
+                "fingerprint the specific exfiltration channel when hit."
+            ),
+        }
+
+
+@app.get("/admin/traps/hits")
+async def get_trap_hits(
+    limit: int = 50,
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """
+    Return recent trap token hit records.
+    Each record includes attacker IP, User-Agent, ASN, country, token age,
+    number of real tokens revoked, and the label of the triggered trap.
+
+    ADMIN+ required — trap hit telemetry is sensitive incident response data.
+    SI-3 / IR-4 / SC-26 / AU-2.
+    """
+    limit = max(1, min(limit, 200))
+    hits  = recent_trap_hits(limit=limit)
+
+    log_event(AuditEventType.ACCESS_GRANTED, AuditOutcome.SUCCESS,
+              tenant_id=tenant.tenant_id, subject=tenant.owner_email,
+              resource="/admin/traps/hits",
+              detail={"action": "list_trap_hits", "limit": limit})
+
+    return {
+        "total": len(hits),
+        "hits":  hits,
+        "tenant_id": tenant.tenant_id,
+    }
+
+
+# ── Pre-Issuance Risk Gate Webhooks ──────────────────────────────────────────
+# NIST IA-5 / IA-11 / AC-2 / SI-4: Evaluate risk BEFORE the IdP issues tokens.
+# Supports Auth0 Pre-Token-Generation Actions, Okta Token Inline Hooks,
+# Keycloak Event Listener SPI, and a generic webhook format.
+
+@app.post("/webhook/preflight/{idp}")
+async def preflight_webhook(
+    idp: str,
+    body: dict,
+    request: Request,
+):
+    """
+    Pre-issuance risk gate webhook.  Called by your IdP before issuing tokens.
+
+    idp path parameter:
+      "auth0"     — Auth0 Pre-Token-Generation Action hook
+      "okta"      — Okta Token Inline Hook
+      "keycloak"  — Keycloak Event Listener SPI
+      "generic"   — Generic webhook (any IdP)
+
+    The gate evaluates 8 risk signals:
+      1. Global block list (instant DENY)
+      2. Impossible travel (>900 km/h velocity)
+      3. Threat intelligence (Tor, VPN, malicious ASN)
+      4. New device fingerprint
+      5. Credential stuffing (failed-login spike)
+      6. Token velocity (>20 tokens/hour per uid)
+      7. HVIP policy check (for privileged identities)
+      8. ML anomaly score
+
+    Gate decisions:
+      ALLOW   → IdP issues token normally
+      ENRICH  → IdP issues token + injects risk claims
+      STEP_UP → IdP challenges user for step-up MFA
+      DENY    → IdP blocks token issuance entirely
+
+    Response format matches the IdP's native hook response schema.
+
+    Authentication: This endpoint should be called from your IdP's network only.
+    Protect with IP allowlisting or mutual TLS at the ingress layer.
+    """
+    idp = idp.lower().strip()
+    valid_idps = {"auth0", "okta", "keycloak", "generic"}
+    if idp not in valid_idps:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown IdP '{idp}'. Valid values: {sorted(valid_idps)}",
+        )
+
+    try:
+        result = evaluate_preflight(body, idp=idp)
+    except Exception as exc:
+        logger.error("[Preflight] Evaluation error for idp=%s: %s", idp, exc)
+        # Fail open (allow) on internal errors — avoids blocking all logins if
+        # Redis is down. Operators can configure PREFLIGHT_FAIL_CLOSED=true to
+        # fail closed in high-security environments.
+        fail_closed = os.getenv("PREFLIGHT_FAIL_CLOSED", "false").lower() == "true"
+        if fail_closed:
+            # Return deny in the appropriate IdP format
+            error_body = {"uid": body.get("user_id") or body.get("data", {}).get("userProfile", {}).get("login", "unknown")}
+            result = evaluate_preflight({"error": True}, idp="generic")
+        else:
+            # Fail open — return minimal allow response
+            if idp == "auth0":
+                return {"access": "continue"}
+            elif idp == "okta":
+                return {"commands": []}
+            elif idp == "keycloak":
+                return {"deny": False, "extra_claims": {}}
+            else:
+                return {"decision": "allow", "signals": []}
+
+    # Audit log every preflight evaluation (AU-2 / IA-11)
+    logger.info(
+        "[Preflight] idp=%s uid=%s decision=%s score=%.1f signals=%s",
+        idp, result.uid, result.decision.value,
+        result.risk_score,
+        [s.name for s in result.signals if s.triggered],
+    )
+
+    if result.decision in (GateDecision.DENY, GateDecision.STEP_UP):
+        logger.warning(
+            "[Preflight] %s uid=%s score=%.1f triggered=%s",
+            result.decision.value.upper(),
+            result.uid, result.risk_score,
+            [s.name for s in result.signals if s.triggered],
+        )
+
+    # Return IdP-native response
+    if idp == "auth0":
+        return result.to_auth0_action_response()
+    elif idp == "okta":
+        return result.to_okta_hook_response()
+    elif idp == "keycloak":
+        return result.to_keycloak_hook_response()
+    else:
+        # Generic: return structured decision + signal breakdown
+        return {
+            "decision":   result.decision.value,
+            "risk_score": result.risk_score,
+            "uid":        result.uid,
+            "signals": [
+                {
+                    "name":      s.name,
+                    "triggered": s.triggered,
+                    "weight":    s.weight,
+                    "evidence":  s.evidence,
+                    "mitre":     s.mitre,
+                    "nist":      s.nist,
+                }
+                for s in result.signals
+                if s.triggered
+            ],
+            "claims": result.enrichment_claims,
+        }
+
+
+# ── Attribution Dashboard Endpoints ───────────────────────────────────────────
+# NIST SI-3 · IR-4 · SC-26 · AU-2 · RA-3 · PM-16
+# Builds attacker profiles, campaign clusters, kill-chain maps, IOC lists.
+# ADMIN+ required — attribution data is the most sensitive telemetry in the platform.
+
+@app.get("/api/attribution")
+async def attribution_dashboard(
+    window_hours: int = 168,
+    _user: dict = Depends(verify_token),
+    _role: Any  = Depends(require_role(Role.ADMIN)),
+):
+    """
+    Full attribution data payload for the Attribution Dashboard.
+
+    Returns:
+      kpis             — total hits, unique IPs, campaigns, tokens revoked
+      geo              — top countries by hit count
+      asns             — top ASNs (attacker hosting infrastructure)
+      kill_chain       — MITRE ATT&CK kill chain stage distribution
+      mitre            — technique frequency table
+      daily_hits       — 30-day hit timeline
+      attacker_profiles — per-IP aggregated attacker records
+      campaigns        — correlated multi-IP campaign clusters
+      iocs             — IP/ASN/UA indicators of compromise
+      preflight_stats  — gate decision breakdown + signal frequency
+
+    ADMIN+ required — attribution data surfaces specific attacker IPs and IOCs.
+    SI-3 / IR-4 / SC-26 / RA-3.
+    """
+    from modules.attribution.engine import build_attribution_summary
+    window_hours = max(1, min(window_hours, 720))
+    summary = build_attribution_summary(window_hours=window_hours)
+    return summary.to_dict()
+
+
+@app.get("/api/attribution/iocs")
+async def attribution_iocs(
+    min_confidence: float = 0.3,
+    ioc_type: str = "",
+    limit: int = 200,
+    _user: dict = Depends(verify_token),
+    _role: Any  = Depends(require_role(Role.ADMIN)),
+):
+    """
+    Export IOC list for ingestion into SIEM, EDR, firewall, or block lists.
+
+    Each IOC includes type (ip | asn | user_agent), value, confidence score,
+    hit count, first/last seen timestamps, and human-readable context.
+
+    Use ?ioc_type=ip to filter to IP IOCs only for firewall ACL ingestion.
+    ADMIN+ required.
+    """
+    from modules.attribution.engine import AttributionEngine, build_attribution_summary
+    from modules.defense.token_trap import recent_trap_hits
+
+    raw_hits = recent_trap_hits(limit=500)
+    engine   = AttributionEngine()
+    profiles = engine.build_profiles(raw_hits)
+    iocs     = engine.build_iocs(profiles, min_confidence=min_confidence)
+
+    if ioc_type:
+        iocs = [i for i in iocs if i.ioc_type == ioc_type]
+
+    return {
+        "iocs":           [i.to_dict() for i in iocs[:limit]],
+        "total":          len(iocs),
+        "min_confidence": min_confidence,
+        "ioc_type_filter": ioc_type or None,
+        "generated_at":   __import__("datetime").datetime.utcnow().isoformat() + "Z",
+    }
+
+
+@app.get("/dashboard/attribution", response_class=HTMLResponse)
+async def attribution_dashboard_ui():
+    """Serve the Attribution Dashboard SPA."""
+    from pathlib import Path
+    path = Path(__file__).parent / "dashboard" / "attribution.html"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Attribution Dashboard not found")
+    return FileResponse(path)
