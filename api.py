@@ -1,5 +1,5 @@
 """
-TokenDNA / Aegis Security Platform -- FastAPI v2.8.0
+TokenDNA / Aegis Security Platform -- FastAPI v2.9.0
 
 Endpoints
 ─────────
@@ -154,7 +154,7 @@ _DASHBOARD_PATH = Path(__file__).parent / "dashboard" / "index.html"
 app = FastAPI(
     title="Aegis Security Platform",
     description="TokenDNA zero-trust session integrity + Aegis cloud posture management",
-    version="2.8.0",
+    version="2.9.0",
     docs_url="/api/docs" if DEV_MODE else None,
     redoc_url="/api/redoc" if DEV_MODE else None,
 )
@@ -298,7 +298,7 @@ async def startup_checks():
     # Emit startup audit event (AU-2: application startup)
     log_event(AuditEventType.STARTUP, AuditOutcome.SUCCESS,
               detail={
-                  "version": "2.8.0",
+                  "version": "2.9.0",
                   "dev_mode": DEV_MODE,
                   "fips_active": fips_summary.get("fips_active", False),
                   "dpop_required": dpop_required,
