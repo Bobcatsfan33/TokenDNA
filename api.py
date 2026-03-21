@@ -1081,3 +1081,85 @@ async def preflight_webhook(
             ],
             "claims": result.enrichment_claims,
         }
+
+
+# ── Attribution Dashboard Endpoints ───────────────────────────────────────────
+# NIST SI-3 · IR-4 · SC-26 · AU-2 · RA-3 · PM-16
+# Builds attacker profiles, campaign clusters, kill-chain maps, IOC lists.
+# ADMIN+ required — attribution data is the most sensitive telemetry in the platform.
+
+@app.get("/api/attribution")
+async def attribution_dashboard(
+    window_hours: int = 168,
+    _user: dict = Depends(verify_token),
+    _role: Any  = Depends(require_role(Role.ADMIN)),
+):
+    """
+    Full attribution data payload for the Attribution Dashboard.
+
+    Returns:
+      kpis             — total hits, unique IPs, campaigns, tokens revoked
+      geo              — top countries by hit count
+      asns             — top ASNs (attacker hosting infrastructure)
+      kill_chain       — MITRE ATT&CK kill chain stage distribution
+      mitre            — technique frequency table
+      daily_hits       — 30-day hit timeline
+      attacker_profiles — per-IP aggregated attacker records
+      campaigns        — correlated multi-IP campaign clusters
+      iocs             — IP/ASN/UA indicators of compromise
+      preflight_stats  — gate decision breakdown + signal frequency
+
+    ADMIN+ required — attribution data surfaces specific attacker IPs and IOCs.
+    SI-3 / IR-4 / SC-26 / RA-3.
+    """
+    from modules.attribution.engine import build_attribution_summary
+    window_hours = max(1, min(window_hours, 720))
+    summary = build_attribution_summary(window_hours=window_hours)
+    return summary.to_dict()
+
+
+@app.get("/api/attribution/iocs")
+async def attribution_iocs(
+    min_confidence: float = 0.3,
+    ioc_type: str = "",
+    limit: int = 200,
+    _user: dict = Depends(verify_token),
+    _role: Any  = Depends(require_role(Role.ADMIN)),
+):
+    """
+    Export IOC list for ingestion into SIEM, EDR, firewall, or block lists.
+
+    Each IOC includes type (ip | asn | user_agent), value, confidence score,
+    hit count, first/last seen timestamps, and human-readable context.
+
+    Use ?ioc_type=ip to filter to IP IOCs only for firewall ACL ingestion.
+    ADMIN+ required.
+    """
+    from modules.attribution.engine import AttributionEngine, build_attribution_summary
+    from modules.defense.token_trap import recent_trap_hits
+
+    raw_hits = recent_trap_hits(limit=500)
+    engine   = AttributionEngine()
+    profiles = engine.build_profiles(raw_hits)
+    iocs     = engine.build_iocs(profiles, min_confidence=min_confidence)
+
+    if ioc_type:
+        iocs = [i for i in iocs if i.ioc_type == ioc_type]
+
+    return {
+        "iocs":           [i.to_dict() for i in iocs[:limit]],
+        "total":          len(iocs),
+        "min_confidence": min_confidence,
+        "ioc_type_filter": ioc_type or None,
+        "generated_at":   __import__("datetime").datetime.utcnow().isoformat() + "Z",
+    }
+
+
+@app.get("/dashboard/attribution", response_class=HTMLResponse)
+async def attribution_dashboard_ui():
+    """Serve the Attribution Dashboard SPA."""
+    from pathlib import Path
+    path = Path(__file__).parent / "dashboard" / "attribution.html"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Attribution Dashboard not found")
+    return FileResponse(path)

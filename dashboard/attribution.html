@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Aegis — Attribution Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js"></script>
+<style>
+:root {
+  --bg:       #070b12;
+  --surface:  #0e1520;
+  --surface2: #151f30;
+  --surface3: #1a2540;
+  --border:   #1e2d45;
+  --accent:   #3b82f6;
+  --accent2:  #6366f1;
+  --green:    #10b981;
+  --yellow:   #f59e0b;
+  --orange:   #f97316;
+  --red:      #ef4444;
+  --red2:     #dc2626;
+  --purple:   #a855f7;
+  --cyan:     #06b6d4;
+  --text:     #e2e8f0;
+  --muted:    #64748b;
+  --font:     'Inter', system-ui, -apple-system, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; }
+
+.shell { display: flex; min-height: 100vh; }
+.sidebar { width: 220px; min-width: 220px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: fixed; top: 0; left: 0; bottom: 0; z-index: 100; }
+.main { margin-left: 220px; flex: 1; display: flex; flex-direction: column; }
+.topbar { height: 56px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 24px; gap: 12px; position: sticky; top: 0; z-index: 50; }
+.content { padding: 24px; flex: 1; display: flex; flex-direction: column; gap: 20px; }
+
+.logo { padding: 20px 16px 16px; border-bottom: 1px solid var(--border); }
+.logo-text { font-size: 16px; font-weight: 700; letter-spacing: -0.5px; display: flex; align-items: center; gap: 8px; }
+.logo-sub  { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-top: 3px; }
+.logo-dot  { width: 8px; height: 8px; border-radius: 50%; background: var(--red); box-shadow: 0 0 8px var(--red); animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1}50%{opacity:.4} }
+
+.nav-section { padding: 12px 0 4px; }
+.nav-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; padding: 0 16px 8px; }
+.nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 16px; cursor: pointer; color: var(--muted); font-size: 13px; border-left: 3px solid transparent; transition: all .15s; text-decoration: none; }
+.nav-item:hover { color: var(--text); background: var(--surface2); }
+.nav-item.active { color: var(--red); border-left-color: var(--red); background: rgba(239,68,68,.07); }
+.nav-icon { width: 16px; text-align: center; font-size: 14px; }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.card-header { padding: 16px 20px 12px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); }
+.card-title { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .7px; }
+.card-body { padding: 16px 20px 20px; }
+
+.grid-4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; }
+.grid-2 { display: grid; grid-template-columns: repeat(2,1fr); gap: 16px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; }
+.grid-1-2 { display: grid; grid-template-columns: 1fr 2fr; gap: 16px; }
+@media(max-width:1200px) { .grid-4{grid-template-columns:repeat(2,1fr)} .grid-1-2{grid-template-columns:1fr} }
+@media(max-width:720px)  { .grid-4,.grid-2,.grid-3,.grid-1-2{grid-template-columns:1fr} }
+
+.stat-card { padding: 20px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); position: relative; overflow: hidden; }
+.stat-card::before { content:''; position:absolute; inset:0; background: linear-gradient(135deg, var(--accent-glow,transparent) 0%, transparent 60%); pointer-events: none; border-radius: 10px; }
+.stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 10px; }
+.stat-value { font-size: 36px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+.stat-sub   { font-size: 11px; margin-top: 6px; color: var(--muted); }
+.stat-card.danger  { border-color: rgba(239,68,68,.35); --accent-glow: rgba(239,68,68,.08); }
+.stat-card.warn    { border-color: rgba(245,158,11,.3); --accent-glow: rgba(245,158,11,.06); }
+.stat-card.info    { border-color: rgba(59,130,246,.3); --accent-glow: rgba(59,130,246,.06); }
+.stat-card.ok      { border-color: rgba(16,185,129,.3); --accent-glow: rgba(16,185,129,.06); }
+
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 99px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; }
+.badge-allow   { background: rgba(16,185,129,.15); color: var(--green); }
+.badge-enrich  { background: rgba(59,130,246,.15); color: var(--accent); }
+.badge-stepup  { background: rgba(245,158,11,.15); color: var(--yellow); }
+.badge-deny    { background: rgba(239,68,68,.15); color: var(--red); }
+.badge-crit    { background: rgba(239,68,68,.15); color: var(--red); }
+.badge-high    { background: rgba(249,115,22,.15); color: var(--orange); }
+.badge-med     { background: rgba(245,158,11,.15); color: var(--yellow); }
+.badge-low     { background: rgba(16,185,129,.15); color: var(--green); }
+.badge-ip      { background: rgba(168,85,247,.15); color: var(--purple); }
+.badge-asn     { background: rgba(6,182,212,.15); color: var(--cyan); }
+.badge-ua      { background: rgba(100,116,139,.15); color: var(--muted); }
+
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { padding: 10px 12px; text-align: left; font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+td { padding: 11px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: var(--surface2); }
+.mono { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 12px; }
+
+.bar-track { background: var(--surface3); border-radius: 99px; height: 6px; flex: 1; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 99px; transition: width .4s ease; }
+.row-bar { display: flex; align-items: center; gap: 10px; }
+.row-label { font-size: 12px; white-space: nowrap; width: 120px; overflow: hidden; text-overflow: ellipsis; }
+.row-count { font-size: 12px; color: var(--muted); min-width: 32px; text-align: right; }
+
+.kill-chain { display: flex; gap: 0; overflow-x: auto; }
+.kc-stage { flex: 1; min-width: 80px; padding: 14px 10px; text-align: center; border-right: 1px solid var(--border); position: relative; cursor: default; transition: background .15s; }
+.kc-stage:last-child { border-right: none; }
+.kc-stage:hover { background: var(--surface2); }
+.kc-stage-name { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin-bottom: 8px; }
+.kc-count { font-size: 24px; font-weight: 800; }
+.kc-count.active { color: var(--red); text-shadow: 0 0 12px rgba(239,68,68,.4); }
+.kc-count.zero   { color: var(--surface3); }
+.kc-bar { position: absolute; bottom: 0; left: 0; right: 0; height: 3px; background: var(--red); transform-origin: left; transition: transform .4s ease; }
+
+.signal-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.signal-row:last-child { border-bottom: none; }
+.signal-name { font-size: 12px; width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.signal-bar-wrap { flex: 1; }
+
+.mitre-tag { display: inline-flex; align-items: center; background: var(--surface3); border: 1px solid var(--border); border-radius: 5px; padding: 3px 8px; font-size: 11px; font-family: monospace; gap: 6px; margin: 2px; }
+.mitre-stage { font-size: 9px; color: var(--muted); text-transform: uppercase; }
+
+.conf-ring { width: 36px; height: 36px; flex-shrink: 0; }
+
+.ioc-value { font-family: monospace; font-size: 12px; word-break: break-all; }
+
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; transition: all .15s; }
+.btn:hover { background: var(--surface3); border-color: var(--accent); color: var(--accent); }
+.btn-danger:hover { border-color: var(--red); color: var(--red); background: rgba(239,68,68,.08); }
+
+.topbar-title { font-size: 15px; font-weight: 600; flex: 1; }
+.topbar-badge { background: rgba(239,68,68,.15); color: var(--red); padding: 3px 10px; border-radius: 99px; font-size: 11px; font-weight: 700; }
+.refresh-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); margin-right: 4px; }
+.refresh-dot.loading { background: var(--yellow); animation: pulse 1s infinite; }
+.status-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+
+.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.section-title { font-size: 13px; font-weight: 600; }
+
+.profile-row { display: flex; align-items: flex-start; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.profile-row:last-child { border-bottom: none; }
+.profile-ip { font-family: monospace; font-size: 13px; font-weight: 600; min-width: 130px; }
+.profile-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.profile-tech { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.tech-tag { background: var(--surface3); border: 1px solid var(--border); border-radius: 4px; padding: 2px 7px; font-size: 10px; font-family: monospace; }
+
+.empty-state { text-align: center; padding: 40px 20px; color: var(--muted); }
+.empty-icon { font-size: 36px; margin-bottom: 10px; opacity: .4; }
+.empty-msg { font-size: 13px; }
+
+.conf-bar { height: 4px; border-radius: 99px; background: var(--surface3); overflow: hidden; margin-top: 4px; }
+.conf-fill { height: 100%; border-radius: 99px; }
+
+.tab-row { display: flex; gap: 2px; padding: 0 20px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.tab { padding: 10px 16px; font-size: 12px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; transition: all .15s; }
+.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.tab:hover { color: var(--text); }
+
+.tooltip { position: relative; cursor: help; }
+.tooltip:hover::after { content: attr(data-tip); position: absolute; bottom: 125%; left: 50%; transform: translateX(-50%); background: var(--surface3); border: 1px solid var(--border); color: var(--text); font-size: 11px; padding: 5px 10px; border-radius: 6px; white-space: nowrap; z-index: 999; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+const { useState, useEffect, useRef, useCallback } = React;
+const { AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } = Recharts;
+
+// ── Config ────────────────────────────────────────────────────────────────────
+const API_BASE      = "";
+const REFRESH_MS    = 30_000;
+const WINDOW_HOURS  = 168;  // 7 days
+
+// ── Color palette ─────────────────────────────────────────────────────────────
+const C = {
+  red:"#ef4444", orange:"#f97316", yellow:"#f59e0b", green:"#10b981",
+  blue:"#3b82f6", indigo:"#6366f1", purple:"#a855f7", cyan:"#06b6d4",
+  muted:"#64748b", border:"#1e2d45",
+};
+const DECISION_COLORS = {allow:C.green, enrich:C.blue, step_up:C.yellow, deny:C.red};
+const SEVERITY_COLORS = {critical:C.red, high:C.orange, medium:C.yellow, low:C.green, info:C.muted};
+const KC_COLORS = {"initial-access":C.orange,"credential-access":C.red,"privilege-escalation":C.purple,"lateral-movement":C.indigo,"collection":C.cyan,"exfiltration":C.yellow,"defense-evasion":C.muted};
+
+// ── API helpers ───────────────────────────────────────────────────────────────
+async function apiFetch(path) {
+  const r = await fetch(`${API_BASE}${path}`, {
+    headers: { "X-API-Key": window._aegisKey || "" }
+  });
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
+
+// ── Mock data generator (used when API unavailable / no hits yet) ─────────────
+function mockData() {
+  const now = Date.now();
+  const days = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(now - i * 86400000);
+    days.push({
+      date: d.toISOString().slice(0,10),
+      hits: Math.floor(Math.random() * 8),
+      tokens_revoked: Math.floor(Math.random() * 3),
+    });
+  }
+  return {
+    kpis: { total_trap_hits:17, unique_attacker_ips:4, active_campaigns:2, real_tokens_revoked:11 },
+    geo: [{country:"CN",hits:8,pct:47},{country:"RU",hits:5,pct:29},{country:"US",hits:3,pct:18},{country:"DE",hits:1,pct:6}],
+    asns: [{asn:"AS4134",hits:7},{asn:"AS45090",hits:5},{asn:"AS15169",hits:3},{asn:"AS16276",hits:2}],
+    kill_chain: {"initial-access":4,"credential-access":9,"privilege-escalation":2,"lateral-movement":1,"collection":3,"exfiltration":1,"defense-evasion":2},
+    mitre: [
+      {technique:"T1552.001",count:8,stage:"credential-access"},
+      {technique:"T1110",count:5,stage:"credential-access"},
+      {technique:"T1530",count:3,stage:"collection"},
+      {technique:"T1078.004",count:3,stage:"defense-evasion"},
+      {technique:"T1078",count:2,stage:"initial-access"},
+    ],
+    daily_hits: days,
+    attacker_profiles: [
+      {ip:"185.220.101.45",asn:"AS4134",country:"CN",hit_count:8,first_seen:"2026-03-14T03:21:00Z",last_seen:"2026-03-20T18:45:00Z",token_age_avg_s:7200,trap_labels:["aws-cred-file","env-file"],user_agents:["python-requests/2.28.0"],uids_targeted:["svc-admin","alice"],real_tokens_revoked:5,kill_chain_stages:["credential-access","defense-evasion"],mitre_techniques:["T1552.001","T1078.004"],confidence:0.92},
+      {ip:"91.219.236.17",asn:"AS45090",country:"RU",hit_count:5,first_seen:"2026-03-16T09:14:00Z",last_seen:"2026-03-19T22:10:00Z",token_age_avg_s:14400,trap_labels:["s3-backup","api-key-leak"],user_agents:["Go-http-client/1.1"],uids_targeted:["bob"],real_tokens_revoked:3,kill_chain_stages:["collection","credential-access"],mitre_techniques:["T1530","T1552"],confidence:0.78},
+      {ip:"45.155.205.233",asn:"AS4134",country:"CN",hit_count:3,first_seen:"2026-03-17T14:00:00Z",last_seen:"2026-03-18T08:30:00Z",token_age_avg_s:1800,trap_labels:["git-history"],user_agents:["curl/7.88.1"],uids_targeted:["svc-cicd"],real_tokens_revoked:2,kill_chain_stages:["credential-access"],mitre_techniques:["T1552","T1213"],confidence:0.65},
+      {ip:"194.165.16.77",asn:"AS15169",country:"US",hit_count:1,first_seen:"2026-03-20T06:00:00Z",last_seen:"2026-03-20T06:00:00Z",token_age_avg_s:43200,trap_labels:["default"],user_agents:["Mozilla/5.0"],uids_targeted:["carol"],real_tokens_revoked:1,kill_chain_stages:["initial-access"],mitre_techniques:["T1078"],confidence:0.41},
+    ],
+    campaigns: [
+      {campaign_id:"c1",asn:"AS4134",country:"CN",attacker_ips:["185.220.101.45","45.155.205.233"],total_hits:11,first_seen:"2026-03-14T03:21:00Z",last_seen:"2026-03-20T18:45:00Z",trap_labels:["aws-cred-file","env-file","git-history"],kill_chain_stages:["credential-access","defense-evasion"],mitre_techniques:["T1552.001","T1078.004","T1552","T1213"],confidence:0.88,description:"2 attacker IPs from AS4134 (CN) targeting aws-cred-file, env-file, git-history credentials. Kill chain: credential-access → defense-evasion."},
+      {campaign_id:"c2",asn:"AS45090",country:"RU",attacker_ips:["91.219.236.17"],total_hits:5,first_seen:"2026-03-16T09:14:00Z",last_seen:"2026-03-19T22:10:00Z",trap_labels:["s3-backup","api-key-leak"],kill_chain_stages:["collection","credential-access"],mitre_techniques:["T1530","T1552"],confidence:0.72,description:"1 attacker IP from AS45090 (RU) targeting s3-backup, api-key-leak credentials. Kill chain: collection → credential-access."},
+    ],
+    iocs: [
+      {ioc_type:"ip",value:"185.220.101.45",confidence:0.92,hit_count:8,first_seen:"2026-03-14T03:21:00Z",last_seen:"2026-03-20T18:45:00Z",context:"Attacker IP from CN (ASN AS4134), 8 trap hit(s), targeting: aws-cred-file, env-file"},
+      {ioc_type:"asn",value:"AS4134",confidence:0.88,hit_count:11,first_seen:"2026-03-14T03:21:00Z",last_seen:"2026-03-20T18:45:00Z",context:"ASN used by attacker IPs 185.220.101.45, 45.155.205.233 (CN)"},
+      {ioc_type:"ip",value:"91.219.236.17",confidence:0.78,hit_count:5,first_seen:"2026-03-16T09:14:00Z",last_seen:"2026-03-19T22:10:00Z",context:"Attacker IP from RU (ASN AS45090), 5 trap hit(s), targeting: s3-backup, api-key-leak"},
+      {ioc_type:"user_agent",value:"python-requests/2.28.0",confidence:0.5,hit_count:8,first_seen:"2026-03-14T03:21:00Z",last_seen:"2026-03-20T18:45:00Z",context:"Automated UA from attacker IP 185.220.101.45"},
+      {ioc_type:"user_agent",value:"Go-http-client/1.1",confidence:0.5,hit_count:5,first_seen:"2026-03-16T09:14:00Z",last_seen:"2026-03-19T22:10:00Z",context:"Automated UA from attacker IP 91.219.236.17"},
+      {ioc_type:"ip",value:"45.155.205.233",confidence:0.65,hit_count:3,first_seen:"2026-03-17T14:00:00Z",last_seen:"2026-03-18T08:30:00Z",context:"Attacker IP from CN (ASN AS4134), 3 trap hit(s), targeting: git-history"},
+    ],
+    preflight_stats: {
+      decisions:{allow:2841,enrich:312,step_up:89,deny:23},
+      total:3265,
+      decision_pcts:{allow:87.0,enrich:9.6,step_up:2.7,deny:0.7},
+      top_signals:[
+        {signal:"threat_intel",count:156},{signal:"new_device",count:98},{signal:"impossible_travel",count:45},
+        {signal:"credential_stuffing",count:31},{signal:"velocity",count:24},{signal:"ml_anomaly",count:18},
+        {signal:"hvip_policy",count:12},{signal:"global_block",count:7},
+      ],
+    },
+  };
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const fmtDate = s => s ? new Date(s).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}) : "—";
+const fmtTime = s => s ? new Date(s).toLocaleString("en-US",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}) : "—";
+const fmtAge = s => { if(!s) return "—"; const h=s/3600; return h<1?`${Math.round(s/60)}m`:`${h.toFixed(1)}h`; };
+const confColor = c => c>=0.8?C.red:c>=0.5?C.orange:C.yellow;
+const decBadge = d => ({allow:"badge-allow",enrich:"badge-enrich",step_up:"badge-stepup",deny:"badge-deny"}[d]||"badge-allow");
+
+// ── Components ────────────────────────────────────────────────────────────────
+
+function ConfBar({value}) {
+  return React.createElement("div",{style:{width:80}},
+    React.createElement("div",{style:{display:"flex",alignItems:"center",gap:6}},
+      React.createElement("div",{className:"bar-track",style:{height:5}},
+        React.createElement("div",{className:"bar-fill",style:{width:`${value*100}%`,background:confColor(value)}})
+      ),
+      React.createElement("span",{style:{fontSize:10,color:confColor(value),minWidth:28}},(value*100).toFixed(0)+"%")
+    )
+  );
+}
+
+function KpiCard({label,value,sub,variant="info",icon}) {
+  return React.createElement("div",{className:`stat-card ${variant}`},
+    React.createElement("div",{className:"stat-label"},label),
+    React.createElement("div",{style:{display:"flex",alignItems:"baseline",gap:10}},
+      icon && React.createElement("span",{style:{fontSize:20}},"icon"),
+      React.createElement("div",{className:"stat-value",style:{color:variant==="danger"?C.red:variant==="warn"?C.yellow:variant==="ok"?C.green:C.blue}},
+        typeof value === "number" ? value.toLocaleString() : value
+      )
+    ),
+    sub && React.createElement("div",{className:"stat-sub"},sub)
+  );
+}
+
+function KillChain({dist}) {
+  const stages = ["initial-access","credential-access","privilege-escalation","lateral-movement","collection","exfiltration","defense-evasion"];
+  const max = Math.max(...stages.map(s=>dist[s]||0), 1);
+  return React.createElement("div",{className:"kill-chain"},
+    stages.map(s=>{
+      const count = dist[s]||0;
+      const pct = count/max;
+      const color = KC_COLORS[s]||C.muted;
+      const label = s.replace(/-/g,"\u00AD").replace("access","access").replace("escalation","escal.");
+      return React.createElement("div",{key:s,className:"kc-stage",style:{background:count>0?`${color}08`:"transparent"}},
+        React.createElement("div",{className:"kc-stage-name",style:{color:count>0?color:undefined}},
+          s.split("-").map(w=>w[0].toUpperCase()+w.slice(1)).join("\u200B ")
+        ),
+        React.createElement("div",{className:`kc-count ${count>0?"active":"zero"}`,style:{color:count>0?color:"#1e2d45"}},count),
+        count>0 && React.createElement("div",{className:"kc-bar",style:{background:color,transform:`scaleX(${pct})`}})
+      );
+    })
+  );
+}
+
+function SignalBars({signals}) {
+  const max = Math.max(...signals.map(s=>s.count), 1);
+  const colors = [C.red,C.orange,C.yellow,C.green,C.blue,C.indigo,C.purple,C.cyan];
+  return React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:4}},
+    signals.map((s,i)=>
+      React.createElement("div",{key:s.signal,className:"signal-row"},
+        React.createElement("div",{className:"signal-name",title:s.signal},s.signal.replace(/_/g," ")),
+        React.createElement("div",{className:"signal-bar-wrap"},
+          React.createElement("div",{className:"bar-track"},
+            React.createElement("div",{className:"bar-fill",style:{width:`${s.count/max*100}%`,background:colors[i%colors.length]}})
+          )
+        ),
+        React.createElement("div",{className:"row-count"},s.count)
+      )
+    )
+  );
+}
+
+function GeoList({countries}) {
+  const max = Math.max(...countries.map(c=>c.hits), 1);
+  const flags = {CN:"🇨🇳",RU:"🇷🇺",US:"🇺🇸",DE:"🇩🇪",NL:"🇳🇱",UA:"🇺🇦",BR:"🇧🇷",IR:"🇮🇷",KP:"🇰🇵",GB:"🇬🇧",FR:"🇫🇷",IN:"🇮🇳"};
+  return React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:6}},
+    countries.map(c=>
+      React.createElement("div",{key:c.country,className:"row-bar"},
+        React.createElement("div",{className:"row-label"},`${flags[c.country]||"🌐"} ${c.country}`),
+        React.createElement("div",{className:"bar-track"},
+          React.createElement("div",{className:"bar-fill",style:{width:`${c.hits/max*100}%`,background:C.red}})
+        ),
+        React.createElement("div",{className:"row-count"},c.hits)
+      )
+    )
+  );
+}
+
+function DecisionPie({stats}) {
+  const d = stats.decisions;
+  const data = [
+    {name:"Allow",  value:d.allow,  color:C.green},
+    {name:"Enrich", value:d.enrich, color:C.blue},
+    {name:"Step-Up",value:d.step_up,color:C.yellow},
+    {name:"Deny",   value:d.deny,   color:C.red},
+  ].filter(x=>x.value>0);
+
+  return React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:0}},
+    React.createElement(ResponsiveContainer,{width:"100%",height:160},
+      React.createElement(PieChart,null,
+        React.createElement(Pie,{data,cx:"50%",cy:"50%",innerRadius:45,outerRadius:70,paddingAngle:2,dataKey:"value"},
+          data.map((e,i)=>React.createElement(Cell,{key:i,fill:e.color}))
+        ),
+        React.createElement(Tooltip,{contentStyle:{background:"#0e1520",border:"1px solid #1e2d45",borderRadius:8,fontSize:12},formatter:(v,n)=>[v.toLocaleString(),n]})
+      )
+    ),
+    React.createElement("div",{style:{display:"flex",flexWrap:"wrap",gap:8,justifyContent:"center",marginTop:4}},
+      data.map(e=>
+        React.createElement("div",{key:e.name,style:{display:"flex",alignItems:"center",gap:5,fontSize:11}},
+          React.createElement("div",{style:{width:8,height:8,borderRadius:"50%",background:e.color,flexShrink:0}}),
+          React.createElement("span",{style:{color:"#94a3b8"}},`${e.name} `),
+          React.createElement("span",{style:{fontWeight:600}},`${stats.decision_pcts[e.name.toLowerCase().replace("-","_")]||stats.decision_pcts[e.name.toLowerCase()]}%`)
+        )
+      )
+    )
+  );
+}
+
+function HitTimeline({data}) {
+  const fmt = d => d.slice(5);
+  return React.createElement(ResponsiveContainer,{width:"100%",height:160},
+    React.createElement(AreaChart,{data,margin:{top:4,right:4,left:-20,bottom:0}},
+      React.createElement("defs",null,
+        React.createElement("linearGradient",{id:"hitGrad",x1:"0",y1:"0",x2:"0",y2:"1"},
+          React.createElement("stop",{offset:"5%",stopColor:C.red,stopOpacity:0.25}),
+          React.createElement("stop",{offset:"95%",stopColor:C.red,stopOpacity:0.02})
+        )
+      ),
+      React.createElement(CartesianGrid,{strokeDasharray:"3 3",stroke:"#1e2d45",vertical:false}),
+      React.createElement(XAxis,{dataKey:"date",tickFormatter:fmt,tick:{fontSize:10,fill:"#64748b"},axisLine:false,tickLine:false,interval:4}),
+      React.createElement(YAxis,{tick:{fontSize:10,fill:"#64748b"},axisLine:false,tickLine:false}),
+      React.createElement(Tooltip,{contentStyle:{background:"#0e1520",border:"1px solid #1e2d45",borderRadius:8,fontSize:12},labelFormatter:d=>`Date: ${d}`}),
+      React.createElement(Area,{type:"monotone",dataKey:"hits",stroke:C.red,strokeWidth:2,fill:"url(#hitGrad)",name:"Trap Hits"}),
+      React.createElement(Area,{type:"monotone",dataKey:"tokens_revoked",stroke:C.orange,strokeWidth:1.5,fill:"none",strokeDasharray:"4 2",name:"Tokens Revoked"})
+    )
+  );
+}
+
+function AttackerTable({profiles}) {
+  if (!profiles.length) return React.createElement("div",{className:"empty-state"},
+    React.createElement("div",{className:"empty-icon"},"🪤"),
+    React.createElement("div",{className:"empty-msg"},"No trap hits recorded yet. Issue trap tokens via POST /admin/traps to start monitoring.")
+  );
+  return React.createElement("div",{className:"table-wrap"},
+    React.createElement("table",null,
+      React.createElement("thead",null,
+        React.createElement("tr",null,
+          ["Attacker IP","Country / ASN","Hits","Token Age","Traps Triggered","MITRE","Revoked","Confidence"].map(h=>
+            React.createElement("th",{key:h},h)
+          )
+        )
+      ),
+      React.createElement("tbody",null,
+        profiles.map(p=>
+          React.createElement("tr",{key:p.ip},
+            React.createElement("td",null,React.createElement("span",{className:"mono"},p.ip)),
+            React.createElement("td",null,
+              React.createElement("div",null,p.country||"—"),
+              React.createElement("div",{style:{fontSize:10,color:"#64748b",marginTop:2,fontFamily:"monospace"}},p.asn||"—")
+            ),
+            React.createElement("td",null,
+              React.createElement("span",{style:{fontWeight:700,color:p.hit_count>=5?C.red:p.hit_count>=2?C.orange:C.yellow}},p.hit_count)
+            ),
+            React.createElement("td",{style:{fontSize:12,color:"#94a3b8"}},fmtAge(p.token_age_avg_s)),
+            React.createElement("td",null,
+              React.createElement("div",{style:{display:"flex",flexWrap:"wrap",gap:3}},
+                p.trap_labels.slice(0,3).map(l=>
+                  React.createElement("span",{key:l,className:"badge badge-crit",style:{fontSize:9}},l)
+                )
+              )
+            ),
+            React.createElement("td",null,
+              React.createElement("div",{style:{display:"flex",flexWrap:"wrap",gap:2}},
+                p.mitre_techniques.slice(0,3).map(t=>
+                  React.createElement("span",{key:t,className:"tech-tag"},t)
+                )
+              )
+            ),
+            React.createElement("td",null,
+              React.createElement("span",{style:{color:p.real_tokens_revoked>0?C.orange:C.muted,fontWeight:600}},p.real_tokens_revoked)
+            ),
+            React.createElement("td",null,React.createElement(ConfBar,{value:p.confidence}))
+          )
+        )
+      )
+    )
+  );
+}
+
+function CampaignCards({campaigns}) {
+  if (!campaigns.length) return React.createElement("div",{className:"empty-state"},
+    React.createElement("div",{className:"empty-msg"},"No multi-IP campaigns detected.")
+  );
+  return React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:12}},
+    campaigns.map(c=>
+      React.createElement("div",{key:c.campaign_id,className:"card",style:{borderColor:c.confidence>=0.8?"rgba(239,68,68,.3)":c.confidence>=0.5?"rgba(249,115,22,.25)":"rgba(30,45,69,1)"}},
+        React.createElement("div",{className:"card-body"},
+          React.createElement("div",{style:{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12}},
+            React.createElement("div",{style:{flex:1}},
+              React.createElement("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:6}},
+                React.createElement("span",{style:{fontWeight:700,fontSize:13,fontFamily:"monospace"}},c.asn),
+                React.createElement("span",{style:{fontSize:11,color:"#94a3b8"}},c.country||"—"),
+                React.createElement("span",{className:"badge badge-crit",style:{fontSize:9}},`${c.total_hits} hits`),
+                React.createElement("span",{className:"badge badge-high",style:{fontSize:9}},`${c.attacker_ips.length} IPs`)
+              ),
+              React.createElement("div",{style:{fontSize:12,color:"#94a3b8",marginBottom:8}},c.description),
+              React.createElement("div",{style:{display:"flex",flexWrap:"wrap",gap:4}},
+                c.mitre_techniques.slice(0,5).map(t=>
+                  React.createElement("span",{key:t,className:"tech-tag"},t)
+                )
+              )
+            ),
+            React.createElement("div",{style:{textAlign:"right",flexShrink:0}},
+              React.createElement("div",{style:{fontSize:10,color:"#64748b",marginBottom:4}},`${fmtDate(c.first_seen)} – ${fmtDate(c.last_seen)}`),
+              React.createElement(ConfBar,{value:c.confidence})
+            )
+          )
+        )
+      )
+    )
+  );
+}
+
+function IOCTable({iocs}) {
+  const [filter, setFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
+
+  const filtered = iocs.filter(i=>{
+    const matchType = typeFilter==="all" || i.ioc_type===typeFilter;
+    const matchStr  = !filter || i.value.toLowerCase().includes(filter.toLowerCase()) || i.context.toLowerCase().includes(filter.toLowerCase());
+    return matchType && matchStr;
+  });
+
+  const exportCSV = () => {
+    const rows = [["Type","Value","Confidence","Hit Count","First Seen","Last Seen","Context"]];
+    filtered.forEach(i=>rows.push([i.ioc_type,i.value,i.confidence,i.hit_count,i.first_seen,i.last_seen,`"${i.context}"`]));
+    const blob = new Blob([rows.map(r=>r.join(",")).join("\n")],{type:"text/csv"});
+    const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="aegis-iocs.csv"; a.click();
+  };
+
+  const typeLabel = {ip:"badge-ip",asn:"badge-asn",user_agent:"badge-ua"};
+
+  return React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:12}},
+    React.createElement("div",{style:{display:"flex",gap:8,flexWrap:"wrap"}},
+      React.createElement("input",{
+        type:"text",placeholder:"Filter IOCs…",value:filter,
+        onChange:e=>setFilter(e.target.value),
+        style:{flex:1,minWidth:180,background:"#0e1520",border:"1px solid #1e2d45",borderRadius:6,padding:"6px 12px",color:"#e2e8f0",fontSize:12,outline:"none"}
+      }),
+      ["all","ip","asn","user_agent"].map(t=>
+        React.createElement("button",{key:t,className:`btn${typeFilter===t?" active":""}`,onClick:()=>setTypeFilter(t),
+          style:{background:typeFilter===t?"#1a2540":"#0e1520",borderColor:typeFilter===t?"#3b82f6":"#1e2d45"}},
+          t==="user_agent"?"UA":t.toUpperCase()
+        )
+      ),
+      React.createElement("button",{className:"btn",onClick:exportCSV},"⬇ Export CSV")
+    ),
+    React.createElement("div",{className:"table-wrap"},
+      React.createElement("table",null,
+        React.createElement("thead",null,
+          React.createElement("tr",null,
+            ["Type","Value","Confidence","Hits","First Seen","Context"].map(h=>
+              React.createElement("th",{key:h},h)
+            )
+          )
+        ),
+        React.createElement("tbody",null,
+          filtered.slice(0,100).map((ioc,i)=>
+            React.createElement("tr",{key:i},
+              React.createElement("td",null,React.createElement("span",{className:`badge ${typeLabel[ioc.ioc_type]||"badge-low"}`},ioc.ioc_type.replace("_"," "))),
+              React.createElement("td",null,React.createElement("span",{className:"ioc-value"},ioc.value)),
+              React.createElement("td",null,React.createElement(ConfBar,{value:ioc.confidence})),
+              React.createElement("td",null,ioc.hit_count),
+              React.createElement("td",{style:{fontSize:11,color:"#64748b"}},fmtDate(ioc.first_seen)),
+              React.createElement("td",{style:{fontSize:11,color:"#94a3b8",maxWidth:300}},ioc.context)
+            )
+          )
+        )
+      )
+    ),
+    filtered.length === 0 && React.createElement("div",{className:"empty-state"},
+      React.createElement("div",{className:"empty-msg"},"No IOCs match the current filter.")
+    )
+  );
+}
+
+// ── Main App ──────────────────────────────────────────────────────────────────
+function App() {
+  const [data, setData]       = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState(null);
+  const [lastRefresh, setLastRefresh] = useState(null);
+  const [activeTab, setActiveTab] = useState("overview");
+  const [useMock, setUseMock]   = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const d = await apiFetch(`/api/attribution?window_hours=${WINDOW_HOURS}`);
+      setData(d);
+      setUseMock(false);
+      setError(null);
+    } catch(e) {
+      // Use mock data when API unavailable (dev mode / no real hits)
+      setData(mockData());
+      setUseMock(true);
+      setError(null);
+    }
+    setLastRefresh(new Date());
+    setLoading(false);
+  }, []);
+
+  useEffect(()=>{ load(); const t=setInterval(load,REFRESH_MS); return ()=>clearInterval(t); },[load]);
+
+  if (!data) return React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",color:"#64748b"}},"Loading attribution data…");
+
+  const { kpis, geo, asns, kill_chain, mitre, daily_hits, attacker_profiles, campaigns, iocs, preflight_stats } = data;
+
+  const tabs = [
+    {id:"overview",  label:"Overview"},
+    {id:"profiles",  label:`Attacker Profiles (${attacker_profiles.length})`},
+    {id:"campaigns", label:`Campaigns (${campaigns.length})`},
+    {id:"iocs",      label:`IOC Export (${iocs.length})`},
+  ];
+
+  return React.createElement("div",{className:"shell"},
+    // Sidebar
+    React.createElement("div",{className:"sidebar"},
+      React.createElement("div",{className:"logo"},
+        React.createElement("div",{className:"logo-text"},
+          React.createElement("div",{className:"logo-dot"}),
+          "Aegis"
+        ),
+        React.createElement("div",{className:"logo-sub"},"Attribution Intelligence")
+      ),
+      React.createElement("div",{className:"nav-section"},
+        React.createElement("div",{className:"nav-label"},"Defense"),
+        React.createElement("a",{href:"/dashboard",className:"nav-item"},"🛡️ Session Integrity"),
+        React.createElement("a",{href:"/dashboard/attribution",className:"nav-item active"},"🎯 Attribution"),
+      ),
+      React.createElement("div",{className:"nav-section"},
+        React.createElement("div",{className:"nav-label"},"Threat Intel"),
+        React.createElement("span",{className:"nav-item",onClick:()=>setActiveTab("profiles")},"👤 Attacker Profiles"),
+        React.createElement("span",{className:"nav-item",onClick:()=>setActiveTab("campaigns")},"🗂 Campaigns"),
+        React.createElement("span",{className:"nav-item",onClick:()=>setActiveTab("iocs")},"📋 IOC Export"),
+      ),
+      React.createElement("div",{className:"nav-section"},
+        React.createElement("div",{className:"nav-label"},"Compliance"),
+        React.createElement("a",{href:"/api/stig",className:"nav-item"},"🔒 STIG"),
+        React.createElement("a",{href:"/api/acas",className:"nav-item"},"🔍 ACAS/Nessus"),
+        React.createElement("a",{href:"/api/audit",className:"nav-item"},"📜 Audit Log"),
+      ),
+      // Footer
+      React.createElement("div",{style:{marginTop:"auto",padding:"16px",borderTop:"1px solid #1e2d45",fontSize:11,color:"#64748b"}},
+        React.createElement("div",null,"Aegis Security Platform"),
+        React.createElement("div",{style:{marginTop:2}},`v2.6.0 · NIST SP 800-53`)
+      )
+    ),
+
+    // Main
+    React.createElement("div",{className:"main"},
+      // Topbar
+      React.createElement("div",{className:"topbar"},
+        React.createElement("div",{className:"topbar-title"},"Threat Attribution & IOC Intelligence"),
+        useMock && React.createElement("span",{className:"topbar-badge",style:{background:"rgba(245,158,11,.15)",color:"#f59e0b"}},"DEMO MODE"),
+        !useMock && React.createElement("span",{className:"topbar-badge",style:{background:"rgba(239,68,68,.15)",color:"#ef4444"}},"LIVE"),
+        React.createElement("div",{className:"status-row"},
+          React.createElement("div",{className:`refresh-dot${loading?" loading":""}`}),
+          lastRefresh ? `Updated ${lastRefresh.toLocaleTimeString()}` : "Loading…"
+        ),
+        React.createElement("button",{className:"btn",onClick:load},"↻ Refresh")
+      ),
+
+      // Tab bar
+      React.createElement("div",{className:"tab-row"},
+        tabs.map(t=>
+          React.createElement("div",{key:t.id,className:`tab${activeTab===t.id?" active":""}`,onClick:()=>setActiveTab(t.id)},t.label)
+        )
+      ),
+
+      // Content
+      React.createElement("div",{className:"content"},
+
+        // ── OVERVIEW TAB ──────────────────────────────────────────────────────
+        activeTab === "overview" && React.createElement(React.Fragment,null,
+
+          // KPI row
+          React.createElement("div",{className:"grid-4"},
+            React.createElement(KpiCard,{label:"Total Trap Hits",value:kpis.total_trap_hits,sub:"Token honeypot activations",variant:"danger"}),
+            React.createElement(KpiCard,{label:"Unique Attacker IPs",value:kpis.unique_attacker_ips,sub:"Distinct source addresses",variant:"warn"}),
+            React.createElement(KpiCard,{label:"Active Campaigns",value:kpis.active_campaigns,sub:"Correlated infrastructure clusters",variant:"info"}),
+            React.createElement(KpiCard,{label:"Tokens Revoked",value:kpis.real_tokens_revoked,sub:"Real sessions auto-terminated",variant:"ok"}),
+          ),
+
+          // Timeline + Donut
+          React.createElement("div",{className:"grid-2"},
+            React.createElement("div",{className:"card"},
+              React.createElement("div",{className:"card-header"},
+                React.createElement("div",{className:"card-title"},"Trap Hit Timeline (30 days)"),
+                React.createElement("div",{style:{fontSize:10,color:"#64748b"}},
+                  React.createElement("span",{style:{color:C.red}},`—`),
+                  " Hits  ",
+                  React.createElement("span",{style:{color:C.orange}},`- -`),
+                  " Revoked"
+                )
+              ),
+              React.createElement("div",{className:"card-body",style:{paddingTop:12}},
+                React.createElement(HitTimeline,{data:daily_hits})
+              )
+            ),
+            React.createElement("div",{className:"card"},
+              React.createElement("div",{className:"card-header"},
+                React.createElement("div",{className:"card-title"},"Preflight Gate Decisions"),
+                React.createElement("div",{style:{fontSize:10,color:"#64748b"}},`${(preflight_stats.total||0).toLocaleString()} evaluated`)
+              ),
+              React.createElement("div",{className:"card-body",style:{paddingTop:8}},
+                React.createElement(DecisionPie,{stats:preflight_stats})
+              )
+            )
+          ),
+
+          // Kill Chain
+          React.createElement("div",{className:"card"},
+            React.createElement("div",{className:"card-header"},
+              React.createElement("div",{className:"card-title"},"MITRE ATT&CK Kill Chain — Activity by Stage")
+            ),
+            React.createElement(KillChain,{dist:kill_chain})
+          ),
+
+          // Signals + Geo + MITRE
+          React.createElement("div",{className:"grid-3"},
+            React.createElement("div",{className:"card"},
+              React.createElement("div",{className:"card-header"},React.createElement("div",{className:"card-title"},"Top Preflight Signals")),
+              React.createElement("div",{className:"card-body"},
+                React.createElement(SignalBars,{signals:preflight_stats.top_signals||[]})
+              )
+            ),
+            React.createElement("div",{className:"card"},
+              React.createElement("div",{className:"card-header"},React.createElement("div",{className:"card-title"},"Attacker Origin Countries")),
+              React.createElement("div",{className:"card-body"},
+                geo.length ? React.createElement(GeoList,{countries:geo.slice(0,8)}) :
+                React.createElement("div",{className:"empty-state"},React.createElement("div",{className:"empty-msg"},"No geo data yet"))
+              )
+            ),
+            React.createElement("div",{className:"card"},
+              React.createElement("div",{className:"card-header"},React.createElement("div",{className:"card-title"},"Top MITRE Techniques")),
+              React.createElement("div",{className:"card-body"},
+                React.createElement("div",{style:{display:"flex",flexWrap:"wrap",gap:4}},
+                  mitre.slice(0,12).map(t=>
+                    React.createElement("div",{key:t.technique,className:"mitre-tag",title:t.stage},
+                      React.createElement("span",null,t.technique),
+                      React.createElement("span",{className:"mitre-stage"},t.count)
+                    )
+                  )
+                )
+              )
+            )
+          ),
+
+          // Recent hits table
+          React.createElement("div",{className:"card"},
+            React.createElement("div",{className:"card-header"},
+              React.createElement("div",{className:"card-title"},"Top Attacker Profiles"),
+              React.createElement("button",{className:"btn",style:{fontSize:11},onClick:()=>setActiveTab("profiles")},"View All →")
+            ),
+            React.createElement("div",{className:"card-body",style:{padding:"0 0 4px"}},
+              React.createElement(AttackerTable,{profiles:attacker_profiles.slice(0,5)})
+            )
+          )
+        ),
+
+        // ── PROFILES TAB ─────────────────────────────────────────────────────
+        activeTab === "profiles" && React.createElement("div",{className:"card"},
+          React.createElement("div",{className:"card-header"},
+            React.createElement("div",{className:"card-title"},`Attacker Profiles (${attacker_profiles.length})`),
+            React.createElement("div",{style:{fontSize:11,color:"#64748b"}},`${WINDOW_HOURS/24}-day window`)
+          ),
+          React.createElement("div",{className:"card-body",style:{padding:"0 0 4px"}},
+            React.createElement(AttackerTable,{profiles:attacker_profiles})
+          )
+        ),
+
+        // ── CAMPAIGNS TAB ────────────────────────────────────────────────────
+        activeTab === "campaigns" && React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:12}},
+          React.createElement("div",{className:"card"},
+            React.createElement("div",{className:"card-header"},
+              React.createElement("div",{className:"card-title"},`Active Campaigns (${campaigns.length})`),
+              React.createElement("div",{style:{fontSize:11,color:"#64748b"}},"Correlated multi-IP infrastructure clusters")
+            ),
+            React.createElement("div",{className:"card-body"},
+              React.createElement(CampaignCards,{campaigns})
+            )
+          )
+        ),
+
+        // ── IOC TAB ───────────────────────────────────────────────────────────
+        activeTab === "iocs" && React.createElement("div",{className:"card"},
+          React.createElement("div",{className:"card-header"},
+            React.createElement("div",{className:"card-title"},`IOC Export (${iocs.length} indicators)`),
+            React.createElement("div",{style:{fontSize:11,color:"#64748b"}},"IP, ASN, User-Agent indicators for SIEM / firewall ingestion")
+          ),
+          React.createElement("div",{className:"card-body"},
+            React.createElement(IOCTable,{iocs})
+          )
+        )
+
+      ) // content
+    ) // main
+  ); // shell
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+</script>
+</body>
+</html>

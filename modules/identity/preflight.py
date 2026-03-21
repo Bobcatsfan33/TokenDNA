@@ -625,6 +625,45 @@ def build_preflight_context(body: dict, idp: str = "generic") -> PreflightContex
 
 
 def evaluate_preflight(body: dict, idp: str = "generic") -> PreflightResult:
-    """Convenience wrapper — parse body, evaluate, return result."""
-    ctx = build_preflight_context(body, idp=idp)
-    return _gate.evaluate(ctx)
+    """
+    Convenience wrapper — parse body, evaluate, persist stats, return result.
+    Persists decision + signal counts to Redis for the Attribution Dashboard.
+    AU-2 / SI-4: event logging and monitoring.
+    """
+    ctx    = build_preflight_context(body, idp=idp)
+    result = _gate.evaluate(ctx)
+    _store_gate_stats(ctx, result)
+    return result
+
+
+def _store_gate_stats(ctx: "PreflightContext", result: "PreflightResult") -> None:
+    """
+    Persist gate decision and signal trigger counts to Redis for analytics.
+    Keys:
+      preflight:decisions:{tenant_id}:{YYYY-MM-DD}  → hash {allow, enrich, step_up, deny}
+      preflight:signals:{tenant_id}:{YYYY-MM-DD}    → hash {signal_name: count}
+    Both keys expire after 90 days to bound Redis memory.
+    """
+    try:
+        from modules.identity.cache_redis import get_redis
+        from datetime import datetime, timezone
+        r   = get_redis()
+        tid = ctx.tenant_id or "global"
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        ttl = 90 * 86400  # 90-day retention
+
+        # Decision counter
+        dec_key = f"preflight:decisions:{tid}:{day}"
+        r.hincrby(dec_key, result.decision.value, 1)
+        r.expire(dec_key, ttl)
+
+        # Signal trigger counters
+        sig_key = f"preflight:signals:{tid}:{day}"
+        for signal in result.signals:
+            if signal.triggered:
+                r.hincrby(sig_key, signal.name, 1)
+        r.expire(sig_key, ttl)
+
+    except Exception as e:
+        # Non-fatal — attribution stats are best-effort
+        logger.debug("Failed to persist preflight gate stats: %s", e)
