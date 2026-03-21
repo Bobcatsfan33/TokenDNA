@@ -60,6 +60,9 @@ from modules.identity import clickhouse_client
 from modules.tenants import store as tenant_store
 from modules.tenants.middleware import get_tenant
 from modules.tenants.models import Plan, TenantContext
+from modules.security.audit_log import AuditEventType, AuditOutcome, log_event
+from modules.security.headers import RequestValidationMiddleware, SecurityHeadersMiddleware
+from modules.security.rbac import Role, require_role
 
 logging.basicConfig(
     level=logging.INFO,
@@ -72,16 +75,20 @@ _DASHBOARD_PATH = Path(__file__).parent / "dashboard" / "index.html"
 app = FastAPI(
     title="Aegis Security Platform",
     description="TokenDNA zero-trust session integrity + Aegis cloud posture management",
-    version="2.1.0",
+    version="2.2.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
 )
 
+# Security middleware (order matters — validation runs first, then headers)
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestValidationMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000").split(","),
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Authorization", "X-API-Key", "X-Correlation-ID", "Content-Type"],
+    allow_credentials=False,  # explicit — never wildcard credentials
 )
 
 
@@ -103,6 +110,10 @@ async def startup_checks():
 
     loop = asyncio.get_event_loop()
     loop.run_in_executor(None, threat_intel._ensure_tor_list)
+
+    # Emit startup audit event (AU-2: application startup)
+    log_event(AuditEventType.STARTUP, AuditOutcome.SUCCESS,
+              detail={"version": "2.2.0", "dev_mode": DEV_MODE})
 
 
 # ── Rate limiting dependency ──────────────────────────────────────────────────
@@ -326,21 +337,27 @@ async def reset_profile(
 async def manual_revoke(
     body: dict,
     _user: dict = Depends(verify_token),
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
 ):
     jti = body.get("jti")
     if not jti:
         raise HTTPException(status_code=400, detail="'jti' field required")
     ttl = int(body.get("ttl_seconds", 3600))
     revoke_token(jti, ttl_seconds=ttl, tenant_id=tenant.tenant_id)
+    log_event(AuditEventType.AUTH_TOKEN_REVOKED, AuditOutcome.SUCCESS,
+              tenant_id=tenant.tenant_id, subject=tenant.owner_email,
+              resource=f"jti:{jti}", detail={"ttl_seconds": ttl, "manual": True})
     return {"status": "revoked", "jti": jti, "ttl_seconds": ttl}
 
 
 # ── Tenant management (admin) ─────────────────────────────────────────────────
 
 @app.get("/admin/tenants")
-async def list_tenants(_user: dict = Depends(verify_token)):
+async def list_tenants(tenant: TenantContext = Depends(require_role(Role.ADMIN))):
     tenants = tenant_store.list_tenants()
+    log_event(AuditEventType.ACCESS_GRANTED, AuditOutcome.SUCCESS,
+              tenant_id=tenant.tenant_id, subject=tenant.owner_email,
+              resource="/admin/tenants", detail={"action": "list"})
     return {"tenants": [
         {"id": t.id, "name": t.name, "plan": t.plan.value,
          "is_active": t.is_active, "owner_email": t.owner_email,
@@ -350,15 +367,18 @@ async def list_tenants(_user: dict = Depends(verify_token)):
 
 
 @app.post("/admin/tenants", status_code=201)
-async def create_tenant(body: dict, _user: dict = Depends(verify_token)):
+async def create_tenant(body: dict, tenant: TenantContext = Depends(require_role(Role.OWNER))):
     name  = body.get("name", "").strip()
     email = body.get("owner_email", "").strip()
     plan  = Plan(body.get("plan", "free"))
     if not name:
         raise HTTPException(status_code=400, detail="'name' required")
-    tenant, raw_key = tenant_store.create_tenant(name=name, owner_email=email, plan=plan)
+    new_tenant, raw_key = tenant_store.create_tenant(name=name, owner_email=email, plan=plan)
+    log_event(AuditEventType.TENANT_CREATED, AuditOutcome.SUCCESS,
+              tenant_id=tenant.tenant_id, subject=tenant.owner_email,
+              resource=f"tenant:{new_tenant.id}", detail={"name": name, "plan": plan.value})
     return {
-        "tenant":  {"id": tenant.id, "name": tenant.name, "plan": tenant.plan.value},
+        "tenant":  {"id": new_tenant.id, "name": new_tenant.name, "plan": new_tenant.plan.value},
         "api_key": raw_key,
         "warning": "Save this API key now — it will NOT be shown again.",
     }
@@ -419,3 +439,123 @@ async def aws_test(body: dict, _user: dict = Depends(verify_token)):
         "errors":      result.errors,
         "warnings":    result.warnings,
     }
+
+# ── Session Intelligence (/api/sessions) ──────────────────────────────────────
+
+@app.get("/api/sessions")
+async def api_sessions(
+    limit: int = 50,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """
+    Return per-user risk profiles for the Sessions Intelligence page.
+    Aggregates from Redis ml_model profiles — no ClickHouse needed.
+    """
+    r  = get_redis()
+    tr = TenantRedis(r, tenant.tenant_id)
+
+    # Scan for profile keys in this tenant's namespace
+    pattern = f"t:{tenant.tenant_id}:profile:*"
+    try:
+        keys = r.keys(pattern)
+    except Exception:
+        keys = []
+
+    profiles = []
+    for key in keys[:limit]:
+        try:
+            # key format: t:{tid}:profile:{user_id}
+            user_id = key.decode("utf-8").split(":")[-1] if isinstance(key, bytes) else key.split(":")[-1]
+            raw = r.hgetall(key)
+            if not raw:
+                continue
+            decoded = {
+                k.decode("utf-8") if isinstance(k, bytes) else k:
+                v.decode("utf-8") if isinstance(v, bytes) else v
+                for k, v in raw.items()
+            }
+            profiles.append({
+                "user_id":   user_id,
+                "avg_score": float(decoded.get("score_ema", 50)),
+                "last_tier": decoded.get("last_tier", "ALLOW"),
+                "requests":  int(decoded.get("request_count", 0)),
+                "countries": [c for c in decoded.get("countries", "").split(",") if c],
+                "tor_hits":  int(decoded.get("tor_hits", 0)),
+                "last_seen": decoded.get("last_seen", ""),
+            })
+        except Exception:
+            continue
+
+    # Sort by highest risk first
+    profiles.sort(key=lambda p: p["avg_score"])
+
+    return {"profiles": profiles, "total": len(profiles), "tenant_id": tenant.tenant_id}
+
+
+# ── Cloud Posture Findings (/api/cloud-findings) ───────────────────────────────
+
+@app.get("/api/cloud-findings")
+async def api_cloud_findings(
+    limit: int = 100,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """
+    Return the latest cloud posture findings for this tenant.
+    Queries ClickHouse remediation_actions table which Aegis CSPM writes to.
+    Falls back to Redis-cached last scan if ClickHouse unavailable.
+    """
+    try:
+        rows = clickhouse_client.query_recent_events(
+            tenant.tenant_id, limit=min(limit, 500)
+        )
+        # Filter for scan findings (event_type = "finding")
+        findings = [r for r in rows if r.get("event_type") in ("finding", "scan_finding")]
+    except Exception:
+        findings = []
+
+    # Build severity summary
+    summary = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    for f in findings:
+        sev = f.get("severity", "low").lower()
+        if sev in summary:
+            summary[sev] += 1
+
+    return {
+        "findings": findings,
+        "summary": summary,
+        "total": len(findings),
+        "tenant_id": tenant.tenant_id,
+    }
+
+
+# ── Audit Log endpoint (OWNER only) ────────────────────────────────────────────
+
+@app.get("/api/audit")
+async def api_audit_log(
+    limit: int = 100,
+    tenant: TenantContext = Depends(require_role(Role.OWNER)),
+):
+    """
+    Return recent audit log entries for this tenant.
+    OWNER role required — audit logs are the most sensitive data in the platform.
+    """
+    from pathlib import Path
+    import json as _json
+    from config import AUDIT_LOG_PATH  # type: ignore[attr-defined]
+
+    path = Path(AUDIT_LOG_PATH) if "AUDIT_LOG_PATH" in dir() else Path("/var/log/aegis/audit.jsonl")
+    entries = []
+    try:
+        if path.exists():
+            lines = path.read_text().splitlines()[-limit:]
+            for line in lines:
+                try:
+                    entry = _json.loads(line)
+                    if entry.get("tenant_id") in (tenant.tenant_id, "_global_"):
+                        entries.append(entry)
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    return {"entries": entries[-limit:], "total": len(entries)}

@@ -1,6 +1,14 @@
-# TokenDNA
+# TokenDNA · Aegis Security
 
-**Zero-Trust token integrity and session behavioral analytics**
+[![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL%201.1-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-blue)](https://www.python.org/)
+[![CI](https://github.com/Bobcatsfan33/TokenDNA/actions/workflows/ci.yml/badge.svg)](https://github.com/Bobcatsfan33/TokenDNA/actions/workflows/ci.yml)
+[![Security: FedRAMP-aligned](https://img.shields.io/badge/Security-FedRAMP%20High%20%7C%20IL6%20aligned-red)](SECURITY.md)
+[![PRs: owner approval required](https://img.shields.io/badge/PRs-owner%20approval%20required-yellow)](CONTRIBUTING.md)
+
+> **v2.2.0** — Security hardening release: RBAC, immutable audit log, security headers middleware, HMAC-SHA256 IP fingerprinting, secrets manager backend, CIS Docker hardening.
+
+**Zero-Trust token integrity and session behavioral analytics.**
 
 TokenDNA detects stolen JWT/Bearer tokens in real time by building a behavioral "DNA" fingerprint for each user — device, IP, geolocation, ASN, browser, OS — and flagging anomalies like impossible travel, session branching, Tor/VPN usage, and known-malicious IPs. Every request is scored and responded to adaptively: allow, step-up MFA, block, or auto-revoke.
 
@@ -95,13 +103,19 @@ All settings are read from environment variables (see `.env.example`).
 
 ## API Endpoints
 
-| Method | Path | Auth | Description |
+| Method | Path | Role | Description |
 |--------|------|------|-------------|
 | `GET` | `/` | None | Health check |
-| `GET` | `/secure` | Bearer JWT | Main integrity check |
-| `GET` | `/profile/{uid}` | Bearer JWT | Inspect user profile |
-| `DELETE` | `/profile/{uid}` | Bearer JWT | Reset user profile |
-| `POST` | `/revoke` | Bearer JWT | Manually revoke token by jti |
+| `GET` | `/secure` | READONLY+ | Main integrity check — validate token DNA |
+| `GET` | `/profile/{uid}` | ANALYST+ | Inspect user behavioral profile |
+| `DELETE` | `/profile/{uid}` | ANALYST+ | Reset user profile baseline |
+| `POST` | `/revoke` | ANALYST+ | Manually revoke token by `jti` |
+| `GET` | `/api/sessions` | ANALYST+ | Active session risk profiles |
+| `GET` | `/api/cloud-findings` | ANALYST+ | Cloud scan findings with severity summary |
+| `GET` | `/api/audit` | OWNER only | Tail the immutable audit log |
+| `GET` | `/admin/tenants` | ADMIN+ | List tenants |
+| `POST` | `/admin/tenants` | OWNER only | Create a new tenant |
+| `GET` | `/docs` | Dev only | Swagger UI (disabled in production) |
 
 ---
 
@@ -158,3 +172,34 @@ WHERE user_id = 'abc123'
 ORDER BY timestamp DESC
 LIMIT 20;
 ```
+
+---
+
+## Security & Compliance
+
+TokenDNA is built toward **FedRAMP High** and **DoD IL6** alignment. Key controls in v2.2.0:
+
+| Control Family | Implementation |
+|---|---|
+| **AU-2 / AU-3 / AU-9** — Audit | Immutable hash-chained JSONL audit log; HMAC-SHA256 tamper detection; `os.fsync()` write hardening |
+| **AC-3 / AC-6** — Access Control | 4-tier RBAC (OWNER / ADMIN / ANALYST / READONLY); `require_role()` FastAPI dependency |
+| **SC-8 / SC-28** — Transmission / Data | HMAC-SHA256 IP/UA fingerprinting prevents rainbow-table reversal; HSTS + full security headers middleware |
+| **IA-5** — Credential Management | AWS Secrets Manager and HashiCorp Vault backend; FIPS 140-2 endpoint support |
+| **CM-7** — Least Functionality | CIS Docker Benchmark hardening; seccomp syscall allowlist; non-root container user (UID 10001) |
+| **SI-2** — Flaw Remediation | GitHub Actions CI: CodeQL, pip-audit, TruffleHog, Trivy on every PR; Dependabot weekly scans |
+| **SC-5** — Denial of Service Protection | Per-tenant rate limiting via Redis; 1MB body size hard limit; header size enforcement |
+
+Open gaps being tracked toward full accreditation: mTLS service mesh, database encryption at rest, CAC/PIV authentication, full ABAC. See [SECURITY.md](SECURITY.md) for the complete posture.
+
+---
+
+## Contributing
+
+All community contributions are welcome. Every PR must be approved by the repository owner before merge. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the security checklist and responsible disclosure process.
+
+---
+
+## License
+
+Business Source License 1.1 (BUSL-1.1). See [LICENSE](LICENSE).
+Free for non-competing use; converts to Apache 2.0 four years from first public release.
