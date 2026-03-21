@@ -1,5 +1,5 @@
 """
-TokenDNA / Aegis Security Platform -- FastAPI v2.5.0
+TokenDNA / Aegis Security Platform -- FastAPI v2.7.0
 
 Endpoints
 ─────────
@@ -54,6 +54,16 @@ v2.5.0 — Active Defense + Pre-Issuance Gate:
     ML score, global block) before IdP issues a token.  Returns IdP-native
     response format (Auth0 / Okta / Keycloak / generic).
   - Token Trap admin endpoints: POST /admin/traps (issue), GET /admin/traps/hits.
+
+v2.7.0 — mTLS Service Mesh:
+  - MTLSMiddleware: proxy mode (Nginx/Envoy) and native mode (Uvicorn TLS).
+  - PeerIdentity bound into request.state for downstream RBAC enrichment.
+  - FIPS-approved cipher suite (TLS 1.2+, ECDHE-AES-GCM, DHE-AES-GCM).
+  - Zero-downtime cert rotation via background _CertWatcher thread (60s poll).
+  - CN allowlist enforcement (MTLS_ALLOWED_CNS env) with SAN fallback.
+  - Expired-cert rejection with AU-2 audit log emission.
+  - NIST SC-8, SC-8(1), IA-3, SC-17, MA-3, SC-23 coverage.
+  - get_uvicorn_ssl_config() helper for native Uvicorn mTLS deployment.
 """
 
 import asyncio
@@ -109,6 +119,12 @@ from modules.identity.preflight import (
     build_preflight_context,
     evaluate_preflight,
 )
+from modules.transport.mtls import (
+    MTLSMiddleware,
+    check_mtls_config,
+    get_uvicorn_ssl_config,
+    start_cert_watcher,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -121,7 +137,7 @@ _DASHBOARD_PATH = Path(__file__).parent / "dashboard" / "index.html"
 app = FastAPI(
     title="Aegis Security Platform",
     description="TokenDNA zero-trust session integrity + Aegis cloud posture management",
-    version="2.5.0",
+    version="2.7.0",
     docs_url="/api/docs" if DEV_MODE else None,
     redoc_url="/api/redoc" if DEV_MODE else None,
 )
@@ -171,14 +187,21 @@ async def trap_token_middleware(request: Request, call_next: Any):
 
     return await call_next(request)
 
-# Security middleware (order matters — validation runs first, then headers)
+# Security middleware (order matters — outermost added last executes first in Starlette)
+# Execution order: CORS → mTLS → RequestValidation → SecurityHeaders → TrapToken → routes
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestValidationMiddleware)
+# SC-8 / IA-3: mTLS transport layer — enforces client certificate authentication
+# MTLSMiddleware runs before route handlers; PeerIdentity injected into request.state
+if os.getenv("MTLS_MODE", "").lower() in ("proxy", "native"):
+    app.add_middleware(MTLSMiddleware)
+    logger.info("mTLS middleware ENABLED (mode=%s)", os.getenv("MTLS_MODE"))
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000").split(","),
     allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["Authorization", "X-API-Key", "X-Correlation-ID", "Content-Type"],
+    allow_headers=["Authorization", "X-API-Key", "X-Correlation-ID", "Content-Type",
+                   "X-Client-Cert", "X-Forwarded-Client-Cert"],
     allow_credentials=False,  # explicit — never wildcard credentials
 )
 
@@ -226,14 +249,38 @@ async def startup_checks():
     )
     logger.info("Pre-issuance Risk Gate: ACTIVE — webhook endpoints: /webhook/preflight/{idp}")
 
+    # v2.7: mTLS service mesh configuration check (SC-8, IA-3)
+    mtls_mode = os.getenv("MTLS_MODE", "").lower()
+    mtls_summary: dict = {}
+    if mtls_mode in ("proxy", "native"):
+        try:
+            mtls_summary = check_mtls_config()
+            logger.info(
+                "mTLS: CONFIGURED — mode=%s header=%s allowed_cns=%s",
+                mtls_summary.get("mode"),
+                mtls_summary.get("cert_header"),
+                mtls_summary.get("allowed_cns"),
+            )
+            # Start cert rotation watcher in background (zero-downtime rotation)
+            start_cert_watcher()
+        except Exception as exc:
+            logger.error("mTLS config error: %s", exc)
+    else:
+        logger.warning(
+            "mTLS: NOT ENABLED (MTLS_MODE not set). "
+            "Set MTLS_MODE=proxy or MTLS_MODE=native for IL4/IL5 transport security (SC-8)."
+        )
+
     # Emit startup audit event (AU-2: application startup)
     log_event(AuditEventType.STARTUP, AuditOutcome.SUCCESS,
               detail={
-                  "version": "2.5.0",
+                  "version": "2.7.0",
                   "dev_mode": DEV_MODE,
                   "fips_active": fips_summary.get("fips_active", False),
                   "dpop_required": dpop_required,
                   "trap_hmac_configured": trap_hmac_set,
+                  "mtls_mode": mtls_mode or "disabled",
+                  "mtls_allowed_cns": list(mtls_summary.get("allowed_cns") or []),
               })
 
 
@@ -262,15 +309,17 @@ async def health():
     from modules.identity.cache_redis import is_available as redis_ok
     fips_info = _fips.compliance_summary()
     return {
-        "service":      "TokenDNA",
-        "version":      "2.5.0",
-        "redis":        redis_ok(),
-        "clickhouse":   clickhouse_client.is_available(),
-        "dev_mode":     DEV_MODE,
-        "fips_active":  fips_info.get("fips_active", False),
+        "service":       "TokenDNA",
+        "version":       "2.7.0",
+        "redis":         redis_ok(),
+        "clickhouse":    clickhouse_client.is_available(),
+        "dev_mode":      DEV_MODE,
+        "fips_active":   fips_info.get("fips_active", False),
         "dpop_required": os.getenv("DPOP_REQUIRED", "false").lower() == "true",
-        "trap_active":  True,
+        "trap_active":   True,
         "preflight_gate": True,
+        "mtls_enabled":  os.getenv("MTLS_MODE", "").lower() in ("proxy", "native"),
+        "mtls_mode":     os.getenv("MTLS_MODE", "disabled"),
     }
 
 
