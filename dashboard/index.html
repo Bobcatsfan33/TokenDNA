@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Aegis Security Platform</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js"></script>
+<style>
+  :root {
+    --bg:       #0a0d14;
+    --surface:  #111827;
+    --surface2: #1a2233;
+    --border:   #1e293b;
+    --accent:   #3b82f6;
+    --accent2:  #6366f1;
+    --green:    #10b981;
+    --yellow:   #f59e0b;
+    --orange:   #f97316;
+    --red:      #ef4444;
+    --text:     #e2e8f0;
+    --muted:    #64748b;
+    --font:     'Inter', system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; }
+  a { color: var(--accent); text-decoration: none; }
+
+  /* Layout */
+  .shell { display: flex; min-height: 100vh; }
+  .sidebar { width: 220px; min-width: 220px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 0; position: fixed; top: 0; left: 0; bottom: 0; z-index: 100; }
+  .main { margin-left: 220px; flex: 1; display: flex; flex-direction: column; }
+  .topbar { height: 56px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 24px; gap: 16px; position: sticky; top: 0; z-index: 50; }
+  .content { padding: 24px; flex: 1; }
+
+  /* Sidebar */
+  .logo { padding: 20px 16px 16px; border-bottom: 1px solid var(--border); }
+  .logo-text { font-size: 18px; font-weight: 700; letter-spacing: -0.5px; }
+  .logo-sub  { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-top: 2px; }
+  .nav-section { padding: 12px 0 4px; }
+  .nav-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; padding: 0 16px 8px; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 16px; cursor: pointer; color: var(--muted); font-size: 13px; border-left: 3px solid transparent; transition: all .15s; }
+  .nav-item:hover { color: var(--text); background: var(--surface2); }
+  .nav-item.active { color: var(--accent); border-left-color: var(--accent); background: rgba(59,130,246,.07); }
+  .nav-icon { width: 16px; text-align: center; font-size: 15px; }
+
+  /* Cards */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+  .card-header { padding: 16px 20px 0; display: flex; align-items: center; justify-content: space-between; }
+  .card-title { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .card-body { padding: 16px 20px 20px; }
+
+  /* Grid */
+  .grid-4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; }
+  .grid-2 { display: grid; grid-template-columns: repeat(2,1fr); gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; }
+  @media (max-width: 1100px) { .grid-4 { grid-template-columns: repeat(2,1fr); } }
+  @media (max-width: 700px)  { .grid-4, .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+
+  /* Stat cards */
+  .stat-card { padding: 20px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); }
+  .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 8px; }
+  .stat-value { font-size: 32px; font-weight: 700; line-height: 1; }
+  .stat-delta { font-size: 11px; margin-top: 6px; color: var(--muted); }
+  .stat-delta.up   { color: var(--red); }
+  .stat-delta.down { color: var(--green); }
+
+  /* Risk tier badges */
+  .badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 99px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+  .badge-allow  { background: rgba(16,185,129,.15); color: var(--green); }
+  .badge-stepup { background: rgba(245,158,11,.15); color: var(--yellow); }
+  .badge-block  { background: rgba(249,115,22,.15); color: var(--orange); }
+  .badge-revoke { background: rgba(239,68,68,.15); color: var(--red); }
+  .badge-ok     { background: rgba(16,185,129,.15); color: var(--green); }
+  .badge-warn   { background: rgba(245,158,11,.15); color: var(--yellow); }
+  .badge-crit   { background: rgba(239,68,68,.15); color: var(--red); }
+
+  /* Table */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+  td { padding: 11px 12px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,.02); }
+
+  /* Progress / score bar */
+  .score-bar { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+  .score-fill { height: 100%; border-radius: 3px; transition: width .4s; }
+
+  /* Feed */
+  .feed-item { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .feed-item:last-child { border-bottom: none; }
+  .feed-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+  .feed-meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+  /* Status indicator */
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .status-dot.green  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .status-dot.red    { background: var(--red);   box-shadow: 0 0 6px var(--red); }
+  .status-dot.yellow { background: var(--yellow); }
+
+  /* Buttons */
+  .btn { padding: 7px 16px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; transition: opacity .15s; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-ghost   { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+  .btn:hover   { opacity: .85; }
+
+  /* Inputs */
+  input, select { background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 7px 12px; font-size: 13px; outline: none; width: 100%; }
+  input:focus, select:focus { border-color: var(--accent); }
+  label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 5px; }
+  .form-group { margin-bottom: 14px; }
+
+  /* Code box */
+  .code-box { background: #0d1117; border: 1px solid var(--border); border-radius: 6px; padding: 12px 16px; font-family: 'Fira Mono', monospace; font-size: 12px; color: #7dd3fc; overflow-x: auto; }
+
+  /* Onboarding steps */
+  .step { display: flex; gap: 16px; margin-bottom: 24px; }
+  .step-num { width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; flex-shrink: 0; }
+  .step-num.done { background: var(--green); }
+  .step-content h4 { margin-bottom: 6px; font-size: 14px; }
+  .step-content p  { color: var(--muted); line-height: 1.5; font-size: 13px; }
+
+  /* Misc */
+  .section-title { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+  .section-sub   { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .mt16 { margin-top: 16px; }
+  .mt24 { margin-top: 24px; }
+  .flex { display: flex; }
+  .items-center { align-items: center; }
+  .gap8 { gap: 8px; }
+  .gap16 { gap: 16px; }
+  .ml-auto { margin-left: auto; }
+  .text-muted { color: var(--muted); }
+  .text-green  { color: var(--green); }
+  .text-red    { color: var(--red); }
+  .text-yellow { color: var(--yellow); }
+  .font-mono { font-family: 'Fira Mono', monospace; font-size: 12px; }
+  .truncate { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+  .spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .pulse { animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.5; } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const { useState, useEffect, useRef, useCallback } = React;
+const { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } = Recharts;
+
+// ── Mock data (replace with real API calls) ──────────────────────────────────
+
+// ── API layer ─────────────────────────────────────────────────────────────────
+const API_BASE = "";
+
+async function apiFetch(path, opts = {}) {
+  const apiKey = sessionStorage.getItem("tdna_api_key") || "";
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...opts,
+    headers: {
+      ...(apiKey ? { "X-API-Key": apiKey } : {}),
+      "Content-Type": "application/json",
+      ...(opts.headers || {}),
+    },
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+function useApi(path, defaultVal, refreshMs = 30000) {
+  const [data, setData] = React.useState(defaultVal);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState(null);
+  const load = React.useCallback(async () => {
+    try { const d = await apiFetch(path); setData(d); setError(null); }
+    catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }, [path]);
+  React.useEffect(() => {
+    load();
+    if (refreshMs > 0) { const t = setInterval(load, refreshMs); return () => clearInterval(t); }
+  }, [load, refreshMs]);
+  return { data, loading, error, reload: load };
+}
+
+function Spinner() {
+  return React.createElement("span", { className: "spinner", style: { marginLeft: 8 } });
+}
+function ErrBox({ msg }) {
+  return React.createElement("div", { style: { padding: 16, color: "var(--red)", fontSize: 12, fontFamily: "monospace" } },
+    "⚠ ", msg, " — is the API running? Check System Health to set your API key."
+  );
+}
+// ── Utilities ─────────────────────────────────────────────────────────────────
+const { useState, useEffect, useRef, useCallback } = React;
+const { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } = Recharts;
+
+function tierBadge(tier) {
+  const map = { ALLOW: "allow", STEP_UP: "stepup", BLOCK: "block", REVOKE: "revoke" };
+  return React.createElement("span", { className: `badge badge-${map[tier] || "allow"}` }, tier);
+}
+function severityBadge(s) {
+  const map = { CRITICAL: "revoke", HIGH: "block", MEDIUM: "stepup", LOW: "allow" };
+  return React.createElement("span", { className: `badge badge-${map[s] || "allow"}` }, s);
+}
+function scoreColor(score) {
+  if (score >= 70) return "#10b981";
+  if (score >= 50) return "#f59e0b";
+  if (score >= 30) return "#f97316";
+  return "#ef4444";
+}
+function fmtNum(n) { return (n || 0).toLocaleString(); }
+
+// ── Overview ──────────────────────────────────────────────────────────────────
+function OverviewPage() {
+  const stats   = useApi("/api/stats",          { total_events:0, blocked:0, revoked:0, step_up:0, allow_rate:0, tenant_count:0 });
+  const hourly  = useApi("/api/events/hourly",  [], 60000);
+  const threats = useApi("/api/threats",         []);
+  const events  = useApi("/api/events?limit=25", []);
+
+  return React.createElement("div", null,
+    React.createElement("div", { className: "section-title" }, "Platform Overview"),
+    React.createElement("div", { className: "section-sub" }, "Real-time security posture across all tenants"),
+
+    // KPI row
+    React.createElement("div", { className: "grid-4", style: { marginBottom: 16 } },
+      ...[
+        { label: "Events (24h)",       value: fmtNum(stats.data.total_events),             delta: "Across all tenants",        dir: "" },
+        { label: "Blocked / Revoked",  value: fmtNum((stats.data.blocked||0)+(stats.data.revoked||0)), delta: "High-risk sessions stopped", dir: "up" },
+        { label: "Allow Rate",         value: `${(stats.data.allow_rate||0).toFixed(1)}%`, delta: "Clean requests passing",     dir: "down" },
+        { label: "Step-Up Auth",       value: fmtNum(stats.data.step_up),                 delta: "MFA challenges issued",     dir: "" },
+      ].map(s =>
+        React.createElement("div", { className: "stat-card", key: s.label },
+          React.createElement("div", { className: "stat-label" }, s.label),
+          stats.loading
+            ? React.createElement("div", { style: { height: 32, background: "var(--surface2)", borderRadius: 4, marginBottom: 6 } })
+            : React.createElement("div", { className: "stat-value" }, s.value),
+          React.createElement("div", { className: `stat-delta ${s.dir}` }, s.delta),
+        )
+      )
+    ),
+
+    // Chart + threat breakdown
+    React.createElement("div", { className: "grid-2 mt16" },
+      React.createElement("div", { className: "card" },
+        React.createElement("div", { className: "card-header" },
+          React.createElement("span", { className: "card-title" }, "Event Volume — Last 24h"),
+          hourly.loading && React.createElement("span", { className: "spinner" }),
+        ),
+        React.createElement("div", { className: "card-body" },
+          hourly.error
+            ? React.createElement(ErrBox, { msg: hourly.error })
+            : React.createElement(ResponsiveContainer, { width: "100%", height: 200 },
+                React.createElement(AreaChart, { data: hourly.data.length ? hourly.data : [] },
+                  React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "#1e293b" }),
+                  React.createElement(XAxis, { dataKey: "hour", tick: { fill: "#64748b", fontSize: 10 }, interval: 3 }),
+                  React.createElement(YAxis, { tick: { fill: "#64748b", fontSize: 10 } }),
+                  React.createElement(Tooltip, { contentStyle: { background: "#111827", border: "1px solid #1e293b", borderRadius: 6 } }),
+                  React.createElement(Area, { type: "monotone", dataKey: "allow",  stackId: "1", stroke: "#10b981", fill: "rgba(16,185,129,.2)", strokeWidth: 2 }),
+                  React.createElement(Area, { type: "monotone", dataKey: "block",  stackId: "1", stroke: "#f97316", fill: "rgba(249,115,22,.3)",  strokeWidth: 2 }),
+                  React.createElement(Area, { type: "monotone", dataKey: "revoke", stackId: "1", stroke: "#ef4444", fill: "rgba(239,68,68,.3)",   strokeWidth: 2 }),
+                )
+              )
+        )
+      ),
+
+      React.createElement("div", { className: "card" },
+        React.createElement("div", { className: "card-header" },
+          React.createElement("span", { className: "card-title" }, "Threat Signal Breakdown"),
+          threats.loading && React.createElement("span", { className: "spinner" }),
+        ),
+        React.createElement("div", { className: "card-body" },
+          threats.error
+            ? React.createElement(ErrBox, { msg: threats.error })
+            : (threats.data.length === 0
+                ? React.createElement("div", { className: "text-muted", style: { padding: 16, textAlign: "center" } }, "No threat signals in this window")
+                : threats.data.map(t => {
+                    const max = Math.max(...threats.data.map(x => x.value), 1);
+                    return React.createElement("div", { key: t.name, style: { marginBottom: 10 } },
+                      React.createElement("div", { className: "flex items-center gap8", style: { marginBottom: 4 } },
+                        React.createElement("span", { style: { fontSize: 12 } }, t.name),
+                        React.createElement("span", { className: "ml-auto text-muted", style: { fontSize: 11 } }, fmtNum(t.value) + " events"),
+                      ),
+                      React.createElement("div", { className: "score-bar" },
+                        React.createElement("div", { className: "score-fill", style: { width: `${(t.value/max)*100}%`, background: t.color || "var(--accent)" } }),
+                      )
+                    );
+                  })
+              )
+        )
+      )
+    ),
+
+    // Live event feed
+    React.createElement("div", { className: "card mt16" },
+      React.createElement("div", { className: "card-header" },
+        React.createElement("span", { className: "card-title" }, "Live Event Feed"),
+        React.createElement("span", { className: "flex items-center gap8 text-muted", style: { fontSize: 12 } },
+          React.createElement("span", { className: "status-dot green pulse" }),
+          "Live · refreshes every 30s"
+        )
+      ),
+      React.createElement("div", { className: "card-body" },
+        events.loading ? React.createElement(Spinner) :
+        events.error   ? React.createElement(ErrBox, { msg: events.error }) :
+        React.createElement("div", { className: "table-wrap" },
+          React.createElement("table", null,
+            React.createElement("thead", null,
+              React.createElement("tr", null,
+                ...["User", "Decision", "Score", "Country", "Signals", "IP", "Time"].map(h =>
+                  React.createElement("th", { key: h }, h)
+                )
+              )
+            ),
+            React.createElement("tbody", null,
+              (events.data.events || events.data || []).map((e, i) =>
+                React.createElement("tr", { key: e.id || i },
+                  React.createElement("td", { className: "font-mono" }, e.user_id),
+                  React.createElement("td", null, tierBadge(e.tier || e.decision)),
+                  React.createElement("td", null,
+                    React.createElement("div", { className: "flex items-center gap8" },
+                      React.createElement("span", { style: { color: scoreColor(e.risk_score || e.score || 50), fontWeight: 600 } }, e.risk_score || e.score || "—"),
+                      React.createElement("div", { className: "score-bar", style: { width: 60 } },
+                        React.createElement("div", { className: "score-fill", style: { width: `${e.risk_score || e.score || 0}%`, background: scoreColor(e.risk_score || e.score || 50) } })
+                      )
+                    )
+                  ),
+                  React.createElement("td", null, e.country || "—"),
+                  React.createElement("td", null,
+                    React.createElement("div", { className: "flex gap8" },
+                      e.is_tor && React.createElement("span", { className: "badge badge-revoke" }, "TOR"),
+                      e.impossible_travel && React.createElement("span", { className: "badge badge-block" }, "TRAVEL"),
+                      e.datacenter_asn && React.createElement("span", { className: "badge badge-stepup" }, "DC"),
+                    )
+                  ),
+                  React.createElement("td", { className: "font-mono text-muted" }, (e.ip || "").replace(/\.\d+$/, ".xx")),
+                  React.createElement("td", { className: "text-muted" }, e.ts || e.timestamp || "—"),
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  );
+}
+
+// ── Sessions ──────────────────────────────────────────────────────────────────
+function SessionsPage() {
+  const sessions = useApi("/api/sessions", []);
+
+  return React.createElement("div", null,
+    React.createElement("div", { className: "section-title" }, "Session Intelligence"),
+    React.createElement("div", { className: "section-sub" }, "TokenDNA behavioral fingerprinting — per-user risk profiles"),
+    React.createElement("div", { className: "card" },
+      React.createElement("div", { className: "card-header" },
+        React.createElement("span", { className: "card-title" }, "User Risk Profiles"),
+        sessions.loading && React.createElement("span", { className: "spinner" }),
+        React.createElement("button", { className: "btn btn-primary ml-auto", style: { fontSize: 12, padding: "5px 12px" }, onClick: sessions.reload }, "↻ Refresh"),
+      ),
+      React.createElement("div", { className: "card-body" },
+        sessions.error ? React.createElement(ErrBox, { msg: sessions.error }) :
+        sessions.loading ? React.createElement(Spinner) :
+        React.createElement("div", { className: "table-wrap" },
+          React.createElement("table", null,
+            React.createElement("thead", null,
+              React.createElement("tr", null,
+                ...["User ID", "Risk Score", "Tier", "Requests", "Countries", "Tor Hits", "Last Seen"].map(h =>
+                  React.createElement("th", { key: h }, h)
+                )
+              )
+            ),
+            React.createElement("tbody", null,
+              (sessions.data.profiles || sessions.data || []).length === 0
+                ? React.createElement("tr", null,
+                    React.createElement("td", { colSpan: 7, style: { textAlign: "center", color: "var(--muted)", padding: 24 } },
+                      "No sessions recorded yet. Send requests to /secure to start building profiles."
+                    )
+                  )
+                : (sessions.data.profiles || sessions.data || []).map(u =>
+                    React.createElement("tr", { key: u.user_id },
+                      React.createElement("td", { className: "font-mono" }, u.user_id),
+                      React.createElement("td", null,
+                        React.createElement("div", { className: "flex items-center gap8" },
+                          React.createElement("span", { style: { color: scoreColor(u.avg_score || 50), fontWeight: 600, minWidth: 24 } }, u.avg_score || "—"),
+                          React.createElement("div", { className: "score-bar", style: { width: 80 } },
+                            React.createElement("div", { className: "score-fill", style: { width: `${u.avg_score || 0}%`, background: scoreColor(u.avg_score || 50) } })
+                          )
+                        )
+                      ),
+                      React.createElement("td", null, tierBadge(u.last_tier || "ALLOW")),
+                      React.createElement("td", null, fmtNum(u.requests)),
+                      React.createElement("td", { className: "font-mono" }, (u.countries || []).join(", ") || "—"),
+                      React.createElement("td", null,
+                        (u.tor_hits || 0) > 0
+                          ? React.createElement("span", { className: "badge badge-revoke" }, u.tor_hits)
+                          : React.createElement("span", { className: "text-muted" }, "0")
+                      ),
+                      React.createElement("td", { className: "text-muted" }, u.last_seen || "—"),
+                    )
+                  )
+            )
+          )
+        )
+      )
+    )
+  );
+}
+
+// ── Cloud Posture (Scan) ───────────────────────────────────────────────────────
+function ScanPage() {
+  const findings = useApi("/api/cloud-findings", { findings: [], summary: {} }, 120000);
+
+  const data    = findings.data;
+  const summary = data.summary || {};
+  const rows    = data.findings || [];
+
+  return React.createElement("div", null,
+    React.createElement("div", { className: "section-title" }, "Cloud Posture Scan"),
+    React.createElement("div", { className: "section-sub" }, "Aegis — continuous AWS/GCP/Azure posture management"),
+
+    React.createElement("div", { className: "grid-4", style: { marginBottom: 16 } },
+      ...[
+        { label: "Critical", value: summary.critical || 0, color: "var(--red)" },
+        { label: "High",     value: summary.high     || 0, color: "var(--orange)" },
+        { label: "Medium",   value: summary.medium   || 0, color: "var(--yellow)" },
+        { label: "Low",      value: summary.low      || 0, color: "var(--green)" },
+      ].map(s =>
+        React.createElement("div", { className: "stat-card", key: s.label, style: { borderTop: `3px solid ${s.color}` } },
+          React.createElement("div", { className: "stat-label" }, s.label),
+          findings.loading
+            ? React.createElement("div", { style: { height: 32, background: "var(--surface2)", borderRadius: 4 } })
+            : React.createElement("div", { className: "stat-value", style: { color: s.color } }, s.value),
+        )
+      )
+    ),
+
+    React.createElement("div", { className: "card" },
+      React.createElement("div", { className: "card-header" },
+        React.createElement("span", { className: "card-title" }, "Latest Findings"),
+        findings.loading && React.createElement("span", { className: "spinner" }),
+        React.createElement("button", { className: "btn btn-primary ml-auto", style: { fontSize: 12, padding: "5px 12px" }, onClick: findings.reload }, "▶ Run Scan"),
+      ),
+      React.createElement("div", { className: "card-body" },
+        findings.error ? React.createElement(ErrBox, { msg: findings.error }) :
+        findings.loading ? React.createElement(Spinner) :
+        rows.length === 0
+          ? React.createElement("div", { style: { textAlign: "center", color: "var(--muted)", padding: 32 } },
+              "No findings yet. Connect an AWS account in the Connect AWS tab, then run a scan."
+            )
+          : React.createElement("div", { className: "table-wrap" },
+              React.createElement("table", null,
+                React.createElement("thead", null,
+                  React.createElement("tr", null,
+                    ...["Severity", "Category", "Finding", "Resource", "Account", "Found"].map(h =>
+                      React.createElement("th", { key: h }, h)
+                    )
+                  )
+                ),
+                React.createElement("tbody", null,
+                  rows.map((f, i) =>
+                    React.createElement("tr", { key: f.id || i },
+                      React.createElement("td", null, severityBadge(f.severity)),
+                      React.createElement("td", null, f.category),
+                      React.createElement("td", null, f.title),
+                      React.createElement("td", { className: "font-mono truncate" }, f.resource),
+                      React.createElement("td", { className: "font-mono" }, f.account || f.account_id),
+                      React.createElement("td", { className: "text-muted" }, f.ts || f.timestamp),
+                    )
+                  )
+                )
+              )
+            )
+      )
+    )
+  );
+}
+
+// ── AWS Onboarding ────────────────────────────────────────────────────────────
+function OnboardingPage() {
+  const [step, setStep] = useState(1);
+  const [roleArn, setRoleArn] = useState("");
+  const [accountId, setAccountId] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+  const [extId, setExtId] = useState("generating…");
+
+  // Fetch real external ID from the server on mount
+  useEffect(() => {
+    apiFetch("/onboarding/aws/external-id", { method: "POST" })
+      .then(d => { setExtId(d.external_id); setStep(s => Math.max(s, 1)); })
+      .catch(() => setExtId("aegis-" + Math.random().toString(36).slice(2, 18)));
+  }, []);
+
+  const cfUrl = `https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?templateURL=https://raw.githubusercontent.com/Bobcatsfan33/Aegis-/master/onboarding/cloudformation_aegis_role.yml&stackName=AegisSecurityRoles&param_ExternalId=${extId}`;
+
+  const testConn = async () => {
+    setTesting(true); setTestResult(null);
+    try {
+      const result = await apiFetch("/onboarding/aws/test", {
+        method: "POST",
+        body: JSON.stringify({ role_arn: roleArn, external_id: extId, account_id: accountId }),
+      });
+      setTestResult(result);
+      if (result.success) setStep(5);
+    } catch (e) {
+      setTestResult({ success: false, error: e.message });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return React.createElement("div", null,
+    React.createElement("div", { className: "section-title" }, "Connect AWS Account"),
+    React.createElement("div", { className: "section-sub" }, "Takes about 5 minutes. Read-only access only — no changes to your environment."),
+
+    React.createElement("div", { className: "card" },
+      React.createElement("div", { className: "card-body" },
+
+        React.createElement("div", { className: "step" },
+          React.createElement("div", { className: `step-num${step > 1 ? " done" : ""}` }, step > 1 ? "✓" : "1"),
+          React.createElement("div", { className: "step-content" },
+            React.createElement("h4", null, "Note your External ID"),
+            React.createElement("p", null, "This unique token proves to AWS that the request comes from Aegis. Pre-filled in the CloudFormation template."),
+            React.createElement("div", { className: "code-box mt16" }, extId),
+            React.createElement("button", { className: "btn btn-primary mt16", style:{fontSize:12}, onClick: () => setStep(s => Math.max(s,2)) }, "Got it →"),
+          )
+        ),
+
+        React.createElement("div", { className: "step" },
+          React.createElement("div", { className: `step-num${step > 2 ? " done" : ""}` }, step > 2 ? "✓" : "2"),
+          React.createElement("div", { className: "step-content", style: { flex: 1 } },
+            React.createElement("h4", null, "Deploy IAM Role via CloudFormation"),
+            React.createElement("p", null, "Click below to launch the AWS console with the Aegis template pre-loaded. Review and click Create Stack — takes ~60 seconds."),
+            React.createElement("a", { href: cfUrl, target: "_blank", rel: "noreferrer" },
+              React.createElement("button", { className: "btn btn-primary mt16", onClick: () => setStep(s => Math.max(s, 3)) },
+                "🚀 Launch CloudFormation Template →"
+              )
+            )
+          )
+        ),
+
+        React.createElement("div", { className: "step" },
+          React.createElement("div", { className: `step-num${step > 3 ? " done" : ""}` }, step > 3 ? "✓" : "3"),
+          React.createElement("div", { className: "step-content", style: { flex: 1 } },
+            React.createElement("h4", null, "Paste the Role ARN"),
+            React.createElement("p", null, "After CloudFormation completes, copy the ScanRoleArn from the Outputs tab."),
+            React.createElement("div", { className: "form-group mt16" },
+              React.createElement("label", null, "AWS Account ID"),
+              React.createElement("input", { placeholder: "123456789012", value: accountId,
+                onChange: e => { setAccountId(e.target.value); if (e.target.value.length >= 12) setStep(s => Math.max(s,3)); } }),
+            ),
+            React.createElement("div", { className: "form-group" },
+              React.createElement("label", null, "AegisScanRole ARN"),
+              React.createElement("input", { placeholder: "arn:aws:iam::123456789012:role/AegisScanRole", value: roleArn,
+                onChange: e => { setRoleArn(e.target.value); if (e.target.value.startsWith("arn:")) setStep(s => Math.max(s,4)); } }),
+            ),
+          )
+        ),
+
+        React.createElement("div", { className: "step" },
+          React.createElement("div", { className: `step-num${step > 4 ? " done" : ""}` }, step > 4 ? "✓" : "4"),
+          React.createElement("div", { className: "step-content", style: { flex: 1 } },
+            React.createElement("h4", null, "Test Connection & Run First Scan"),
+            testResult && testResult.success
+              ? React.createElement("div", null,
+                  React.createElement("div", { className: "flex gap8 mt16" },
+                    ...(testResult.permissions || [{ service:"IAM",ok:true},{ service:"EC2",ok:true},{ service:"S3",ok:true},{ service:"GuardDuty",ok:true}]).map(s =>
+                      React.createElement("span", { key: s.service, className: `badge ${s.ok ? "badge-ok" : "badge-warn"}` },
+                        s.ok ? "✓" : "✗", " ", s.service
+                      )
+                    )
+                  ),
+                  React.createElement("p", { className: "text-green mt16", style:{color:"var(--green)"} },
+                    "✓ Connected! First scan running in background. Results appear in Cloud Posture in ~60 seconds."),
+                )
+              : React.createElement("div", null,
+                  testResult && !testResult.success &&
+                    React.createElement("div", { style: { color: "var(--red)", fontSize: 12, marginBottom: 12 } },
+                      "⚠ " + (testResult.error || "Connection failed — check the role ARN and try again.")
+                    ),
+                  React.createElement("p", null, "Aegis will assume the role and verify all permissions before saving."),
+                  React.createElement("button", {
+                    className: "btn btn-primary mt16",
+                    onClick: testConn,
+                    disabled: testing || !roleArn
+                  },
+                    testing
+                      ? React.createElement("span", { className: "flex items-center gap8" }, React.createElement("span", { className: "spinner" }), "Testing…")
+                      : "Test Connection"
+                  )
+                )
+          )
+        )
+      )
+    )
+  );
+}
+
+// ── Tenants ───────────────────────────────────────────────────────────────────
+function TenantsPage() {
+  const tenants = useApi("/admin/tenants", []);
+  const [showCreate, setShowCreate] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+  const [createdKey, setCreatedKey] = useState(null);
+  const [creating, setCreating] = useState(false);
+
+  const handleCreate = async () => {
+    setCreating(true);
+    try {
+      const result = await apiFetch("/admin/tenants", {
+        method: "POST",
+        body: JSON.stringify({ name: newName, owner_email: newEmail }),
+      });
+      // result contains { tenant, api_key }
+      setCreatedKey(result.api_key || result.raw_key || "key returned — check server logs");
+      setShowCreate(false);
+      setNewName(""); setNewEmail("");
+      tenants.reload();
+    } catch (e) {
+      alert("Failed to create tenant: " + e.message);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return React.createElement("div", null,
+    React.createElement("div", { className: "flex items-center gap16", style: { marginBottom: 20 } },
+      React.createElement("div", null,
+        React.createElement("div", { className: "section-title" }, "Tenant Management"),
+        React.createElement("div", { className: "section-sub", style: { marginBottom: 0 } }, "Each tenant is an isolated workspace with its own API keys and data"),
+      ),
+      React.createElement("button", { className: "btn btn-primary ml-auto", onClick: () => setShowCreate(!showCreate) }, "+ New Tenant"),
+    ),
+
+    showCreate && React.createElement("div", { className: "card", style: { marginBottom: 16 } },
+      React.createElement("div", { className: "card-header" }, React.createElement("span", { className: "card-title" }, "Create Tenant")),
+      React.createElement("div", { className: "card-body", style: { display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 12, alignItems: "end" } },
+        React.createElement("div", { className: "form-group", style: { marginBottom: 0 } },
+          React.createElement("label", null, "Company / Team Name"),
+          React.createElement("input", { placeholder: "Acme Corp", value: newName, onChange: e => setNewName(e.target.value) }),
+        ),
+        React.createElement("div", { className: "form-group", style: { marginBottom: 0 } },
+          React.createElement("label", null, "Owner Email"),
+          React.createElement("input", { placeholder: "admin@acme.com", value: newEmail, onChange: e => setNewEmail(e.target.value) }),
+        ),
+        React.createElement("button", { className: "btn btn-primary", onClick: handleCreate, disabled: creating || !newName },
+          creating ? React.createElement("span", { className: "spinner" }) : "Create"
+        ),
+      )
+    ),
+
+    createdKey && React.createElement("div", { className: "card", style: { marginBottom: 16, borderColor: "var(--green)" } },
+      React.createElement("div", { className: "card-body" },
+        React.createElement("div", { style: { color: "var(--green)", fontWeight: 600, marginBottom: 8 } }, "✓ Tenant created! Save this API key — it won't be shown again."),
+        React.createElement("div", { className: "code-box" }, createdKey),
+        React.createElement("div", { className: "text-muted mt16", style: { fontSize: 12 } }, "Pass as X-API-Key header with every request"),
+      )
+    ),
+
+    React.createElement("div", { className: "card" },
+      React.createElement("div", { className: "card-body" },
+        tenants.loading ? React.createElement(Spinner) :
+        tenants.error   ? React.createElement(ErrBox, { msg: tenants.error }) :
+        React.createElement("div", { className: "table-wrap" },
+          React.createElement("table", null,
+            React.createElement("thead", null,
+              React.createElement("tr", null,
+                ...["Tenant", "Plan", "Events Today", "Risk Events", "Created", "Status"].map(h =>
+                  React.createElement("th", { key: h }, h)
+                )
+              )
+            ),
+            React.createElement("tbody", null,
+              (tenants.data.tenants || tenants.data || []).length === 0
+                ? React.createElement("tr", null,
+                    React.createElement("td", { colSpan: 6, style: { textAlign: "center", color: "var(--muted)", padding: 24 } }, "No tenants yet.")
+                  )
+                : (tenants.data.tenants || tenants.data || []).map(t =>
+                    React.createElement("tr", { key: t.id },
+                      React.createElement("td", null,
+                        React.createElement("div", { style: { fontWeight: 600 } }, t.name),
+                        React.createElement("div", { className: "font-mono text-muted" }, t.id),
+                      ),
+                      React.createElement("td", null,
+                        React.createElement("span", { className: "badge badge-stepup", style: { textTransform: "capitalize" } }, t.plan)
+                      ),
+                      React.createElement("td", null, fmtNum(t.events_today)),
+                      React.createElement("td", null,
+                        React.createElement("span", { style: { color: (t.risk_events||0) > 0 ? "var(--orange)" : "var(--green)", fontWeight: 600 } },
+                          t.risk_events || 0
+                        )
+                      ),
+                      React.createElement("td", { className: "text-muted" }, (t.created_at||"").split("T")[0]),
+                      React.createElement("td", null, React.createElement("span", { className: "badge badge-ok" }, "Active")),
+                    )
+                  )
+            )
+          )
+        )
+      )
+    )
+  );
+}
+
+// ── System Health ─────────────────────────────────────────────────────────────
+function SystemPage() {
+  const health = useApi("/api/health", {}, 15000);  // refresh every 15s
+
+  const h = health.data;
+  const items = [
+    { label: "Redis",           key: "redis",        detail: h.redis_version    ? `v${h.redis_version} · ${h.redis_latency_ms||"?"}ms` : "Checking…" },
+    { label: "ClickHouse",      key: "clickhouse",   detail: h.clickhouse_version ? `v${h.clickhouse_version} · ${h.clickhouse_events||0} events` : "Checking…" },
+    { label: "Tor Exit List",   key: "tor_list",     detail: h.tor_nodes          ? `${h.tor_nodes} nodes · refreshed ${h.tor_age||"?"}` : "Checking…" },
+    { label: "Cloudflare Edge", key: "edge_worker",  detail: "Workers edge · DPoP validation" },
+  ];
+
+  return React.createElement("div", null,
+    React.createElement("div", { className: "section-title" }, "System Health"),
+    React.createElement("div", { className: "section-sub" }, "Infrastructure status and configuration"),
+
+    React.createElement("div", { className: "grid-2", style: { marginBottom: 16 } },
+      React.createElement("div", { className: "card" },
+        React.createElement("div", { className: "card-header" },
+          React.createElement("span", { className: "card-title" }, "Services"),
+          health.loading && React.createElement("span", { className: "spinner" }),
+        ),
+        React.createElement("div", { className: "card-body" },
+          health.error ? React.createElement(ErrBox, { msg: health.error }) :
+          items.map(item =>
+            React.createElement("div", { key: item.label, className: "flex items-center gap16", style: { padding: "10px 0", borderBottom: "1px solid var(--border)" } },
+              React.createElement("span", { className: `status-dot ${h[item.key] ? "green" : "red"}` }),
+              React.createElement("span", { style: { fontWeight: 600, minWidth: 140 } }, item.label),
+              React.createElement("span", { className: "text-muted" }, item.detail),
+              React.createElement("span", { className: `badge ml-auto ${h[item.key] ? "badge-ok" : "badge-crit"}` },
+                health.loading ? "…" : (h[item.key] ? "Healthy" : "Down")
+              ),
+            )
+          )
+        )
+      ),
+
+      React.createElement("div", { className: "card" },
+        React.createElement("div", { className: "card-header" }, React.createElement("span", { className: "card-title" }, "Score Thresholds")),
+        React.createElement("div", { className: "card-body" },
+          [
+            { label: "ALLOW",   val: "> 70", color: "var(--green)" },
+            { label: "STEP_UP", val: "> 50", color: "var(--yellow)" },
+            { label: "BLOCK",   val: "> 30", color: "var(--orange)" },
+            { label: "REVOKE",  val: "≤ 15", color: "var(--red)" },
+          ].map(row =>
+            React.createElement("div", { key: row.label, className: "flex items-center gap16", style: { padding: "10px 0", borderBottom: "1px solid var(--border)" } },
+              React.createElement("span", { className: `badge badge-${row.label.toLowerCase().replace("_", "")}`, style: { minWidth: 80 } }, row.label),
+              React.createElement("span", { className: "text-muted" }, "Score " + row.val),
+            )
+          )
+        )
+      )
+    ),
+
+    // API Key helper
+    React.createElement("div", { className: "card" },
+      React.createElement("div", { className: "card-header" }, React.createElement("span", { className: "card-title" }, "Session API Key")),
+      React.createElement("div", { className: "card-body" },
+        React.createElement("p", { className: "text-muted", style: { marginBottom: 12, fontSize: 13 } },
+          "Enter your API key to authenticate dashboard requests. Stored in sessionStorage — cleared when you close the tab."
+        ),
+        React.createElement("div", { className: "form-group", style: { display: "flex", gap: 12, alignItems: "flex-end" } },
+          React.createElement("input", {
+            type: "password",
+            placeholder: "tdna_…",
+            defaultValue: sessionStorage.getItem("tdna_api_key") || "",
+            id: "dash-api-key",
+            style: { flex: 1 }
+          }),
+          React.createElement("button", { className: "btn btn-primary", onClick: () => {
+            const v = document.getElementById("dash-api-key").value.trim();
+            if (v) { sessionStorage.setItem("tdna_api_key", v); location.reload(); }
+          }}, "Apply"),
+          React.createElement("button", { className: "btn", onClick: () => {
+            sessionStorage.removeItem("tdna_api_key");
+            location.reload();
+          }}, "Clear"),
+        )
+      )
+    )
+  );
+}
+
+function App() {
+  const [page, setPage] = useState("overview");
+
+  const navItems = [
+    { id: "overview",  label: "Overview",        icon: "⬡" },
+    { id: "sessions",  label: "Sessions",         icon: "🛡" },
+    { id: "scan",      label: "Cloud Posture",    icon: "☁" },
+    { id: "onboarding",label: "Connect AWS",      icon: "🔗" },
+    { id: "tenants",   label: "Tenants",          icon: "🏢" },
+    { id: "system",    label: "System Health",    icon: "⚙" },
+  ];
+
+  const pageMap = { overview: OverviewPage, sessions: SessionsPage, scan: ScanPage, onboarding: OnboardingPage, tenants: TenantsPage, system: SystemPage };
+  const Page = pageMap[page] || OverviewPage;
+
+  return React.createElement("div", { className: "shell" },
+    // Sidebar
+    React.createElement("nav", { className: "sidebar" },
+      React.createElement("div", { className: "logo" },
+        React.createElement("div", { className: "flex items-center gap8" },
+          React.createElement("span", { style: { fontSize: 22 } }, "🛡"),
+          React.createElement("div", null,
+            React.createElement("div", { className: "logo-text" }, "Aegis"),
+            React.createElement("div", { className: "logo-sub" }, "Security Platform"),
+          )
+        )
+      ),
+      React.createElement("div", { className: "nav-section" },
+        React.createElement("div", { className: "nav-label" }, "Monitor"),
+        navItems.slice(0,3).map(n =>
+          React.createElement("div", { key: n.id, className: `nav-item${page === n.id ? " active" : ""}`, onClick: () => setPage(n.id) },
+            React.createElement("span", { className: "nav-icon" }, n.icon),
+            n.label,
+          )
+        )
+      ),
+      React.createElement("div", { className: "nav-section" },
+        React.createElement("div", { className: "nav-label" }, "Configure"),
+        navItems.slice(3).map(n =>
+          React.createElement("div", { key: n.id, className: `nav-item${page === n.id ? " active" : ""}`, onClick: () => setPage(n.id) },
+            React.createElement("span", { className: "nav-icon" }, n.icon),
+            n.label,
+          )
+        )
+      ),
+      React.createElement("div", { style: { marginTop: "auto", padding: "16px", borderTop: "1px solid var(--border)" } },
+        React.createElement("div", { style: { fontSize: 11, color: "var(--muted)" } }, "Aegis Security Platform"),
+        React.createElement("div", { style: { fontSize: 11, color: "var(--muted)" } }, "v2.1.0"),
+      )
+    ),
+
+    // Main
+    React.createElement("div", { className: "main" },
+      React.createElement("div", { className: "topbar" },
+        React.createElement("span", { style: { fontWeight: 600 } }, navItems.find(n => n.id === page)?.label),
+        React.createElement("div", { className: "ml-auto flex items-center gap16" },
+          React.createElement("span", { className: "flex items-center gap8 text-muted", style: { fontSize: 12 } },
+            React.createElement("span", { className: "status-dot green pulse" }),
+            "All systems operational"
+          ),
+          React.createElement("div", { style: { width: 32, height: 32, borderRadius: "50%", background: "var(--accent2)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 14 } }, "R"),
+        )
+      ),
+      React.createElement("div", { className: "content" },
+        React.createElement(Page)
+      )
+    )
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+</script>
+</body>
+</html>

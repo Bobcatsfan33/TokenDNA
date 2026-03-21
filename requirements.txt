@@ -1,0 +1,38 @@
+# TokenDNA — Python dependencies
+# Pin major versions for reproducibility; use `pip install -r requirements.txt`
+
+# ── Web framework ─────────────────────────────────────────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+python-multipart==0.0.9
+
+# ── JWT / OIDC ────────────────────────────────────────────────────────────────
+python-jose[cryptography]==3.3.0
+cryptography==42.0.8
+
+# ── HTTP client (JWKS fetch, webhooks, AbuseIPDB, ip-api) ────────────────────
+requests==2.32.3
+httpx==0.27.0                    # async-capable alternative used by some deps
+
+# ── Redis ─────────────────────────────────────────────────────────────────────
+redis==5.0.4
+
+# ── ClickHouse ────────────────────────────────────────────────────────────────
+clickhouse-connect==0.7.16
+
+# ── AWS connector (optional — only needed when using AWS onboarding) ──────────
+boto3==1.34.100
+botocore==1.34.100
+
+# ── GeoIP (optional — only needed when GEOIP_PROVIDER=maxmind) ───────────────
+# geoip2==4.8.0                  # uncomment + download GeoLite2-City.mmdb
+
+# ── User-agent parsing ────────────────────────────────────────────────────────
+user-agents==2.2.0
+
+# ── ML / adaptive scoring ────────────────────────────────────────────────────
+numpy==1.26.4                    # lightweight — used for profile distance math
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+pydantic==2.7.1                  # FastAPI model validation (v2 API)
+python-dotenv==1.0.1             # load .env in development
