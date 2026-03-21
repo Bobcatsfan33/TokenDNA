@@ -1,0 +1,33 @@
+{
+  "name": "tokendna-edge",
+  "version": "2.1.0",
+  "description": "TokenDNA zero-trust token integrity layer — Cloudflare Worker",
+  "main": "index.js",
+  "author": "Ryan Wallace",
+  "license": "SEE LICENSE IN ../LICENSE",
+  "private": false,
+  "keywords": [
+    "zero-trust",
+    "jwt",
+    "token-theft",
+    "behavioral-fingerprinting",
+    "dpop",
+    "cloudflare-worker",
+    "security",
+    "authentication"
+  ],
+  "cloudflare": {
+    "type": "worker"
+  },
+  "devDependencies": {
+    "wrangler": "^3.60.0"
+  },
+  "scripts": {
+    "dev":     "wrangler dev",
+    "deploy":  "wrangler deploy",
+    "deploy:staging":    "wrangler deploy --env staging",
+    "deploy:production": "wrangler deploy --env production",
+    "tail":    "wrangler tail",
+    "kv:create": "wrangler kv:namespace create TOKEN_CACHE"
+  }
+}

@@ -1,0 +1,68 @@
+# TokenDNA — Cloudflare Worker configuration
+# Deploy: cd edge && wrangler deploy
+# Secrets: wrangler secret put JWKS_URL   (then paste value)
+#          wrangler secret put BACKEND_API
+#
+# See: https://developers.cloudflare.com/workers/wrangler/configuration/
+
+name        = "tokendna-edge"
+main        = "index.js"
+compatibility_date = "2024-04-01"
+
+# Workers Unbound: required for crypto.subtle + multiple KV operations per request
+# Switch to "bundled" if you need sub-millisecond cold starts on very simple workers
+workers_dev = true
+
+# ── KV namespace ─────────────────────────────────────────────────────────────
+# Stores: revocation list (revoked:{jti}) and DPoP nonces (dpop_nonce:{jti})
+#
+# Create the namespace first:
+#   wrangler kv:namespace create TOKEN_CACHE
+#   wrangler kv:namespace create TOKEN_CACHE --preview
+# Then paste the returned IDs below.
+[[kv_namespaces]]
+binding  = "TOKEN_CACHE"
+id       = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+preview_id = "REPLACE_WITH_YOUR_KV_PREVIEW_NAMESPACE_ID"
+
+# ── Plain-text vars ───────────────────────────────────────────────────────────
+# Non-secret configuration. Secrets (keys, URLs with credentials) go in
+# `wrangler secret put` so they never appear in source control.
+[vars]
+# Base URL of your TokenDNA backend API (no trailing slash)
+# Example: "https://api.tokendna.example.com"
+BACKEND_API = "https://api.tokendna.example.com"
+
+# OIDC JWKS endpoint — must be publicly reachable from Cloudflare's network
+# Example: "https://your-tenant.auth0.com/.well-known/jwks.json"
+JWKS_URL = "https://your-idp.example.com/.well-known/jwks.json"
+
+# ── Environments ─────────────────────────────────────────────────────────────
+[env.staging]
+name = "tokendna-edge-staging"
+workers_dev = true
+
+[env.staging.vars]
+BACKEND_API = "https://api-staging.tokendna.example.com"
+JWKS_URL    = "https://your-idp.example.com/.well-known/jwks.json"
+
+[[env.staging.kv_namespaces]]
+binding    = "TOKEN_CACHE"
+id         = "REPLACE_WITH_STAGING_KV_NAMESPACE_ID"
+preview_id = "REPLACE_WITH_STAGING_KV_PREVIEW_NAMESPACE_ID"
+
+[env.production]
+name        = "tokendna-edge"
+workers_dev = false
+routes      = [
+  { pattern = "api.tokendna.example.com/*", zone_name = "tokendna.example.com" }
+]
+
+[env.production.vars]
+BACKEND_API = "https://api.tokendna.example.com"
+JWKS_URL    = "https://your-idp.example.com/.well-known/jwks.json"
+
+[[env.production.kv_namespaces]]
+binding    = "TOKEN_CACHE"
+id         = "REPLACE_WITH_PRODUCTION_KV_NAMESPACE_ID"
+preview_id = "REPLACE_WITH_PRODUCTION_KV_PREVIEW_NAMESPACE_ID"
