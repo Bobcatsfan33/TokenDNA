@@ -7,7 +7,7 @@ uvicorn[standard]==0.29.0
 python-multipart==0.0.9
 
 # ── JWT / OIDC ────────────────────────────────────────────────────────────────
-python-jose[cryptography]==3.3.0
+python-jose[cryptography]==3.5.0
 cryptography==42.0.8
 
 # ── HTTP client (JWKS fetch, webhooks, AbuseIPDB, ip-api) ────────────────────
