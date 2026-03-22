@@ -1,5 +1,15 @@
 """
-TokenDNA / Aegis Security Platform -- FastAPI v2.9.0
+TokenDNA / Aegis Security Platform -- FastAPI v3.0.0
+
+v3.0.0 — Supply Chain Defense (SA-12 / SI-7 / CM-3 / CM-14 / AU-9)
+  POST /api/supply-chain/webhook          — GitHub webhook receiver (push, workflow_run)
+  POST /api/supply-chain/scan/workflow    — Scan workflow files for pinning violations (ADMIN+)
+  POST /api/supply-chain/analyze/commit   — Score a commit for supply chain risk (ANALYST+)
+  POST /api/supply-chain/lineage          — Record fork metadata + analyze commit ancestry (ANALYST+)
+  POST /api/supply-chain/blast-radius     — Calculate impact blast radius for an action ref (ANALYST+)
+  GET  /api/supply-chain/tags/{tag}       — Full ledger history for a git tag (ANALYST+)
+  GET  /api/supply-chain/tags/mutations   — Recent tag mutation events (ANALYST+)
+  GET  /api/supply-chain/status           — Supply chain defense posture summary (ANALYST+)
 
 Endpoints
 ─────────
@@ -142,6 +152,19 @@ from modules.security.encryption import (
     is_encrypted,
     KeyRotator,
 )
+from modules.supply_chain import (
+    check_supply_chain_config,
+    CommitAnalyzer,
+    LineageTracker,
+    BlastRadiusCalculator,
+    TagMonitor,
+    TagLedger,
+    ShaPinningEnforcer,
+    PipelineGuard,
+    PipelineRunContext,
+    WorkflowGuard,
+    TemporalAnomalyDetector,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -154,7 +177,7 @@ _DASHBOARD_PATH = Path(__file__).parent / "dashboard" / "index.html"
 app = FastAPI(
     title="Aegis Security Platform",
     description="TokenDNA zero-trust session integrity + Aegis cloud posture management",
-    version="2.9.0",
+    version="3.0.0",
     docs_url="/api/docs" if DEV_MODE else None,
     redoc_url="/api/redoc" if DEV_MODE else None,
 )
@@ -295,10 +318,17 @@ async def startup_checks():
     except Exception as exc:
         logger.error("Encryption at rest config error: %s", exc)
 
+    # v3.0.0: Supply chain defense startup check (SA-12 / SI-7)
+    sc_summary: dict = {}
+    try:
+        sc_summary = check_supply_chain_config()
+    except Exception as exc:
+        logger.error("Supply chain defense config error: %s", exc)
+
     # Emit startup audit event (AU-2: application startup)
     log_event(AuditEventType.STARTUP, AuditOutcome.SUCCESS,
               detail={
-                  "version": "2.9.0",
+                  "version": "3.0.0",
                   "dev_mode": DEV_MODE,
                   "fips_active": fips_summary.get("fips_active", False),
                   "dpop_required": dpop_required,
@@ -307,6 +337,8 @@ async def startup_checks():
                   "mtls_allowed_cns": list(mtls_summary.get("allowed_cns") or []),
                   "enc_provider": enc_summary.get("provider", "unknown"),
                   "enc_provider_ready": enc_summary.get("provider_ready", False),
+                  "supply_chain_modules": sc_summary.get("summary", {}).get("modules_loaded", 0),
+                  "supply_chain_redis": sc_summary.get("summary", {}).get("redis_available", False),
               })
 
 
@@ -336,17 +368,18 @@ async def health():
     fips_info = _fips.compliance_summary()
     return {
         "service":        "TokenDNA",
-        "version":        "2.8.0",
-        "redis":          redis_ok(),
-        "clickhouse":     clickhouse_client.is_available(),
-        "dev_mode":       DEV_MODE,
-        "fips_active":    fips_info.get("fips_active", False),
-        "dpop_required":  os.getenv("DPOP_REQUIRED", "false").lower() == "true",
-        "trap_active":    True,
-        "preflight_gate": True,
-        "mtls_enabled":   os.getenv("MTLS_MODE", "").lower() in ("proxy", "native"),
-        "mtls_mode":      os.getenv("MTLS_MODE", "disabled"),
-        "enc_provider":   os.getenv("ENC_PROVIDER", "env"),
+        "version":               "3.0.0",
+        "redis":                 redis_ok(),
+        "clickhouse":            clickhouse_client.is_available(),
+        "dev_mode":              DEV_MODE,
+        "fips_active":           fips_info.get("fips_active", False),
+        "dpop_required":         os.getenv("DPOP_REQUIRED", "false").lower() == "true",
+        "trap_active":           True,
+        "preflight_gate":        True,
+        "mtls_enabled":          os.getenv("MTLS_MODE", "").lower() in ("proxy", "native"),
+        "mtls_mode":             os.getenv("MTLS_MODE", "disabled"),
+        "enc_provider":          os.getenv("ENC_PROVIDER", "env"),
+        "supply_chain_defense":  True,
     }
 
 
@@ -1361,4 +1394,417 @@ async def rotate_encryption_keys(
         "columns": columns,
         "message": "Rotation running in background. Monitor logs and call "
                    "GET /admin/encryption/status for completion.",
+    }
+
+
+# ── Supply Chain Defense  (v3.0.0) ────────────────────────────────────────────
+
+import hashlib
+import hmac
+from datetime import datetime, timezone
+
+_sc_tag_ledger    = TagLedger()
+_sc_tag_monitor   = TagMonitor(ledger=_sc_tag_ledger)
+_sc_commit_analyzer = CommitAnalyzer()
+_sc_lineage       = LineageTracker()
+_sc_blast_radius  = BlastRadiusCalculator()
+_sc_sha_enforcer  = ShaPinningEnforcer()
+_sc_wf_guard      = WorkflowGuard()
+_sc_temporal      = TemporalAnomalyDetector()
+_sc_pipeline_guard = PipelineGuard(
+    commit_analyzer=_sc_commit_analyzer,
+    workflow_guard=_sc_wf_guard,
+    sha_enforcer=_sc_sha_enforcer,
+    tag_monitor=_sc_tag_monitor,
+)
+
+
+def _verify_github_webhook(request_body: bytes, signature_header: str | None) -> bool:
+    """Validate GitHub webhook HMAC-SHA256 signature."""
+    secret = os.getenv("GITHUB_WEBHOOK_SECRET", "")
+    if not secret:
+        return True  # unenforced in dev — warn at startup
+    if not signature_header or not signature_header.startswith("sha256="):
+        return False
+    expected = "sha256=" + hmac.new(secret.encode(), request_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature_header)
+
+
+@app.post("/api/supply-chain/webhook", status_code=200)
+async def supply_chain_webhook(request: Request):
+    """
+    GitHub webhook receiver for supply chain events.
+
+    Processes: push (tag mutations), workflow_run (pipeline gate).
+    Configure in GitHub: Settings -> Webhooks -> Content type: application/json
+    Set GITHUB_WEBHOOK_SECRET env var to the shared secret.
+
+    No auth token required — validated by HMAC-SHA256 signature.
+    NIST SA-12, SI-7, CM-3.
+    """
+    body = await request.body()
+    sig  = request.headers.get("X-Hub-Signature-256")
+    event_type = request.headers.get("X-GitHub-Event", "unknown")
+
+    if not _verify_github_webhook(body, sig):
+        log_event(AuditEventType.ACCESS_DENIED, AuditOutcome.FAILURE,
+                  detail={"resource": "/api/supply-chain/webhook", "reason": "invalid_signature"})
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    import json as _json
+    payload = _json.loads(body)
+
+    result: dict = {"event": event_type, "processed": False}
+
+    if event_type == "push":
+        # Tag mutation detection
+        mutation = _sc_tag_monitor.process_webhook(payload)
+        if mutation:
+            result["tag_mutation"] = {
+                "tag": mutation.tag_name,
+                "severity": mutation.severity,
+                "forced": mutation.forced,
+                "actor": mutation.actor,
+            }
+            result["processed"] = True
+
+            # Temporal analysis for the actor
+            try:
+                _sc_temporal.record_commit(mutation.actor, datetime.now(timezone.utc))
+                anomaly = _sc_temporal.analyze(mutation.actor, datetime.now(timezone.utc))
+                if anomaly:
+                    result["temporal_anomaly"] = {"type": anomaly.anomaly_type, "score": anomaly.score}
+            except Exception:
+                pass
+
+    elif event_type == "workflow_run":
+        # Pipeline gate evaluation
+        run = payload.get("workflow_run", {})
+        ctx = PipelineRunContext(
+            run_id=str(run.get("id", uuid.uuid4())),
+            repo=payload.get("repository", {}).get("full_name", "unknown"),
+            actor=run.get("actor", {}).get("login", "unknown"),
+            workflow_file=run.get("path", "unknown"),
+            trigger_event=run.get("event", "unknown"),
+            commit_sha=run.get("head_sha", ""),
+            ref=run.get("head_branch", ""),
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        )
+        decision = _sc_pipeline_guard.evaluate(ctx)
+        result["pipeline_decision"] = {
+            "decision": decision.decision,
+            "risk_score": decision.risk_score,
+            "signals": decision.signals_fired,
+        }
+        result["processed"] = True
+
+    log_event(AuditEventType.ACCESS, AuditOutcome.SUCCESS,
+              detail={"resource": "/api/supply-chain/webhook", "event_type": event_type, **result})
+    return result
+
+
+@app.post("/api/supply-chain/scan/workflow")
+async def scan_workflow_pinning(
+    request: Request,
+    caller: dict = Depends(require_role(Role.ADMIN)),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Scan one or more workflow file contents for SHA pinning violations.
+
+    Body: {"files": [{"path": ".github/workflows/ci.yml", "content": "..."}]}
+
+    Returns per-file PinningReport with compliance score, violations, and
+    a shell script for automated remediation.
+
+    NIST CM-14, SA-12(1) — ADMIN+ only.
+    """
+    body = await request.json()
+    files = body.get("files", [])
+    if not files:
+        raise HTTPException(status_code=422, detail="'files' list required")
+
+    reports = []
+    for f in files:
+        path    = f.get("path", "unknown")
+        content = f.get("content", "")
+        report  = _sc_sha_enforcer.scan_workflow_content(content, path)
+        reports.append({
+            "file": path,
+            "compliance_score": report.compliance_score,
+            "compliant": report.compliant,
+            "total_actions": report.total_actions,
+            "mutable_refs": report.mutable_count,
+            "violations": [
+                {"line": v.line_number, "ref": v.action_ref + "@" + v.pin_ref,
+                 "type": v.violation_type, "severity": v.severity, "suggestion": v.suggestion}
+                for v in report.violations
+            ],
+        })
+        # Register workflow baseline if fully pinned
+        if report.compliant:
+            _sc_wf_guard.register_baseline(path, content, caller.get("sub", "unknown"))
+
+    remediation = _sc_sha_enforcer.generate_remediation_script(
+        [_sc_sha_enforcer.scan_workflow_content(f.get("content",""), f.get("path","")) for f in files]
+    )
+
+    log_event(AuditEventType.ACCESS, AuditOutcome.SUCCESS,
+              actor=caller.get("sub"), detail={"resource": "/api/supply-chain/scan/workflow",
+              "files_scanned": len(files)})
+    return {"reports": reports, "remediation_script": remediation}
+
+
+@app.post("/api/supply-chain/analyze/commit")
+async def analyze_commit(
+    request: Request,
+    caller: dict = Depends(require_role(Role.ANALYST)),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Score a commit for supply chain risk across 6 behavioral signals.
+
+    Body: {
+      "sha": "abc123",
+      "actor": "dev@example.com",
+      "repo": "org/repo",
+      "message": "...",
+      "timestamp": "ISO8601",
+      "files_changed": [{"filename": "...", "additions": N, "deletions": N}],
+      "signed": false,
+      "parents": ["sha1"]
+    }
+
+    Returns CommitAnalysis with risk_score, risk_tier, signals, and recommendation.
+    NIST SI-7(1), SA-12 — ANALYST+ only.
+    """
+    commit_data = await request.json()
+    analysis = _sc_commit_analyzer.analyze(commit_data)
+
+    actor = commit_data.get("actor", "unknown")
+    try:
+        ts = datetime.fromisoformat(commit_data.get("timestamp", datetime.now(timezone.utc).isoformat()))
+        _sc_temporal.record_commit(actor, ts)
+        temporal_anomaly = _sc_temporal.analyze(actor, ts)
+    except Exception:
+        temporal_anomaly = None
+
+    log_event(AuditEventType.ACCESS, AuditOutcome.SUCCESS,
+              actor=caller.get("sub"), detail={
+                  "resource": "/api/supply-chain/analyze/commit",
+                  "commit_sha": analysis.commit_sha,
+                  "risk_tier": analysis.risk_tier,
+                  "recommendation": analysis.recommendation,
+              })
+    return {
+        "sha": analysis.commit_sha,
+        "risk_score": analysis.risk_score,
+        "risk_tier": analysis.risk_tier,
+        "recommendation": analysis.recommendation,
+        "workflow_files_touched": analysis.workflow_files_touched,
+        "suspicious_patterns": analysis.suspicious_patterns,
+        "signals": [
+            {"name": s.signal_name, "triggered": s.triggered, "detail": s.detail}
+            for s in analysis.signals
+        ],
+        "temporal_anomaly": {
+            "type": temporal_anomaly.anomaly_type,
+            "score": temporal_anomaly.score,
+            "detail": temporal_anomaly.detail,
+        } if temporal_anomaly else None,
+    }
+
+
+@app.post("/api/supply-chain/lineage")
+async def record_lineage(
+    request: Request,
+    caller: dict = Depends(require_role(Role.ANALYST)),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Record fork metadata and analyze a commit's ancestry for suspicious origins.
+
+    Body: {
+      "commit_sha": "...",
+      "repo": "org/repo",
+      "actor": "...",
+      "parent_shas": ["..."],
+      "branch": "main",
+      "source_fork": "attacker/fork"   (optional)
+      "fork_age_days": 1               (optional, if source_fork set)
+      "prior_contributions": 0         (optional)
+    }
+
+    NIST SA-12, SI-7 — ANALYST+ only.
+    """
+    body = await request.json()
+    commit_sha  = body.get("commit_sha", "")
+    repo        = body.get("repo", "")
+    actor       = body.get("actor", "unknown")
+    parent_shas = body.get("parent_shas", [])
+    branch      = body.get("branch", "main")
+    source_fork = body.get("source_fork")
+
+    if source_fork:
+        _sc_lineage.record_fork(
+            fork_repo=source_fork,
+            parent_repo=repo,
+            created_by=actor,
+            fork_age_days=body.get("fork_age_days", 0),
+        )
+
+    lineage = _sc_lineage.analyze_commit(commit_sha, repo, actor, parent_shas, branch, source_fork)
+
+    log_event(AuditEventType.ACCESS, AuditOutcome.SUCCESS,
+              actor=caller.get("sub"), detail={
+                  "resource": "/api/supply-chain/lineage",
+                  "commit_sha": commit_sha,
+                  "suspicious": lineage.suspicious,
+                  "lineage_score": lineage.lineage_score,
+              })
+    return {
+        "commit_sha": lineage.commit_sha,
+        "suspicious": lineage.suspicious,
+        "lineage_score": lineage.lineage_score,
+        "merge_from_fork": lineage.merge_from_fork,
+        "detail": lineage.detail,
+        "fork_origin": {
+            "repo": lineage.fork_origin.repo,
+            "fork_age_days": lineage.fork_origin.fork_age_days,
+            "prior_contributions": lineage.fork_origin.prior_contributions,
+            "suspicious": lineage.fork_origin.suspicious,
+            "reason": lineage.fork_origin.reason,
+        } if lineage.fork_origin else None,
+    }
+
+
+@app.post("/api/supply-chain/blast-radius")
+async def get_blast_radius(
+    request: Request,
+    caller: dict = Depends(require_role(Role.ANALYST)),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Calculate the blast radius of a potentially compromised GitHub Action.
+
+    Body: {"action_ref": "actions/checkout", "workflow_content": "..."}  (content optional)
+
+    If workflow_content provided, scans it to record usage before calculating.
+    Returns affected repos count, severity, SHA-pin compliance, and recommendations.
+
+    NIST SA-12(1), IR-4 — ANALYST+ only.
+    """
+    body       = await request.json()
+    action_ref = body.get("action_ref", "")
+    content    = body.get("workflow_content")
+    repo       = body.get("repo", "unknown")
+
+    if not action_ref:
+        raise HTTPException(status_code=422, detail="'action_ref' required")
+
+    if content:
+        _sc_blast_radius.scan_workflow_content(content, repo, body.get("workflow_file", "unknown"))
+
+    report = _sc_blast_radius.calculate(action_ref)
+
+    log_event(AuditEventType.ACCESS, AuditOutcome.SUCCESS,
+              actor=caller.get("sub"), detail={
+                  "resource": "/api/supply-chain/blast-radius",
+                  "action_ref": action_ref,
+                  "total_affected": report.total_repos_affected,
+                  "severity": report.severity,
+              })
+    return {
+        "action_ref": report.action_ref,
+        "severity": report.severity,
+        "total_repos_affected": report.total_repos_affected,
+        "direct_consumers": report.direct_consumers,
+        "sha_pinned_count": report.sha_pinned_count,
+        "mutable_ref_count": report.mutable_ref_count,
+        "recommendations": report.recommendations,
+        "generated_at": report.generated_at,
+    }
+
+
+@app.get("/api/supply-chain/tags/{tag_name}")
+async def get_tag_ledger_history(
+    tag_name: str,
+    caller: dict = Depends(require_role(Role.ANALYST)),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Full immutable ledger history for a git tag.
+
+    Shows every SHA the tag has pointed to, who moved it, and when.
+    Chain integrity is verified on each call.
+
+    NIST AU-9, SI-7 — ANALYST+ only.
+    """
+    history = _sc_tag_ledger.get_history(tag_name)
+    chain_ok = _sc_tag_ledger.verify_chain(tag_name)
+
+    log_event(AuditEventType.ACCESS, AuditOutcome.SUCCESS,
+              actor=caller.get("sub"), detail={"resource": f"/api/supply-chain/tags/{tag_name}"})
+    return {
+        "tag": tag_name,
+        "chain_intact": chain_ok,
+        "event_count": len(history),
+        "history": [
+            {"sha": e.commit_sha, "prev_sha": e.prev_sha, "action": e.action,
+             "actor": e.actor, "timestamp": e.timestamp}
+            for e in history
+        ],
+    }
+
+
+@app.get("/api/supply-chain/tags/mutations")
+async def get_tag_mutations(
+    caller: dict = Depends(require_role(Role.ANALYST)),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Recent tag mutation events (forced rewrites, deletions of release tags).
+
+    NIST SI-7(1), CM-3 — ANALYST+ only.
+    """
+    recent = _sc_tag_ledger.get_recent(limit=50)
+    mutations = [e for e in recent if e.action in ("updated", "deleted") and e.prev_sha]
+    log_event(AuditEventType.ACCESS, AuditOutcome.SUCCESS,
+              actor=caller.get("sub"), detail={"resource": "/api/supply-chain/tags/mutations"})
+    return {
+        "mutation_count": len(mutations),
+        "mutations": [
+            {"tag": e.tag_name, "sha": e.commit_sha, "prev_sha": e.prev_sha,
+             "action": e.action, "actor": e.actor, "timestamp": e.timestamp}
+            for e in mutations
+        ],
+    }
+
+
+@app.get("/api/supply-chain/status")
+async def supply_chain_status(
+    caller: dict = Depends(require_role(Role.ANALYST)),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Supply chain defense posture summary.
+
+    Returns active module status, recent mutation count, tracked actions,
+    and monitored workflow baselines.
+
+    NIST SA-12, SI-7 — ANALYST+ only.
+    """
+    sc_cfg = check_supply_chain_config()
+    recent = _sc_tag_ledger.get_recent(limit=100)
+    mutations = [e for e in recent if e.action in ("updated", "deleted") and e.prev_sha]
+
+    log_event(AuditEventType.ACCESS, AuditOutcome.SUCCESS,
+              actor=caller.get("sub"), detail={"resource": "/api/supply-chain/status"})
+    return {
+        "modules": sc_cfg.get("summary", {}),
+        "tag_mutations_recent": len(mutations),
+        "tracked_actions": sc_cfg.get("blast_radius", {}).get("tracked_actions", 0),
+        "monitored_workflow_files": sc_cfg.get("workflow_guard", {}).get("monitored_files_count", 0),
+        "pipeline_guard": _sc_pipeline_guard.get_status(),
+        "webhook_secret_configured": bool(os.getenv("GITHUB_WEBHOOK_SECRET")),
     }

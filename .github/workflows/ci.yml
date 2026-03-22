@@ -57,6 +57,15 @@ jobs:
             'modules.security.encryption',
             'modules.transport.mtls',
             'onboarding.aws_connector',
+            'modules.supply_chain.tag_ledger',
+            'modules.supply_chain.tag_monitor',
+            'modules.supply_chain.commit_analyzer',
+            'modules.supply_chain.lineage',
+            'modules.supply_chain.workflow_guard',
+            'modules.supply_chain.sha_pinning',
+            'modules.supply_chain.pipeline_guard',
+            'modules.supply_chain.blast_radius',
+            'modules.supply_chain.temporal',
           ]
           failed = []
           for m in mods:
