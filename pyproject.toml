@@ -1,0 +1,17 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 200
+
+[tool.ruff.lint]
+# F401 unused-import      — many imports are re-exports or guarded by try/except
+# F841 unused-variable    — common pattern in exception handlers and request handlers
+# E402 module-import-not-at-top — intentional lazy imports (heavy optional deps)
+# E701 multiple-stmts-colon — compact guard clauses in identity pipeline hot-paths
+# F541 f-string-no-placeholders — leftover from template expansions
+# F811 redefinition-of-unused — intentional re-exports and conditional definitions
+# E741 ambiguous-variable-name — single-letter vars in attribution math are intentional
+ignore = ["F401", "F841", "E402", "E701", "F541", "F811", "E741"]
+
+# Keep these active — real correctness / security issues:
+# F821 undefined-name (stays active)
+select = ["F", "E", "W"]
