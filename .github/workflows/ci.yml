@@ -1,4 +1,4 @@
-name: Aegis Security — CI Pipeline
+name: TokenDNA — CI Pipeline
 
 on:
   push:
@@ -37,10 +37,25 @@ jobs:
           import importlib, sys
           mods = [
             'config', 'auth',
-            'modules.tenants.models', 'modules.tenants.store', 'modules.tenants.middleware',
-            'modules.identity.cache_redis', 'modules.identity.ml_model',
-            'modules.identity.session_graph', 'modules.identity.async_pipeline',
-            'modules.security.audit_log', 'modules.security.rbac', 'modules.security.headers',
+            'modules.tenants.models',
+            'modules.tenants.store',
+            'modules.tenants.middleware',
+            'modules.identity.cache_redis',
+            'modules.identity.ml_model',
+            'modules.identity.session_graph',
+            'modules.identity.async_pipeline',
+            'modules.identity.dpop',
+            'modules.identity.hvip',
+            'modules.identity.preflight',
+            'modules.identity.token_dna',
+            'modules.defense.token_trap',
+            'modules.attribution.engine',
+            'modules.security.audit_log',
+            'modules.security.rbac',
+            'modules.security.headers',
+            'modules.security.fips',
+            'modules.security.encryption',
+            'modules.transport.mtls',
             'onboarding.aws_connector',
           ]
           failed = []
