@@ -534,7 +534,7 @@ _factory = TrapTokenFactory(store=_store)
 _monitor = TrapMonitor(store=_store, factory=_factory)
 
 
-async def trap_token_check(request: "Request") -> Optional[TrapHitRecord]:  # type: ignore[name-defined]
+async def trap_token_check(request: "Request") -> Optional[TrapHitRecord]:  # type: ignore[name-defined]  # noqa: F821
     """
     FastAPI dependency — transparently checks every authenticated request.
     Add as a Depends() on any route that should be monitored.

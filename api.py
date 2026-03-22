@@ -83,7 +83,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
@@ -1288,8 +1288,8 @@ async def encryption_status(
 @app.post("/admin/encryption/rotate")
 async def rotate_encryption_keys(
     request: Request,
+    background_tasks: BackgroundTasks,
     caller: dict = Depends(require_role(Role.OWNER)),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     """
     Trigger key rotation for specified ClickHouse table columns.
