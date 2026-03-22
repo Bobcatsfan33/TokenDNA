@@ -137,7 +137,7 @@ jobs:
           fetch-depth: 0      # full history for git log scanning
 
       - name: TruffleHog OSS — scan for leaked secrets
-        uses: trufflesecurity/trufflehog@main
+        uses: trufflesecurity/trufflehog@v3.88.1
         with:
           path: ./
           base: ${{ github.event.repository.default_branch }}
@@ -155,13 +155,14 @@ jobs:
         run: docker build --no-cache -t aegis-tokendna:ci .
 
       - name: Trivy container scan
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.29.0
         with:
           image-ref: "aegis-tokendna:ci"
           format: "sarif"
           output: "trivy-results.sarif"
           severity: "CRITICAL,HIGH"
-          exit-code: "1"           # fail on CRITICAL/HIGH vulns
+          exit-code: "1"
+          ignore-unfixed: true     # only fail on CVEs that have an available fix
 
       - name: Upload Trivy results
         uses: github/codeql-action/upload-sarif@v3
