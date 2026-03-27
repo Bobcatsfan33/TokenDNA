@@ -528,6 +528,131 @@ async def api_cloud_findings(
     }
 
 
+# ── ML Scoring endpoint (called by Cloudflare Worker) ───────────────────────────
+
+@app.post("/ml-score")
+async def ml_score_endpoint(
+    body: dict,
+    request: Request,
+    tenant: TenantContext = Depends(get_tenant),
+    _rate: None = Depends(check_rate_limit),
+):
+    """
+    Risk assessment endpoint called by Cloudflare Worker edge layer.
+
+    Accepts request signals from the edge and runs the full scoring pipeline:
+      1. Parse incoming token/request data
+      2. Generate DNA fingerprint
+      3. GeoIP lookup
+      4. Threat intelligence enrichment
+      5. ML behavioral scoring
+      6. Session graph anomaly detection
+      7. Unified risk scoring
+      8. Alert dispatch if needed
+      9. Async ClickHouse logging
+
+    Returns:
+      - score: 0.0–1.0 (normalized risk, where 1.0 = critical risk)
+      - revoke: boolean indicating if token should be auto-revoked
+    """
+    request_id = str(uuid.uuid4())
+    user_id = body.get("user_id", "unknown")
+    tid = tenant.tenant_id
+
+    try:
+        # ── Extract edge signals ──────────────────────────────────────────────────
+        country = body.get("country", "XX")
+        asn = body.get("asn", "unknown")
+        city = body.get("city", "unknown")
+        ip = request.client.host if request.client else ""
+
+        # ── Initialize tenant-scoped Redis ───────────────────────────────────────
+        r = get_redis()
+        tr = TenantRedis(r, tid)
+
+        # ── Generate DNA (v2 fingerprint) ────────────────────────────────────────
+        # Note: In edge context, we don't have User-Agent directly from edge.
+        # Edge forwards country/asn/city from request.cf context.
+        # For edge scoring, we generate DNA from edge signals only.
+        ua = body.get("user_agent", "")
+        current = generate_dna(ua, ip, country, asn)
+
+        # ── 1. GeoIP lookup (for impossible travel detection) ────────────────────
+        geo = geo_intel.lookup(ip, redis_client=r)
+        if geo.country == "XX":
+            geo.country = country  # fallback to edge-provided country
+
+        # ── 2. Threat intelligence ───────────────────────────────────────────────
+        threat = threat_intel.enrich(ip, asn=asn, isp=geo.isp, redis_client=r)
+
+        # ── 3. ML model scoring ──────────────────────────────────────────────────
+        ml_score = ml_model.score(user_id, current, redis=tr)
+
+        # ── 4. Session graph anomalies ───────────────────────────────────────────
+        graph_result = session_graph.detect_anomalies(user_id, current, geo, redis=tr)
+
+        # ── 5. Unified scoring ───────────────────────────────────────────────────
+        breakdown = scoring.compute(ml_score, threat, graph_result)
+
+        # ── 6. Update profile and session graph ──────────────────────────────────
+        ml_model.update_profile(user_id, current, redis=tr)
+        session_graph.add_event(user_id, current, geo, redis=tr)
+
+        # ── 7. Async ClickHouse logging ─────────────────────────────────────────
+        asyncio.create_task(
+            async_pipeline.process_event(
+                request_id, user_id, current, breakdown, threat, graph_result,
+                tenant_id=tid,
+            )
+        )
+
+        # ── 8. Update event counters ────────────────────────────────────────────
+        increment_event_counter(breakdown.tier.value, tenant_id=tid)
+
+        # ── 9. Handle alert dispatch if needed ───────────────────────────────────
+        bd = breakdown.to_dict()
+        tc = threat.to_dict()
+        gr = graph_result.to_dict()
+
+        if breakdown.tier == RiskTier.REVOKE:
+            asyncio.create_task(handle_revoke(user_id, request_id, "", bd, current, tc, gr))
+            # Return signal to edge worker to revoke the token
+            return {
+                "score": breakdown.final_score / 100.0,  # Normalize 0-100 to 0-1
+                "revoke": True,
+            }
+
+        if breakdown.tier == RiskTier.BLOCK:
+            asyncio.create_task(handle_block(user_id, request_id, bd, current, tc, gr))
+            # Block signals are handled at edge; return high score
+            return {
+                "score": breakdown.final_score / 100.0,
+                "revoke": False,
+            }
+
+        if breakdown.tier == RiskTier.STEP_UP:
+            asyncio.create_task(handle_step_up(user_id, request_id))
+            # Step-up is handled in the backend auth layer
+            return {
+                "score": breakdown.final_score / 100.0,
+                "revoke": False,
+            }
+
+        # ALLOW tier — token is safe
+        return {
+            "score": breakdown.final_score / 100.0,
+            "revoke": False,
+        }
+
+    except Exception as e:
+        logger.exception(f"ml_score_endpoint error for user {user_id}: {e}")
+        # Fail open — return moderate score to not block the user
+        return {
+            "score": 0.5,
+            "revoke": False,
+        }
+
+
 # ── Audit Log endpoint (OWNER only) ────────────────────────────────────────────
 
 @app.get("/api/audit")
