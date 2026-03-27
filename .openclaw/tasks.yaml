@@ -1,0 +1,182 @@
+# OpenClaw Task Queue — TokenDNA
+# Tasks are picked up by the OpenClaw engineering bot.
+# Claude creates tasks during sessions. OpenClaw works them autonomously on feature branches.
+# Status: pending | in_progress | pr_opened | review | completed | blocked
+# Priority: p0 (critical path) | p1 (high value) | p2 (standard) | p3 (nice to have)
+
+tasks:
+
+  # ============================================================
+  # ROUND 1 — Dashboard + Tests + Missing Endpoints
+  # These tasks have no dependencies and can start immediately.
+  # ============================================================
+
+  - id: dashboard-api-integration
+    phase: "3B"
+    priority: p0
+    type: feature
+    description: >
+      Wire the TokenDNA React dashboard (dashboard/index.html) to the existing
+      API endpoints. The dashboard shell exists with Recharts components and a
+      useApi() hook. The API endpoints exist and return real data. Connect them:
+      - /api/stats → stat cards (total sessions, active users, threats blocked, avg score)
+      - /api/events → events table (timestamp, user, action, risk tier, IP, country)
+      - /api/events/hourly → area chart (hourly event volume)
+      - /api/threats → threat breakdown pie chart (tor, datacenter, vpn, abuse)
+      - /api/health → system health indicators (redis, clickhouse, uptime)
+      - /api/sessions → sessions intelligence table (user profiles with risk scores)
+      - /api/cloud-findings → cloud findings table (Aegis CSPM results)
+      - /api/audit → audit log table (OWNER-only, paginated)
+      Replace all mock/placeholder data with live API calls using the existing
+      useApi() hook pattern. Preserve the existing dark theme and Aegis branding.
+    output: dashboard/index.html
+    tests: "Manual visual verification — screenshot each page with live data"
+    branch: feature/dashboard-api-integration
+    status: pending
+    assigned: openclaw
+
+  - id: unit-tests-token-dna
+    phase: "3B"
+    priority: p1
+    type: test-generation
+    description: >
+      Generate comprehensive unit tests for modules/identity/token_dna.py.
+      Test generate_dna() with various User-Agent strings and IP addresses.
+      Test dna_matches() with matching and non-matching fingerprints.
+      Test migrate_dna() from v1 to v2 schema.
+      Test edge cases: missing headers, IPv6 addresses, empty UA strings.
+      Use pytest. Mock Redis calls where needed.
+    output: tests/test_token_dna.py
+    template: null
+    branch: feature/tests-token-dna
+    status: pending
+    assigned: openclaw
+
+  - id: unit-tests-scoring
+    phase: "3B"
+    priority: p1
+    type: test-generation
+    description: >
+      Generate unit tests for modules/identity/scoring.py.
+      Test compute() with various combinations of ML scores and threat penalties.
+      Test all RiskTier thresholds (ALLOW>=70, STEP_UP>=50, BLOCK>=30, REVOKE<15).
+      Test penalty accumulation: tor(40), datacenter(15), vpn(20), abuse(30),
+      branching(30), impossible_travel(50).
+      Test edge case where all penalties apply simultaneously.
+      Use pytest.
+    output: tests/test_scoring.py
+    branch: feature/tests-scoring
+    status: pending
+    assigned: openclaw
+
+  - id: unit-tests-session-graph
+    phase: "3B"
+    priority: p1
+    type: test-generation
+    description: >
+      Generate unit tests for modules/identity/session_graph.py.
+      Test session branching detection (>3 unique devices).
+      Test impossible travel detection with known lat/lon pairs and timestamps.
+      Test haversine distance calculation with known distances.
+      Test the 900 km/h commercial aircraft speed threshold.
+      Test Redis event list management (max 100 events per user).
+      Use pytest. Mock Redis.
+    output: tests/test_session_graph.py
+    branch: feature/tests-session-graph
+    status: pending
+    assigned: openclaw
+
+  - id: unit-tests-ml-model
+    phase: "3B"
+    priority: p1
+    type: test-generation
+    description: >
+      Generate unit tests for modules/identity/ml_model.py.
+      Test update_profile() with new and existing profiles.
+      Test score() deduction logic: device(30), country(25), IP(15), ASN(15),
+      OS(5), browser(5), mobile_flip(5).
+      Test that a fully known profile scores 100.
+      Test that a completely unknown profile scores minimum.
+      Test get_profile() and reset_profile().
+      Use pytest. Mock Redis.
+    output: tests/test_ml_model.py
+    branch: feature/tests-ml-model
+    status: pending
+    assigned: openclaw
+
+  - id: unit-tests-alerts
+    phase: "3B"
+    priority: p1
+    type: test-generation
+    description: >
+      Generate unit tests for modules/identity/alerts.py.
+      Test handle_step_up(), handle_block(), handle_revoke() independently.
+      Test Slack message formatting for each alert type.
+      Test SIEM webhook with HMAC signing validation.
+      Test that alert failures don't raise exceptions (fail-open design).
+      Mock httpx/requests calls. Use pytest.
+    output: tests/test_alerts.py
+    branch: feature/tests-alerts
+    status: pending
+    assigned: openclaw
+
+  - id: unit-tests-threat-intel
+    phase: "3B"
+    priority: p1
+    type: test-generation
+    description: >
+      Generate unit tests for modules/identity/threat_intel.py.
+      Test Tor exit node detection with known Tor IPs.
+      Test datacenter ASN detection for all 15 known ASNs.
+      Test VPN heuristic keyword matching on ISP names.
+      Test AbuseIPDB API integration with mocked responses.
+      Test Redis caching behavior (24h TTL for AbuseIPDB scores).
+      Test private IP detection (loopback, RFC-1918).
+      Use pytest. Mock Redis and HTTP calls.
+    output: tests/test_threat_intel.py
+    branch: feature/tests-threat-intel
+    status: pending
+    assigned: openclaw
+
+  - id: add-ml-score-endpoint
+    phase: "3B"
+    priority: p0
+    type: feature
+    description: >
+      The Cloudflare Worker (edge/index.js) calls POST /ml-score to get a risk
+      assessment before proxying requests. This endpoint does not exist in api.py.
+      Add it. The endpoint should:
+      1. Accept JSON body with: token (JWT string), ip, user_agent, headers
+      2. Run the full scoring pipeline: generate_dna() -> geo_intel -> threat_intel ->
+         ml_model.score() -> session_graph anomalies -> scoring.compute()
+      3. Return JSON: { score: float, tier: string, revoke: bool, details: object }
+      4. Require tenant authentication via X-API-Key header.
+      Follow the existing endpoint patterns in api.py. Add rate limiting.
+    output: api.py (add endpoint)
+    tests: tests/test_ml_score_endpoint.py
+    branch: feature/ml-score-endpoint
+    status: pending
+    assigned: openclaw
+
+  - id: alert-deduplication
+    phase: "3B"
+    priority: p2
+    type: feature
+    description: >
+      Add alert deduplication to modules/identity/alerts.py.
+      When the same user triggers the same risk tier within a configurable window
+      (default 5 minutes), suppress duplicate alerts. Use Redis to track:
+      key = alert:{tenant_id}:{user_id}:{tier}, TTL = dedup window.
+      If key exists, skip alert. If not, send alert and set key.
+      Add dedup_window_seconds to config.py (default 300).
+    output: modules/identity/alerts.py
+    tests: tests/test_alert_deduplication.py
+    branch: feature/alert-deduplication
+    status: pending
+    assigned: openclaw
+
+  # ============================================================
+  # ROUND 2 — Will be populated after Claude builds next layer
+  # Topics: IDP connectors, Aegis bridge, PostgreSQL migration,
+  #         CTX proxy service, enhanced ML model
+  # ============================================================
