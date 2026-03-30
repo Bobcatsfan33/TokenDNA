@@ -47,7 +47,7 @@
     },
     {
       "bom-ref": "requirements-L11",
-      "description": "requirements line 11: cryptography==42.0.8",
+      "description": "requirements line 11: cryptography==46.0.5",
       "externalReferences": [
         {
           "comment": "implicit dist url",
@@ -56,9 +56,9 @@
         }
       ],
       "name": "cryptography",
-      "purl": "pkg:pypi/cryptography@42.0.8",
+      "purl": "pkg:pypi/cryptography@46.0.5",
       "type": "library",
-      "version": "42.0.8"
+      "version": "46.0.5"
     },
     {
       "bom-ref": "requirements-L5",
@@ -173,7 +173,7 @@
     },
     {
       "bom-ref": "requirements-L18",
-      "description": "requirements line 18: redis==5.0.4",
+      "description": "requirements line 18: redis==7.3.0",
       "externalReferences": [
         {
           "comment": "implicit dist url",
@@ -182,9 +182,9 @@
         }
       ],
       "name": "redis",
-      "purl": "pkg:pypi/redis@5.0.4",
+      "purl": "pkg:pypi/redis@7.3.0",
       "type": "library",
-      "version": "5.0.4"
+      "version": "7.3.0"
     },
     {
       "bom-ref": "requirements-L14",
