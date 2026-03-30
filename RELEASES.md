@@ -55,6 +55,38 @@
 
 ---
 
+## ✅ v2.4.0 — IL5 Cryptographic Foundation
+*Phase 1 of DISA PA / IL5 Provisional Authorization readiness.*
+
+**FIPS 140-2 Enforcement (SC-13)**
+- Runtime FIPS mode detection (Linux kernel FIPS mode + OpenSSL FIPS provider)
+- Algorithm allowlist: AES-256, SHA-256+, RSA 2048+, ECDSA P-256/P-384/P-521
+- JWT algorithm enforcement: HS256/HS384/HS512 blocked; only asymmetric algs for IL4+
+- AES-256-GCM encryption/decryption for data at rest
+- Startup gate: WARNING in FedRAMP High; FATAL in IL5/IL6 if FIPS not active
+- Health endpoint exposes fips_active and il_environment
+- NIST SC-13, IA-7 coverage
+
+**RFC 9449 DPoP — Demonstrating Proof of Possession (SC-13, IA-3)**
+- Server-side DPoP proof validation (alg, typ, jwk, jti, htm, htu, iat, ath)
+- Redis-backed JTI replay detection (5-minute window)
+- Server-issued nonce support (anti-replay, configurable)
+- Access token binding verification (ath = BASE64URL(SHA-256(access_token)))
+- IL5 algorithm enforcement: RS256/PS256/ES256/ES384/ES512/EdDSA only
+- NIST SC-13, IA-3 coverage
+
+**HVIP — High-Value Identity Profiles (IA-2, IA-3, IA-5, AC-6)**
+- OWNER/ADMIN identity hardening profiles with device DNA enrollment
+- MFA assertion enforcement (IA-2(1)): required for all privileged identities in IL5
+- DPoP binding enforcement: OWNER/ADMIN tokens must be DPoP-bound in IL5
+- Geo-anchor enforcement: configurable WARN/STEP_UP/BLOCK on country mismatch
+- Redis-backed profile store with 7-day TTL and re-enrollment
+- NIST IA-2(1), IA-2(6), IA-3, IA-5(1), AC-6(5) coverage
+
+NIST 800-53 Rev5: SC-13, IA-7, IA-2(1), IA-2(6), IA-3, IA-5(1), AC-6(5)
+
+---
+
 ## 🔜 v2.2.0 — Growth Features
 *Q3 2026 — the features that turn a trial into a contract.*
 

@@ -63,6 +63,8 @@ from modules.tenants.models import Plan, TenantContext
 from modules.security.audit_log import AuditEventType, AuditOutcome, log_event
 from modules.security.headers import RequestValidationMiddleware, SecurityHeadersMiddleware
 from modules.security.rbac import Role, require_role
+from modules.security.fips import fips, FIPSError
+from modules.identity.hvip import HVIPEnforcer, HVIPRole, HVIPAction, HVIPError
 
 logging.basicConfig(
     level=logging.INFO,
@@ -75,7 +77,7 @@ _DASHBOARD_PATH = Path(__file__).parent / "dashboard" / "index.html"
 app = FastAPI(
     title="Aegis Security Platform",
     description="TokenDNA zero-trust session integrity + Aegis cloud posture management",
-    version="2.2.0",
+    version="2.4.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
 )
@@ -101,6 +103,18 @@ async def startup_checks():
     if not OIDC_ISSUER and not DEV_MODE:
         logger.warning("OIDC_ISSUER not set — authenticated endpoints will 401.")
 
+    # FIPS 140-2 enforcement (SC-13)
+    il_env = os.getenv("ENVIRONMENT", "dev").lower()
+    fips_active = fips.is_active()
+    if not fips_active:
+        if il_env in {"il5", "il6"}:
+            logger.critical("FIPS 140-2 not active in IL5/IL6 environment — FATAL")
+            raise RuntimeError("FIPS 140-2 required but not active in IL5/IL6 environment")
+        else:
+            logger.warning("FIPS 140-2 not active (environment=%s) — acceptable for non-IL5", il_env)
+    else:
+        logger.info("FIPS 140-2 active ✓ (environment=%s)", il_env)
+
     os.makedirs("/data", exist_ok=True)
     tenant_store.init_db()
 
@@ -113,7 +127,7 @@ async def startup_checks():
 
     # Emit startup audit event (AU-2: application startup)
     log_event(AuditEventType.STARTUP, AuditOutcome.SUCCESS,
-              detail={"version": "2.2.0", "dev_mode": DEV_MODE})
+              detail={"version": "2.4.0", "dev_mode": DEV_MODE})
 
 
 # ── Rate limiting dependency ──────────────────────────────────────────────────
@@ -141,7 +155,7 @@ async def health():
     from modules.identity.cache_redis import is_available as redis_ok
     return {
         "service":    "TokenDNA",
-        "version":    "2.1.0",
+        "version":    "2.4.0",
         "redis":      redis_ok(),
         "clickhouse": clickhouse_client.is_available(),
         "dev_mode":   DEV_MODE,
@@ -214,7 +228,9 @@ async def api_health_detail(_tenant: TenantContext = Depends(get_tenant)):
         "clickhouse":  {"ok": clickhouse_client.is_available()},
         "tor_list":    {"ok": len(_tor_ips) > 0, "count": len(_tor_ips), "age_seconds": tor_age},
         "dev_mode":    DEV_MODE,
-        "version":     "2.1.0",
+        "version":     "2.4.0",
+        "fips_active": fips.is_active(),
+        "il_environment": os.getenv("ENVIRONMENT", "dev"),
     }
 
 
