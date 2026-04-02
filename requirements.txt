@@ -4,14 +4,14 @@
 # ── Web framework ─────────────────────────────────────────────────────────────
 fastapi==0.135.1
 uvicorn[standard]==0.29.0
-python-multipart==0.0.9
+python-multipart==0.0.22
 
 # ── JWT / OIDC ────────────────────────────────────────────────────────────────
-python-jose[cryptography]==3.3.0
-cryptography==46.0.5
+python-jose[cryptography]==3.4.0
+cryptography==46.0.6
 
 # ── HTTP client (JWKS fetch, webhooks, AbuseIPDB, ip-api) ────────────────────
-requests==2.32.3
+requests==2.33.0
 httpx==0.28.1                    # async-capable alternative used by some deps
 
 # ── Redis ─────────────────────────────────────────────────────────────────────
