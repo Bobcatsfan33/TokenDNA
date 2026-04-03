@@ -87,6 +87,103 @@ def _ensure_schema(client) -> None:
     except Exception:
         pass   # column already exists or DDL not supported -- harmless
 
+    _ensure_materialized_views(client)
+
+
+def _ensure_materialized_views(client) -> None:
+    """Create materialized views for real-time TokenDNA dashboards."""
+    views = [
+        # Hourly auth volume by tier — powers the main dashboard chart
+        f"""
+        CREATE TABLE IF NOT EXISTS {CLICKHOUSE_DB}.auth_volume_hourly (
+            hour          DateTime,
+            tenant_id     String,
+            tier          LowCardinality(String),
+            cnt           AggregateFunction(count, UInt64),
+            avg_score     AggregateFunction(avg, Int32),
+            max_score     AggregateFunction(max, Int32)
+        )
+        ENGINE = AggregatingMergeTree()
+        PARTITION BY toYYYYMM(hour)
+        ORDER BY (hour, tenant_id, tier)
+        TTL hour + INTERVAL 90 DAY
+        """,
+        f"""
+        CREATE MATERIALIZED VIEW IF NOT EXISTS {CLICKHOUSE_DB}.auth_volume_hourly_mv
+        TO {CLICKHOUSE_DB}.auth_volume_hourly AS
+        SELECT
+            toStartOfHour(timestamp) AS hour,
+            tenant_id,
+            tier,
+            countState()             AS cnt,
+            avgState(final_score)    AS avg_score,
+            maxState(final_score)    AS max_score
+        FROM {CLICKHOUSE_DB}.sessions
+        GROUP BY hour, tenant_id, tier
+        """,
+        # Threat signal rollup — powers the threat breakdown panel
+        f"""
+        CREATE TABLE IF NOT EXISTS {CLICKHOUSE_DB}.threat_signals_hourly (
+            hour          DateTime,
+            tenant_id     String,
+            tor_cnt       AggregateFunction(sum, UInt8),
+            dc_cnt        AggregateFunction(sum, UInt8),
+            vpn_cnt       AggregateFunction(sum, UInt8),
+            travel_cnt    AggregateFunction(sum, UInt8),
+            branch_cnt    AggregateFunction(sum, UInt8)
+        )
+        ENGINE = AggregatingMergeTree()
+        PARTITION BY toYYYYMM(hour)
+        ORDER BY (hour, tenant_id)
+        TTL hour + INTERVAL 90 DAY
+        """,
+        f"""
+        CREATE MATERIALIZED VIEW IF NOT EXISTS {CLICKHOUSE_DB}.threat_signals_hourly_mv
+        TO {CLICKHOUSE_DB}.threat_signals_hourly AS
+        SELECT
+            toStartOfHour(timestamp) AS hour,
+            tenant_id,
+            sumState(toUInt8(is_tor))              AS tor_cnt,
+            sumState(toUInt8(is_datacenter))        AS dc_cnt,
+            sumState(toUInt8(is_vpn))              AS vpn_cnt,
+            sumState(toUInt8(impossible_travel))    AS travel_cnt,
+            sumState(toUInt8(branching))            AS branch_cnt
+        FROM {CLICKHOUSE_DB}.sessions
+        GROUP BY hour, tenant_id
+        """,
+        # Country breakdown — powers geo heatmap
+        f"""
+        CREATE TABLE IF NOT EXISTS {CLICKHOUSE_DB}.auth_by_country (
+            day           Date,
+            tenant_id     String,
+            country       FixedString(2),
+            cnt           AggregateFunction(count, UInt64),
+            block_cnt     AggregateFunction(sum, UInt8)
+        )
+        ENGINE = AggregatingMergeTree()
+        PARTITION BY toYYYYMM(day)
+        ORDER BY (day, tenant_id, country)
+        TTL day + INTERVAL 365 DAY
+        """,
+        f"""
+        CREATE MATERIALIZED VIEW IF NOT EXISTS {CLICKHOUSE_DB}.auth_by_country_mv
+        TO {CLICKHOUSE_DB}.auth_by_country AS
+        SELECT
+            toDate(timestamp)      AS day,
+            tenant_id,
+            country,
+            countState()           AS cnt,
+            sumState(toUInt8(tier = 'BLOCK' OR tier = 'REVOKE')) AS block_cnt
+        FROM {CLICKHOUSE_DB}.sessions
+        GROUP BY day, tenant_id, country
+        """,
+    ]
+    for sql in views:
+        try:
+            client.command(sql)
+        except Exception as e:
+            logger.warning("TokenDNA materialized view: %s", e)
+
 
 def is_available() -> bool:
     try:
@@ -249,3 +346,88 @@ def query_threat_breakdown(tenant_id: str) -> dict:
     except Exception as e:
         logger.warning("query_threat_breakdown failed: %s", e)
         return {}
+
+
+def query_auth_volume_hourly(tenant_id: str, hours: int = 24) -> list[dict]:
+    """Query the materialized auth volume view for fast dashboard rendering."""
+    client = _get_client()
+    if client is None:
+        return []
+    try:
+        result = client.query(
+            f"""
+            SELECT
+                hour,
+                tier,
+                countMerge(cnt) AS count,
+                avgMerge(avg_score) AS avg_score
+            FROM {CLICKHOUSE_DB}.auth_volume_hourly
+            WHERE tenant_id = %(tid)s
+              AND hour >= now() - INTERVAL %(h)s HOUR
+            GROUP BY hour, tier
+            ORDER BY hour ASC
+            """,
+            parameters={"tid": tenant_id, "h": hours},
+        )
+        cols = result.column_names
+        return [dict(zip(cols, row)) for row in result.result_rows]
+    except Exception as e:
+        logger.warning("query_auth_volume_hourly failed: %s", e)
+        return []
+
+
+def query_threat_signals_hourly(tenant_id: str, hours: int = 24) -> list[dict]:
+    """Query the materialized threat signals view."""
+    client = _get_client()
+    if client is None:
+        return []
+    try:
+        result = client.query(
+            f"""
+            SELECT
+                hour,
+                sumMerge(tor_cnt)    AS tor,
+                sumMerge(dc_cnt)     AS datacenter,
+                sumMerge(vpn_cnt)    AS vpn,
+                sumMerge(travel_cnt) AS impossible_travel,
+                sumMerge(branch_cnt) AS branching
+            FROM {CLICKHOUSE_DB}.threat_signals_hourly
+            WHERE tenant_id = %(tid)s
+              AND hour >= now() - INTERVAL %(h)s HOUR
+            GROUP BY hour
+            ORDER BY hour ASC
+            """,
+            parameters={"tid": tenant_id, "h": hours},
+        )
+        cols = result.column_names
+        return [dict(zip(cols, row)) for row in result.result_rows]
+    except Exception as e:
+        logger.warning("query_threat_signals_hourly failed: %s", e)
+        return []
+
+
+def query_geo_breakdown(tenant_id: str, days: int = 30) -> list[dict]:
+    """Query the materialized country breakdown view."""
+    client = _get_client()
+    if client is None:
+        return []
+    try:
+        result = client.query(
+            f"""
+            SELECT
+                country,
+                countMerge(cnt)      AS total,
+                sumMerge(block_cnt)  AS blocked
+            FROM {CLICKHOUSE_DB}.auth_by_country
+            WHERE tenant_id = %(tid)s
+              AND day >= today() - %(d)s
+            GROUP BY country
+            ORDER BY total DESC
+            """,
+            parameters={"tid": tenant_id, "d": days},
+        )
+        cols = result.column_names
+        return [dict(zip(cols, row)) for row in result.result_rows]
+    except Exception as e:
+        logger.warning("query_geo_breakdown failed: %s", e)
+        return []
