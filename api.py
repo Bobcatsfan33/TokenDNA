@@ -86,6 +86,7 @@ from modules.integrations.sdk_wrappers import (
     sdk_create_attestation,
     sdk_normalize_event,
 )
+from modules.product.feature_gates import PlanTier, evaluate_feature_access, list_feature_matrix
 from modules.tenants import store as tenant_store
 from modules.tenants.middleware import get_tenant
 from modules.tenants.models import Plan, TenantContext
@@ -319,6 +320,37 @@ async def api_operator_status(
         "slo": slo,
         "posture": posture,
     }
+
+
+@app.get("/api/product/features")
+async def api_product_feature_matrix(
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    plan_value = str(getattr(tenant, "plan", Plan.FREE).value if hasattr(tenant.plan, "value") else tenant.plan).lower()
+    plan_tier = PlanTier(plan_value) if plan_value in {p.value for p in PlanTier} else PlanTier.FREE
+    return {
+        "tenant_id": tenant.tenant_id,
+        "plan": plan_tier.value,
+        "features": list_feature_matrix(plan_tier),
+    }
+
+
+@app.post("/api/product/features/evaluate")
+async def api_evaluate_product_feature(
+    body: dict,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    feature = str(body.get("feature", "")).strip()
+    if not feature:
+        raise HTTPException(status_code=400, detail="'feature' is required")
+    plan_value = str(getattr(tenant, "plan", Plan.FREE).value if hasattr(tenant.plan, "value") else tenant.plan).lower()
+    plan_tier = PlanTier(plan_value) if plan_value in {p.value for p in PlanTier} else PlanTier.FREE
+    result = evaluate_feature_access(
+        feature_name=feature,
+        plan=plan_tier,
+        identity_fields=(body.get("identity_fields") if isinstance(body.get("identity_fields"), dict) else {}),
+    )
+    return {"tenant_id": tenant.tenant_id, "plan": plan_tier.value, "result": result}
 
 
 # ── Consolidation endpoints: UIS + Agent Attestation + MCP Verification ──────
