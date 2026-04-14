@@ -119,6 +119,27 @@ All settings are read from environment variables (see `.env.example`).
 
 ---
 
+## OSS Schema & SDK Onboarding
+
+TokenDNA now publishes machine-readable identity artifacts to speed ecosystem adoption:
+
+- `GET /api/schema/bundle` — consolidated UIS + attestation schema bundle.
+- `GET /api/schema/uis.json` — UIS JSON schema artifact.
+- `GET /api/schema/attestation.json` — attestation JSON schema artifact.
+- `GET /api/schema/artifacts` — catalog of all schema artifacts.
+- `GET /api/schema/artifacts/{name}` — fetch a specific artifact by name.
+- `POST /api/schema/publish` — generate and return publish-ready schema artifacts.
+
+Wrapper endpoints for SDK-style integrations:
+
+- `POST /api/oss/sdk/normalize` — request/response wrapped UIS normalization.
+- `POST /api/oss/sdk/attest` — request/response wrapped attestation creation.
+
+These wrappers intentionally return stable metadata fields (`sdk_version`,
+`schema_version`, `generated_at`) so third-party SDKs can map them directly.
+
+---
+
 ## Cloudflare Edge Worker
 
 The edge worker (`edge/`) runs at the CDN layer and handles DPoP proof-of-possession (RFC 9449) before any request reaches the backend.

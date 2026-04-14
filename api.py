@@ -69,6 +69,7 @@ from modules.identity.certificate_status import build_crl, certificate_status_pa
 from modules.identity.edge_enforcement import evaluate_runtime_enforcement
 from modules.identity.trust_authority import list_key_configs
 from modules.identity.attestation_drift import build_drift_event, DriftAssessment
+from modules.identity import schema_registry
 from modules.identity import policy_bundles
 from modules.identity import network_intel
 from modules.identity import compliance
@@ -78,6 +79,12 @@ from modules.identity import certificate_transparency as ct_log
 from modules.identity import clickhouse_client
 from modules.integrations.siem_taxii import build_taxii_bundle
 from modules.integrations.idp_events import adapt_idp_event
+from modules.integrations.sdk_wrappers import (
+    build_adapter_normalize_request,
+    build_attestation_request,
+    sdk_create_attestation,
+    sdk_normalize_event,
+)
 from modules.tenants import store as tenant_store
 from modules.tenants.middleware import get_tenant
 from modules.tenants.models import Plan, TenantContext
@@ -435,6 +442,114 @@ async def api_uis_spec(
     _tenant: TenantContext = Depends(get_tenant),
 ):
     return {"uis_spec": get_uis_spec()}
+
+
+@app.get("/api/oss/schema-bundle")
+async def api_schema_bundle(
+    _tenant: TenantContext = Depends(get_tenant),
+):
+    return {"bundle": schema_registry.build_schema_bundle()}
+
+
+@app.get("/api/oss/schema-bundle/{artifact_name}")
+async def api_schema_artifact(
+    artifact_name: str,
+    _tenant: TenantContext = Depends(get_tenant),
+):
+    artifact = schema_registry.get_schema_artifact(artifact_name)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Schema artifact not found")
+    return {"artifact": artifact}
+
+
+@app.get("/api/uis/schema/artifacts")
+async def api_uis_schema_artifacts(
+    _tenant: TenantContext = Depends(get_tenant),
+):
+    return {"artifacts": schema_registry.build_schema_artifacts()}
+
+
+@app.get("/api/schema/uis.json")
+async def api_schema_uis_json(
+    _tenant: TenantContext = Depends(get_tenant),
+):
+    return schema_registry.build_uis_schema_artifact()
+
+
+@app.get("/api/schema/attestation.json")
+async def api_schema_attestation_json(
+    _tenant: TenantContext = Depends(get_tenant),
+):
+    return schema_registry.build_attestation_schema_artifact()
+
+
+@app.post("/api/oss/sdk/normalize")
+async def api_sdk_wrapper_normalize(
+    body: dict,
+    request: Request,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    protocol = str(body.get("protocol", "custom"))
+    payload = body.get("payload") or {}
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="'payload' must be an object")
+    options = body.get("options") or {}
+    if not isinstance(options, dict):
+        raise HTTPException(status_code=400, detail="'options' must be an object when provided")
+    normalized = sdk_normalize_event(
+        protocol=protocol,
+        tenant_id=tenant.tenant_id,
+        tenant_name=tenant.tenant_name,
+        payload=payload,
+        request_context={
+            "request_id": str(options.get("request_id") or str(uuid.uuid4())),
+            "ip": str(options.get("ip") or (request.client.host if request.client else "")),
+            "user_agent": str(options.get("user_agent") or request.headers.get("user-agent", "")),
+        },
+        risk_context=(options.get("risk_context") if isinstance(options.get("risk_context"), dict) else {}),
+    )
+    uis_store.insert_event(tenant_id=tenant.tenant_id, event=normalized)
+    return {"tenant_id": tenant.tenant_id, "uis_event": normalized}
+
+
+@app.post("/api/oss/sdk/attest")
+async def api_sdk_wrapper_attest(
+    body: dict,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    options = body.get("options") or {}
+    if not isinstance(options, dict):
+        raise HTTPException(status_code=400, detail="'options' must be an object when provided")
+    runtime_context = options.get("runtime_context") or {}
+    if not isinstance(runtime_context, dict):
+        raise HTTPException(status_code=400, detail="'runtime_context' must be an object when provided")
+    behavior_features = options.get("behavior_features") or {}
+    if not isinstance(behavior_features, dict):
+        raise HTTPException(status_code=400, detail="'behavior_features' must be an object when provided")
+    record = sdk_attest_agent(
+        agent_id=str(body.get("agent_id", "")).strip(),
+        tenant_name=tenant.tenant_name,
+        created_by=str(body.get("created_by", "sdk-wrapper")),
+        soul_hash=str(body.get("soul_hash", "")),
+        directive_hashes=[str(v) for v in body.get("directive_hashes", []) if str(v)]
+        if isinstance(body.get("directive_hashes"), list)
+        else [],
+        model_fingerprint=str(body.get("model_fingerprint", "")),
+        mcp_manifest_hash=str(body.get("mcp_manifest_hash", "")),
+        declared_purpose=str(body.get("declared_purpose", "runtime_access")),
+        scope=[str(v) for v in body.get("scope", []) if str(v)] if isinstance(body.get("scope"), list) else [],
+        delegation_chain=[str(v) for v in body.get("delegation_chain", []) if str(v)]
+        if isinstance(body.get("delegation_chain"), list)
+        else [],
+        auth_method=str(options.get("auth_method", "token")),
+        dpop_bound=bool(options.get("dpop_bound", False)),
+        mtls_bound=bool(options.get("mtls_bound", False)),
+        behavior_confidence=float(options.get("behavior_confidence", 0.8)),
+        runtime_context=runtime_context,
+        behavior_features=behavior_features,
+    )
+    attestation_store.insert_attestation(tenant_id=tenant.tenant_id, record=record)
+    return {"tenant_id": tenant.tenant_id, "attestation": record}
 
 
 @app.post("/api/uis/adapters/normalize")
