@@ -134,3 +134,31 @@ def test_attestation_store_certificate_lifecycle_and_drift_events():
     finally:
         tmp.cleanup()
 
+
+def test_attestation_store_ca_key_registry_roundtrip():
+    tmp = _setup_tmp_db()
+    try:
+        from modules.identity import attestation_store
+
+        attestation_store.init_db()
+        attestation_store.upsert_ca_key(
+            key_id="ca-2026-01",
+            algorithm="RS256",
+            backend="aws_kms",
+            kms_key_id="arn:aws:kms:us-east-1:123456789012:key/abcd",
+            status="active",
+            activated_at="2026-01-01T00:00:00+00:00",
+            metadata={"rotation_epoch": 1},
+        )
+        fetched = attestation_store.get_ca_key("ca-2026-01")
+        assert fetched is not None
+        assert fetched["backend"] == "aws_kms"
+        assert fetched["algorithm"] == "RS256"
+        assert fetched["metadata"]["rotation_epoch"] == 1
+
+        keys = attestation_store.list_ca_keys(status="active", limit=10)
+        assert len(keys) == 1
+        assert keys[0]["key_id"] == "ca-2026-01"
+    finally:
+        tmp.cleanup()
+

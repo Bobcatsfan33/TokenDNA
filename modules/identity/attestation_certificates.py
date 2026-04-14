@@ -11,14 +11,11 @@ certificate interface compatible with stronger asymmetric deployments.
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
-import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from modules.identity.trust_authority import build_signer
+from modules.identity.trust_authority import build_signer, build_signer_for_algorithm, build_signer_for_key
 
 
 DEFAULT_TTL_HOURS = 24
@@ -29,19 +26,44 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _secret() -> str:
-    return os.getenv("ATTESTATION_CA_SECRET", "dev-attestation-secret-change-me")
-
-
-def _signing_alg() -> str:
-    alg = os.getenv("ATTESTATION_CA_ALG", DEFAULT_SIGNING_ALG).upper()
-    if alg not in {"HS256", "RS256"}:
-        return DEFAULT_SIGNING_ALG
-    return alg
-
-
 def _canonical_payload(payload: dict[str, Any]) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def issue_certificate_with_key(
+    *,
+    tenant_id: str,
+    attestation_id: str,
+    subject: str,
+    issuer: str,
+    claims: dict[str, Any],
+    key_id: str,
+    algorithm: str,
+    ttl_hours: int = DEFAULT_TTL_HOURS,
+) -> dict[str, Any]:
+    now = _utc_now()
+    expires = now + timedelta(hours=max(1, int(ttl_hours)))
+    certificate_id = uuid.uuid4().hex
+    signer = build_signer_for_key(key_id, algorithm)
+    payload = {
+        "certificate_id": certificate_id,
+        "tenant_id": tenant_id,
+        "attestation_id": attestation_id,
+        "issuer": issuer,
+        "subject": subject,
+        "issued_at": now.isoformat(),
+        "expires_at": expires.isoformat(),
+        "claims": claims,
+        "signature_alg": algorithm.upper(),
+        "ca_key_id": key_id,
+        "status": "active",
+        "revoked_at": None,
+        "revocation_reason": None,
+    }
+    sign_result = signer.sign(payload)
+    payload["signature_alg"] = sign_result.algorithm
+    payload["ca_key_id"] = sign_result.key_id
+    return {**payload, "signature": sign_result.signature}
 
 
 def issue_certificate(
@@ -57,9 +79,9 @@ def issue_certificate(
     now = _utc_now()
     expires = now + timedelta(hours=max(1, int(ttl_hours)))
     certificate_id = uuid.uuid4().hex
-    signer = build_signer()
-    signing_alg = _signing_alg()
-    ca_key_id = os.getenv("ATTESTATION_CA_KEY_ID", "tokendna-ca-default")
+    signer = build_signer(secret_override=secret)
+    signing_alg = DEFAULT_SIGNING_ALG
+    ca_key_id = "tokendna-ca-default"
 
     payload = {
         "certificate_id": certificate_id,
@@ -79,7 +101,7 @@ def issue_certificate(
     sign_result = signer.sign(payload)
     payload["signature_alg"] = sign_result.algorithm
     payload["ca_key_id"] = sign_result.key_id
-    signature = signer.sign(payload).signature
+    signature = sign_result.signature
     return {**payload, "signature": signature}
 
 
@@ -91,13 +113,18 @@ def revoke_certificate(certificate: dict[str, Any], reason: str, *, secret: str 
     # Lifecycle metadata is part of the signed payload; re-sign after mutation.
     payload = dict(updated)
     payload.pop("signature", None)
-    signer = build_signer()
+    key_id = str(payload.get("ca_key_id") or "").strip()
+    signer = (
+        build_signer_for_key(key_id, str(payload.get("signature_alg", DEFAULT_SIGNING_ALG)), secret_override=secret)
+        if key_id
+        else build_signer_for_algorithm(str(payload.get("signature_alg", DEFAULT_SIGNING_ALG)), secret_override=secret)
+    )
     sign_result = signer.sign(payload)
     updated["signature_alg"] = sign_result.algorithm
     updated["ca_key_id"] = sign_result.key_id
     payload["signature_alg"] = sign_result.algorithm
     payload["ca_key_id"] = sign_result.key_id
-    updated["signature"] = signer.sign(payload).signature
+    updated["signature"] = sign_result.signature
     return updated
 
 
@@ -125,8 +152,13 @@ def verify_certificate(
     payload = dict(certificate)
     provided_sig = payload.pop("signature")
     alg = str(certificate.get("signature_alg", DEFAULT_SIGNING_ALG)).upper()
-
-    sig_ok = build_signer().verify(payload, provided_sig)
+    key_id = str(certificate.get("ca_key_id") or "").strip()
+    signer = (
+        build_signer_for_key(key_id, alg, secret_override=secret)
+        if key_id
+        else build_signer_for_algorithm(alg, secret_override=secret)
+    )
+    sig_ok = signer.verify(payload, provided_sig)
 
     if not sig_ok:
         return {"valid": False, "reason": "invalid_signature"}

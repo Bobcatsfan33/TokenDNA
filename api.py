@@ -66,6 +66,8 @@ from modules.identity.uis_protocol import get_uis_spec, normalize_with_adapter
 from modules.identity.attestation import create_attestation_record
 from modules.identity.mcp_attestation import verify_mcp_server
 from modules.identity.attestation_certificates import issue_certificate, revoke_certificate, verify_certificate
+from modules.identity.certificate_status import build_crl, certificate_status_payload
+from modules.identity.trust_authority import list_key_configs
 from modules.identity.attestation_drift import assess_runtime_drift, build_drift_event
 from modules.identity import network_intel
 from modules.identity import compliance
@@ -562,6 +564,30 @@ async def api_list_agent_certificates(
     return {"tenant_id": tenant.tenant_id, "count": len(rows), "certificates": rows}
 
 
+@app.get("/api/agent/certificates/status/{certificate_id}")
+async def api_certificate_status(
+    certificate_id: str,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    cert = attestation_store.get_certificate(tenant_id=tenant.tenant_id, certificate_id=certificate_id)
+    verification = verify_certificate(cert) if cert is not None else None
+    status = certificate_status_payload(certificate=cert, verification=verification)
+    return {"tenant_id": tenant.tenant_id, "status": status}
+
+
+@app.get("/api/agent/certificates/crl")
+async def api_certificate_crl(
+    limit: int = 1000,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    revoked = attestation_store.list_certificates(
+        tenant_id=tenant.tenant_id,
+        status="revoked",
+        limit=min(max(limit, 1), 5000),
+    )
+    return {"crl": build_crl(tenant_id=tenant.tenant_id, revoked_certificates=revoked)}
+
+
 @app.post("/api/agent/certificates/revoke")
 async def api_revoke_agent_certificate(
     body: dict,
@@ -596,6 +622,56 @@ async def api_revoke_agent_certificate(
         detail={"action": "revoke_certificate", "reason": revoked.get("revocation_reason")},
     )
     return {"tenant_id": tenant.tenant_id, "certificate": revoked, "transparency_log_entry": ct_entry}
+
+
+@app.get("/api/agent/ca-keys")
+async def api_list_ca_keys(
+    status: str | None = None,
+    limit: int = 50,
+    _tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    if status:
+        rows = attestation_store.list_ca_keys(status=status, limit=min(max(limit, 1), 200))
+    else:
+        rows = attestation_store.list_ca_keys(limit=min(max(limit, 1), 200))
+    return {"count": len(rows), "keys": rows}
+
+
+@app.post("/api/agent/ca-keys")
+async def api_upsert_ca_key(
+    body: dict,
+    _tenant: TenantContext = Depends(require_role(Role.OWNER)),
+):
+    key_id = str(body.get("key_id", "")).strip()
+    algorithm = str(body.get("algorithm", "")).strip().upper()
+    backend = str(body.get("backend", "")).strip().lower()
+    if not key_id:
+        raise HTTPException(status_code=400, detail="'key_id' is required")
+    if algorithm not in {"HS256", "RS256"}:
+        raise HTTPException(status_code=400, detail="'algorithm' must be HS256 or RS256")
+    if backend not in {"software", "hsm", "aws_kms"}:
+        raise HTTPException(status_code=400, detail="'backend' must be software, hsm, or aws_kms")
+
+    attestation_store.upsert_ca_key(
+        key_id=key_id,
+        algorithm=algorithm,
+        backend=backend,
+        kms_key_id=(str(body.get("kms_key_id", "")).strip() or None),
+        public_key_pem=(str(body.get("public_key_pem", "")).strip() or None),
+        status=str(body.get("status", "active")),
+        activated_at=(str(body.get("activated_at", "")).strip() or None),
+        deactivated_at=(str(body.get("deactivated_at", "")).strip() or None),
+        metadata=(body.get("metadata") if isinstance(body.get("metadata"), dict) else {}),
+    )
+    key = attestation_store.get_ca_key(key_id)
+    return {"key": key}
+
+
+@app.get("/api/agent/ca-keyring")
+async def api_ca_keyring_preview(
+    _tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    return {"configured_keyring": list_key_configs()}
 
 
 @app.get("/api/agent/certificates/transparency-log")

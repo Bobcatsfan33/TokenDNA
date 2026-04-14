@@ -1,8 +1,8 @@
 """
 TokenDNA -- Trust authority signer abstraction.
 
-Provides a pluggable signing interface so certificate issuance can move from
-local software keys to HSM-backed key operations without changing callers.
+Provides pluggable signing backends so certificate issuance can move from local
+software keys to KMS/HSM-backed operations without changing callers.
 """
 
 from __future__ import annotations
@@ -125,30 +125,170 @@ class MockHSMTrustSigner(TrustSigner):
         return self._backing.verify(payload, signature)
 
 
-def build_signer() -> TrustSigner:
+class AWSKMSTrustSigner(TrustSigner):
+    """
+    AWS KMS-backed RSA signer.
+
+    Requires:
+      - boto3 installed
+      - IAM permissions for kms:Sign and kms:Verify
+      - a SIGN_VERIFY asymmetric KMS key (typically RSA_2048/3072/4096)
+    """
+
+    def __init__(self, kms_key_id: str, key_id: str):
+        self._kms_key_id = kms_key_id
+        self._key_id = key_id
+        self._algorithm = "RS256"
+
+    def sign(self, payload: dict[str, Any]) -> SignResult:
+        import boto3
+
+        kms = boto3.client("kms")
+        resp = kms.sign(
+            KeyId=self._kms_key_id,
+            Message=_canonical(payload),
+            MessageType="RAW",
+            SigningAlgorithm="RSASSA_PKCS1_V1_5_SHA_256",
+        )
+        signature = _b64url_encode(resp["Signature"])
+        return SignResult(signature=signature, algorithm=self._algorithm, key_id=self._key_id)
+
+    def verify(self, payload: dict[str, Any], signature: str) -> bool:
+        import boto3
+
+        kms = boto3.client("kms")
+        try:
+            resp = kms.verify(
+                KeyId=self._kms_key_id,
+                Message=_canonical(payload),
+                MessageType="RAW",
+                Signature=_b64url_decode(signature),
+                SigningAlgorithm="RSASSA_PKCS1_V1_5_SHA_256",
+            )
+            return bool(resp.get("SignatureValid"))
+        except Exception:
+            return False
+
+
+@dataclass
+class KeyConfig:
+    key_id: str
+    algorithm: str
+    backend: str
+    kms_key_id: str | None = None
+
+
+def _default_key_config(algorithm: str) -> KeyConfig:
+    alg = (algorithm or "HS256").upper()
+    return KeyConfig(
+        key_id=os.getenv("ATTESTATION_CA_KEY_ID", "tokendna-ca-default"),
+        algorithm=alg,
+        backend=os.getenv("ATTESTATION_KEY_BACKEND", "software").lower(),
+        kms_key_id=os.getenv("ATTESTATION_KMS_KEY_ID", "").strip() or None,
+    )
+
+
+def _load_keyring() -> dict[str, KeyConfig]:
+    """
+    Parse optional keyring env var.
+
+    Example:
+    [
+      {"key_id":"k1","algorithm":"RS256","backend":"aws_kms","kms_key_id":"arn:aws:kms:..."},
+      {"key_id":"k2","algorithm":"HS256","backend":"software"}
+    ]
+    """
+    raw = os.getenv("ATTESTATION_KEYRING_JSON", "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, list):
+            return {}
+        out: dict[str, KeyConfig] = {}
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            key_id = str(item.get("key_id", "")).strip()
+            if not key_id:
+                continue
+            out[key_id] = KeyConfig(
+                key_id=key_id,
+                algorithm=str(item.get("algorithm", "HS256")).upper(),
+                backend=str(item.get("backend", "software")).lower(),
+                kms_key_id=(str(item.get("kms_key_id", "")).strip() or None),
+            )
+        return out
+    except Exception:
+        return {}
+
+
+def build_signer(*, secret_override: str | None = None) -> TrustSigner:
     preferred_alg = os.getenv("ATTESTATION_CA_ALG", "HS256").upper()
-    return build_signer_for_algorithm(preferred_alg)
+    active_key_id = os.getenv("ATTESTATION_ACTIVE_KEY_ID", "").strip()
+    if active_key_id:
+        return build_signer_for_key(active_key_id, preferred_alg, secret_override=secret_override)
+    return build_signer_for_algorithm(preferred_alg, secret_override=secret_override)
 
 
-def build_signer_for_algorithm(algorithm: str) -> TrustSigner:
-    key_id = os.getenv("ATTESTATION_CA_KEY_ID", "tokendna-ca-default")
-    preferred_alg = (algorithm or "HS256").upper()
-    hsm_mode = os.getenv("ATTESTATION_KEY_BACKEND", "software").lower() == "hsm"
+def _build_from_key_config(cfg: KeyConfig, *, secret_override: str | None = None) -> TrustSigner:
+    key_id = cfg.key_id
+    preferred_alg = cfg.algorithm
+    preferred_alg = (preferred_alg or "HS256").upper()
+    backend = cfg.backend
 
-    if preferred_alg == "RS256":
+    if backend == "aws_kms":
+        if cfg.kms_key_id:
+            return AWSKMSTrustSigner(kms_key_id=cfg.kms_key_id, key_id=key_id)
+        # Fall back to software if KMS key id missing.
+        backend = "software"
+
+    if preferred_alg == "RS256" and backend != "aws_kms":
         private_pem = os.getenv("ATTESTATION_CA_PRIVATE_KEY_PEM", "").strip()
         public_pem = os.getenv("ATTESTATION_CA_PUBLIC_KEY_PEM", "").strip() or None
         if private_pem:
             signer: TrustSigner = RSATrustSigner(private_pem, public_pem, key_id=key_id)
         else:
             # Fall back to HS256 when no RSA material is available.
-            secret = os.getenv("ATTESTATION_CA_SECRET", "dev-attestation-secret-change-me")
+            secret = secret_override or os.getenv("ATTESTATION_CA_SECRET", "dev-attestation-secret-change-me")
             signer = HMACTrustSigner(secret=secret, key_id=key_id)
     else:
-        secret = os.getenv("ATTESTATION_CA_SECRET", "dev-attestation-secret-change-me")
+        secret = secret_override or os.getenv("ATTESTATION_CA_SECRET", "dev-attestation-secret-change-me")
         signer = HMACTrustSigner(secret=secret, key_id=key_id)
 
-    if hsm_mode:
+    if backend == "hsm":
         return MockHSMTrustSigner(signer)
     return signer
+
+
+def build_signer_for_algorithm(algorithm: str, *, secret_override: str | None = None) -> TrustSigner:
+    cfg = _default_key_config(algorithm)
+    return _build_from_key_config(cfg, secret_override=secret_override)
+
+
+def build_signer_for_key(
+    key_id: str,
+    algorithm: str | None = None,
+    *,
+    secret_override: str | None = None,
+) -> TrustSigner:
+    keyring = _load_keyring()
+    cfg = keyring.get(key_id)
+    if cfg is None:
+        cfg = _default_key_config(algorithm or os.getenv("ATTESTATION_CA_ALG", "HS256"))
+        cfg.key_id = key_id
+    if algorithm:
+        cfg.algorithm = algorithm.upper()
+    return _build_from_key_config(cfg, secret_override=secret_override)
+
+
+def list_key_configs() -> list[dict[str, str]]:
+    keyring = _load_keyring()
+    if not keyring:
+        cfg = _default_key_config(os.getenv("ATTESTATION_CA_ALG", "HS256"))
+        return [{"key_id": cfg.key_id, "algorithm": cfg.algorithm, "backend": cfg.backend}]
+    return [
+        {"key_id": cfg.key_id, "algorithm": cfg.algorithm, "backend": cfg.backend}
+        for cfg in keyring.values()
+    ]
 

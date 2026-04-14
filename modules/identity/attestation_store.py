@@ -115,6 +115,21 @@ def init_db() -> None:
             """
         )
         cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS attestation_ca_keys (
+                key_id                  TEXT PRIMARY KEY,
+                algorithm               TEXT NOT NULL,
+                backend                 TEXT NOT NULL,
+                kms_key_id              TEXT,
+                public_key_pem          TEXT,
+                status                  TEXT NOT NULL DEFAULT 'active',
+                activated_at            TEXT,
+                deactivated_at          TEXT,
+                metadata_json           TEXT NOT NULL
+            )
+            """
+        )
+        cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_agent_attestations_tenant_created ON agent_attestations(tenant_id, created_at DESC)"
         )
         cur.execute(
@@ -127,7 +142,13 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_attestation_certs_tenant_status ON attestation_certificates(tenant_id, status, issued_at DESC)"
         )
         cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_attestation_certs_tenant_keyid ON attestation_certificates(tenant_id, ca_key_id, issued_at DESC)"
+        )
+        cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_attestation_drift_tenant_agent_detected ON attestation_drift_events(tenant_id, agent_id, detected_at DESC)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_attestation_ca_keys_status ON attestation_ca_keys(status, activated_at DESC)"
         )
 
 
@@ -236,6 +257,23 @@ def get_certificate(tenant_id: str, certificate_id: str) -> dict[str, Any] | Non
             WHERE tenant_id = ? AND certificate_id = ?
             """,
             (tenant_id, certificate_id),
+        ).fetchone()
+    if not row:
+        return None
+    return json.loads(row["certificate_json"])
+
+
+def get_certificate_by_attestation_id(tenant_id: str, attestation_id: str) -> dict[str, Any] | None:
+    with _cursor() as cur:
+        row = cur.execute(
+            """
+            SELECT certificate_json
+            FROM attestation_certificates
+            WHERE tenant_id = ? AND attestation_id = ?
+            ORDER BY issued_at DESC
+            LIMIT 1
+            """,
+            (tenant_id, attestation_id),
         ).fetchone()
     if not row:
         return None
@@ -384,3 +422,104 @@ def list_drift_events(
                 (tenant_id, limit),
             ).fetchall()
     return [json.loads(row["event_json"]) for row in rows]
+
+
+def upsert_ca_key(
+    *,
+    key_id: str,
+    algorithm: str,
+    backend: str,
+    kms_key_id: str | None = None,
+    public_key_pem: str | None = None,
+    status: str = "active",
+    activated_at: str | None = None,
+    deactivated_at: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    with _cursor() as cur:
+        cur.execute(
+            """
+            INSERT OR REPLACE INTO attestation_ca_keys (
+                key_id, algorithm, backend, kms_key_id, public_key_pem,
+                status, activated_at, deactivated_at, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                key_id,
+                algorithm.upper(),
+                backend.lower(),
+                kms_key_id,
+                public_key_pem,
+                status,
+                activated_at,
+                deactivated_at,
+                json.dumps(metadata or {}, sort_keys=True),
+            ),
+        )
+
+
+def get_ca_key(key_id: str) -> dict[str, Any] | None:
+    with _cursor() as cur:
+        row = cur.execute(
+            """
+            SELECT key_id, algorithm, backend, kms_key_id, public_key_pem,
+                   status, activated_at, deactivated_at, metadata_json
+            FROM attestation_ca_keys
+            WHERE key_id = ?
+            """,
+            (key_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "key_id": row["key_id"],
+        "algorithm": row["algorithm"],
+        "backend": row["backend"],
+        "kms_key_id": row["kms_key_id"],
+        "public_key_pem": row["public_key_pem"],
+        "status": row["status"],
+        "activated_at": row["activated_at"],
+        "deactivated_at": row["deactivated_at"],
+        "metadata": json.loads(row["metadata_json"]),
+    }
+
+
+def list_ca_keys(status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    with _cursor() as cur:
+        if status:
+            rows = cur.execute(
+                """
+                SELECT key_id, algorithm, backend, kms_key_id, public_key_pem,
+                       status, activated_at, deactivated_at, metadata_json
+                FROM attestation_ca_keys
+                WHERE status = ?
+                ORDER BY activated_at DESC
+                LIMIT ?
+                """,
+                (status, limit),
+            ).fetchall()
+        else:
+            rows = cur.execute(
+                """
+                SELECT key_id, algorithm, backend, kms_key_id, public_key_pem,
+                       status, activated_at, deactivated_at, metadata_json
+                FROM attestation_ca_keys
+                ORDER BY activated_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+    return [
+        {
+            "key_id": row["key_id"],
+            "algorithm": row["algorithm"],
+            "backend": row["backend"],
+            "kms_key_id": row["kms_key_id"],
+            "public_key_pem": row["public_key_pem"],
+            "status": row["status"],
+            "activated_at": row["activated_at"],
+            "deactivated_at": row["deactivated_at"],
+            "metadata": json.loads(row["metadata_json"]),
+        }
+        for row in rows
+    ]
