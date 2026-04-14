@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from modules.identity import policy_bundles
+from modules.identity import decision_audit, policy_bundles
 from modules.identity.attestation_certificates import issue_certificate
 
 
@@ -105,6 +105,71 @@ def test_policy_bundle_simulation_matches_expected_action():
         assert result["scenario_count"] == 1
         assert result["results"][0]["decision"]["action"] == "allow"
         assert result["results"][0]["matches_expected_action"] is True
+    finally:
+        os.environ.pop("ATTESTATION_CA_SECRET", None)
+        tmp.cleanup()
+
+
+def test_policy_bundle_simulation_can_replay_decision_audit_record():
+    tmp = _setup_tmp_db()
+    try:
+        policy_bundles.init_db()
+        decision_audit.init_db()
+
+        bundle = policy_bundles.create_bundle(
+            tenant_id="tenant-1",
+            name="edge-default",
+            version="2026.04.15",
+            description="replay-bundle",
+            config={"required_scope": ["orders:read"], "expected_action": "allow"},
+        )
+        policy_bundles.activate_bundle("tenant-1", bundle["bundle_id"])
+
+        scenario = _scenario()
+        # Remove cert to keep replay deterministic and avoid signature/env coupling.
+        scenario["certificate"] = None
+        scenario["certificate_id"] = ""
+
+        baseline = policy_bundles.simulate_bundle(
+            simulation={"scenarios": [scenario]},
+            bundle_config={"required_scope": ["orders:read"], "expected_action": "allow"},
+        )
+
+        audit = decision_audit.record_decision(
+            tenant_id="tenant-1",
+            request_id="req-replay-1",
+            source_endpoint="/api/abac/evaluate",
+            actor_subject="analyst-1",
+            evaluation_input={
+                "uis_event": scenario["uis_event"],
+                "attestation": scenario["attestation"],
+                "certificate": scenario["certificate"],
+                "certificate_id": scenario["certificate_id"],
+                "request_headers": scenario["request_headers"],
+                "observed_scope": scenario["observed_scope"],
+                "required_scope": ["orders:read"],
+            },
+            enforcement_result=baseline["results"][0]["decision"] and {
+                "decision": baseline["results"][0]["decision"],
+                "authn_failure": False,
+                "certificate_status": None,
+                "drift": baseline["results"][0].get("drift"),
+                "timing": baseline["results"][0].get("timing"),
+            },
+            policy_bundle={
+                "name": bundle["name"],
+                "version": bundle["version"],
+                "config": bundle["config"],
+            },
+        )
+
+        replay = decision_audit.replay_decision(
+            record=audit,
+            policy_bundle_config={"required_scope": ["orders:read"], "expected_action": "block"},
+        )
+        assert replay["previous_decision"]["action"] in {"allow", "step_up", "block"}
+        assert replay["replay_decision"]["action"] in {"allow", "step_up", "block"}
+        assert "action_changed" in replay["diff"]
     finally:
         os.environ.pop("ATTESTATION_CA_SECRET", None)
         tmp.cleanup()

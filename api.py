@@ -32,6 +32,7 @@ POST /api/mcp/verify               verify MCP server integrity/capabilities
 """
 
 import asyncio
+import json
 import logging
 import os
 import uuid
@@ -76,6 +77,7 @@ from modules.identity import network_intel
 from modules.identity import compliance
 from modules.identity import attestation_store
 from modules.identity import uis_store
+from modules.identity import decision_audit
 from modules.identity import certificate_transparency as ct_log
 from modules.identity import clickhouse_client
 from modules.integrations.siem_taxii import build_taxii_bundle
@@ -118,6 +120,36 @@ def _decode_cursor(value: str | None) -> str | None:
         return raw.decode("utf-8")
     except Exception:
         return None
+
+
+def _plan_tier_from_tenant(tenant: TenantContext) -> PlanTier:
+    plan_value = str(
+        getattr(tenant, "plan", Plan.FREE).value if hasattr(tenant.plan, "value") else tenant.plan
+    ).lower()
+    if plan_value in {p.value for p in PlanTier}:
+        return PlanTier(plan_value)
+    return PlanTier.FREE
+
+
+def _record_decision_audit(
+    *,
+    tenant: TenantContext,
+    request_id: str,
+    source_endpoint: str,
+    actor_subject: str,
+    evaluation_input: dict,
+    enforcement: dict,
+    policy_bundle: dict | None = None,
+) -> dict:
+    return decision_audit.record_decision(
+        tenant_id=tenant.tenant_id,
+        request_id=request_id,
+        source_endpoint=source_endpoint,
+        actor_subject=actor_subject,
+        evaluation_input=evaluation_input,
+        enforcement_result=enforcement,
+        policy_bundle=policy_bundle,
+    )
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -172,6 +204,7 @@ async def _startup_checks() -> None:
     network_intel.init_db()
     compliance.init_db()
     policy_bundles.init_db()
+    decision_audit.init_db()
 
     from modules.identity.cache_redis import is_available as redis_ok
     logger.info("Redis: %s", "connected" if redis_ok() else "UNREACHABLE")
@@ -1081,7 +1114,84 @@ async def api_abac_evaluate(
                 "certificate_verification_failed"
             ]
 
-    return {"tenant_id": tenant.tenant_id, **enforcement}
+    request_id = str(body.get("request_id") or str(uuid.uuid4()))
+    audit_record = decision_audit.record_decision(
+        tenant_id=tenant.tenant_id,
+        request_id=request_id,
+        source_endpoint="/api/abac/evaluate",
+        actor_subject=str(body.get("actor_subject") or "api-client"),
+        evaluation_input={
+            "uis_event": uis_event,
+            "attestation": attestation,
+            "certificate": cert_for_eval,
+            "certificate_id": certificate_id,
+            "request_headers": {str(k).lower(): str(v) for k, v in request_headers.items()},
+            "observed_scope": [str(v) for v in observed_scope],
+            "required_scope": [str(v) for v in (required_scope or [])],
+        },
+        enforcement_result=enforcement,
+    )
+    return {"tenant_id": tenant.tenant_id, "request_id": request_id, "audit_id": audit_record.get("audit_id"), **enforcement}
+
+
+@app.get("/api/decision-audit")
+async def api_list_decision_audits(
+    limit: int = 50,
+    cursor: str | None = None,
+    source_endpoint: str | None = None,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    page = decision_audit.list_decisions_paginated(
+        tenant_id=tenant.tenant_id,
+        page_size=min(max(limit, 1), 200),
+        cursor=cursor,
+        source_endpoint=source_endpoint,
+    )
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(page["items"]),
+        "audits": page["items"],
+        "next_cursor": page["next_cursor"],
+        "has_more": page["has_more"],
+    }
+
+
+@app.get("/api/decision-audit/{audit_id}")
+async def api_get_decision_audit(
+    audit_id: str,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    record = decision_audit.get_decision(tenant_id=tenant.tenant_id, audit_id=audit_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Decision audit not found")
+    return {"tenant_id": tenant.tenant_id, "audit": record}
+
+
+@app.post("/api/decision-audit/{audit_id}/replay")
+async def api_replay_decision_audit(
+    audit_id: str,
+    body: dict,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    record = decision_audit.get_decision(tenant_id=tenant.tenant_id, audit_id=audit_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Decision audit not found")
+
+    policy_bundle_config = None
+    bundle_id = str(body.get("bundle_id", "")).strip()
+    if bundle_id:
+        bundle = policy_bundles.get_bundle(tenant.tenant_id, bundle_id)
+        if bundle is None:
+            raise HTTPException(status_code=404, detail="Policy bundle not found")
+        policy_bundle_config = bundle.get("config") or {}
+    else:
+        config = body.get("policy_bundle_config")
+        if config is not None and not isinstance(config, dict):
+            raise HTTPException(status_code=400, detail="'policy_bundle_config' must be an object when provided")
+        policy_bundle_config = config or {}
+
+    replay = decision_audit.replay_decision(record=record, policy_bundle_config=policy_bundle_config)
+    return {"tenant_id": tenant.tenant_id, "replay": replay}
 
 
 @app.post("/api/policy/bundles")
@@ -1706,6 +1816,22 @@ async def secure(
                 request_headers={k.lower(): str(v) for k, v in request.headers.items()},
                 observed_scope=[str(v) for v in observed_scope],
                 required_scope=[],
+            )
+            decision_audit.record_decision(
+                tenant_id=tid,
+                request_id=request_id,
+                source_endpoint="/secure",
+                actor_subject=user_id,
+                evaluation_input={
+                    "uis_event": uis_event,
+                    "attestation": latest_attestation,
+                    "certificate": cert,
+                    "certificate_id": certificate_id,
+                    "request_headers": {k.lower(): str(v) for k, v in request.headers.items()},
+                    "observed_scope": [str(v) for v in observed_scope],
+                    "required_scope": [],
+                },
+                enforcement_result=enforcement,
             )
             decision = enforcement["decision"]
             drift_dict = enforcement.get("drift")

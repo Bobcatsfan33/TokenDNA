@@ -8,13 +8,21 @@ plan checks.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 
 from modules.tenants.models import Plan
 
 
-def _tier_value(plan: Plan | str) -> int:
-    value = str(plan.value if isinstance(plan, Plan) else plan).lower()
+class PlanTier(str, Enum):
+    FREE = "free"
+    STARTER = "starter"
+    PRO = "pro"
+    ENTERPRISE = "enterprise"
+
+
+def _tier_value(plan: Plan | PlanTier | str) -> int:
+    value = str(plan.value if isinstance(plan, (Plan, PlanTier)) else plan).lower()
     order = {
         "free": 10,
         "starter": 20,
@@ -88,13 +96,45 @@ FEATURE_GATES: dict[str, FeatureGate] = {
 }
 
 
-def is_feature_enabled(plan: Plan | str, feature_key: str) -> bool:
+def is_feature_enabled(plan: Plan | PlanTier | str, feature_key: str) -> bool:
     gate = FEATURE_GATES.get(feature_key)
     if gate is None:
         return False
     return _tier_value(plan) >= _tier_value(gate.min_plan)
 
 
-def list_feature_matrix() -> list[dict[str, Any]]:
-    return [gate.to_dict() for gate in FEATURE_GATES.values()]
+def evaluate_feature_access(
+    *,
+    feature_name: str,
+    plan: PlanTier | Plan | str,
+    identity_fields: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    gate = FEATURE_GATES.get(feature_name)
+    if gate is None:
+        return {
+            "feature": feature_name,
+            "enabled": False,
+            "reason": "unknown_feature",
+            "minimum_plan": None,
+            "identity_fields_used": sorted((identity_fields or {}).keys()),
+        }
+    enabled = is_feature_enabled(plan, feature_name)
+    return {
+        "feature": feature_name,
+        "enabled": enabled,
+        "reason": "ok" if enabled else "plan_upgrade_required",
+        "minimum_plan": gate.min_plan.value,
+        "tier": gate.tier,
+        "identity_fields_used": sorted((identity_fields or {}).keys()),
+    }
+
+
+def list_feature_matrix(plan: PlanTier | Plan | str | None = None) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for gate in FEATURE_GATES.values():
+        row = gate.to_dict()
+        if plan is not None:
+            row["enabled"] = is_feature_enabled(plan, gate.key)
+        rows.append(row)
+    return rows
 
