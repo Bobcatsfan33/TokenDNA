@@ -47,3 +47,46 @@ def test_generate_store_list_evidence_package_roundtrip():
     finally:
         tmp.cleanup()
 
+
+def test_signed_snapshot_export_and_verify_roundtrip():
+    tmp = _setup_tmp_db()
+    try:
+        compliance.init_db()
+        package = compliance.generate_evidence_package(
+            tenant_id="tenant-1",
+            framework="emass",
+            inputs={
+                "uis_event_count": 10,
+                "attestation_count": 5,
+                "certificate_count": 4,
+                "revoked_certificate_count": 0,
+                "drift_event_count": 1,
+                "threat_signal_count": 3,
+            },
+        )
+        compliance.store_evidence_package(package)
+
+        snapshot = compliance.create_signed_snapshot(
+            package=package,
+            export_format="oscal",
+            algorithm="HS256",
+        )
+        verify = compliance.verify_signed_snapshot(snapshot)
+        assert verify["valid"] is True
+
+        compliance.store_signed_snapshot(snapshot)
+        fetched = compliance.get_signed_snapshot("tenant-1", snapshot["snapshot_id"])
+        assert fetched is not None
+        assert fetched["snapshot_id"] == snapshot["snapshot_id"]
+
+        listed = compliance.list_signed_snapshots("tenant-1", limit=10)
+        assert len(listed) == 1
+        assert listed[0]["export_format"] == "oscal"
+
+        oscal_doc = compliance.export_oscal_document(package)
+        emass_doc = compliance.export_emass_package(package)
+        assert oscal_doc["model"] == "assessment-results"
+        assert "control_status" in emass_doc
+    finally:
+        tmp.cleanup()
+

@@ -1241,6 +1241,56 @@ async def api_list_compliance_evidence_packages(
     return {"tenant_id": tenant.tenant_id, "count": len(rows), "packages": rows}
 
 
+@app.post("/api/compliance/evidence/snapshot")
+async def api_create_compliance_signed_snapshot(
+    body: dict,
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    package_id = str(body.get("package_id", "")).strip()
+    if not package_id:
+        raise HTTPException(status_code=400, detail="'package_id' is required")
+    export_format = str(body.get("export_format", "oscal")).strip().lower()
+    if export_format not in {"oscal", "emass"}:
+        raise HTTPException(status_code=400, detail="'export_format' must be oscal or emass")
+
+    package = compliance.get_evidence_package(tenant.tenant_id, package_id)
+    if package is None:
+        raise HTTPException(status_code=404, detail="Evidence package not found")
+    snapshot = compliance.create_signed_snapshot(
+        package=package,
+        export_format=export_format,
+        key_id=(str(body.get("key_id", "")).strip() or None),
+        algorithm=str(body.get("algorithm", "HS256")).strip().upper(),
+    )
+    compliance.store_signed_snapshot(snapshot)
+    verification = compliance.verify_signed_snapshot(snapshot)
+    return {"tenant_id": tenant.tenant_id, "snapshot": snapshot, "verification": verification}
+
+
+@app.get("/api/compliance/evidence/snapshots")
+async def api_list_compliance_signed_snapshots(
+    limit: int = 50,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    rows = compliance.list_signed_snapshots(
+        tenant_id=tenant.tenant_id,
+        limit=min(max(limit, 1), 200),
+    )
+    return {"tenant_id": tenant.tenant_id, "count": len(rows), "snapshots": rows}
+
+
+@app.get("/api/compliance/evidence/snapshots/{snapshot_id}")
+async def api_get_compliance_signed_snapshot(
+    snapshot_id: str,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    snapshot = compliance.get_signed_snapshot(tenant.tenant_id, snapshot_id)
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="Signed snapshot not found")
+    verification = compliance.verify_signed_snapshot(snapshot)
+    return {"tenant_id": tenant.tenant_id, "snapshot": snapshot, "verification": verification}
+
+
 # ── Main integrity check ──────────────────────────────────────────────────────
 
 @app.get("/secure")
