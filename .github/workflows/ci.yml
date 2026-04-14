@@ -31,6 +31,9 @@ jobs:
       - name: Ruff lint
         run: ruff check . --output-format=github
 
+      - name: Operator SLO gate contract checks
+        run: python scripts/operator_slo_gate.py --strict
+
       - name: Import verification
         run: |
           python -c "
@@ -149,3 +152,43 @@ jobs:
         if: always()
         with:
           sarif_file: "trivy-results.sarif"
+
+  # ── Runtime load / security readiness ───────────────────────────────────────
+  runtime-readiness:
+    name: Runtime Readiness Gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Start API for runtime readiness checks
+        run: |
+          DEV_MODE=true DATA_DB_PATH=/tmp/tokendna-ci.db python -m uvicorn api:app --host 127.0.0.1 --port 8000 > /tmp/tokendna-ci.log 2>&1 &
+          for i in {1..30}; do
+            if python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=1); print('up')" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Run smoke load profile harness
+        run: |
+          python tests/load_security_smoke.py --base-url http://127.0.0.1:8000
+          python scripts/load_profile.py --strict
+
+      - name: Run enterprise readiness tests
+        run: |
+          python -m pytest -q tests/test_enterprise_readiness.py tests/test_enterprise_api_operator.py
+
+      - name: Stop API and upload runtime log
+        if: always()
+        run: |
+          pkill -f "uvicorn api:app" || true
+          cat /tmp/tokendna-ci.log || true
