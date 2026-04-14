@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from modules.product.feature_gates import PlanTier
+from modules.identity.trust_authority import build_signer_for_algorithm, build_signer_for_key
 
 _lock = threading.Lock()
 
@@ -126,7 +127,25 @@ def init_db() -> None:
             """
         )
         cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS billing_exports (
+                export_id             TEXT PRIMARY KEY,
+                tenant_id             TEXT NOT NULL,
+                month_bucket          TEXT NOT NULL,
+                format                TEXT NOT NULL,
+                created_at            TEXT NOT NULL,
+                signature_alg         TEXT NOT NULL,
+                ca_key_id             TEXT NOT NULL,
+                signature             TEXT NOT NULL,
+                payload_json          TEXT NOT NULL
+            )
+            """
+        )
+        cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_feature_usage_events_tenant_month ON feature_usage_events(tenant_id, month_bucket, created_at DESC)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_billing_exports_tenant_month ON billing_exports(tenant_id, month_bucket, created_at DESC)"
         )
 
 
@@ -307,4 +326,202 @@ def build_usage_statement(
         "generated_at": _iso_now(),
         "totals": totals,
         "usage": usage,
+    }
+
+
+def create_signed_usage_statement(
+    *,
+    tenant_id: str,
+    month_bucket: str | None = None,
+    key_id: str | None = None,
+    algorithm: str = "HS256",
+) -> dict[str, Any]:
+    statement = build_usage_statement(tenant_id=tenant_id, month_bucket=month_bucket)
+    signer = (
+        build_signer_for_key(key_id, algorithm)
+        if key_id
+        else build_signer_for_algorithm(algorithm)
+    )
+    sign_result = signer.sign(statement)
+    return {
+        "statement_id": uuid.uuid4().hex,
+        "tenant_id": tenant_id,
+        "month_bucket": statement["month_bucket"],
+        "created_at": _iso_now(),
+        "signature_alg": sign_result.algorithm,
+        "ca_key_id": sign_result.key_id,
+        "signature": sign_result.signature,
+        "statement": statement,
+    }
+
+
+def verify_signed_usage_statement(snapshot: dict[str, Any]) -> dict[str, Any]:
+    payload = snapshot.get("statement")
+    signature = snapshot.get("signature")
+    if not isinstance(payload, dict) or not isinstance(signature, str):
+        return {"valid": False, "reason": "invalid_statement_payload"}
+    algorithm = str(snapshot.get("signature_alg", "HS256")).upper()
+    key_id = str(snapshot.get("ca_key_id") or "").strip()
+    signer = (
+        build_signer_for_key(key_id, algorithm)
+        if key_id
+        else build_signer_for_algorithm(algorithm)
+    )
+    ok = signer.verify(payload, signature)
+    return {
+        "valid": bool(ok),
+        "reason": "ok" if ok else "invalid_signature",
+        "statement_id": snapshot.get("statement_id"),
+        "month_bucket": snapshot.get("month_bucket"),
+    }
+
+
+def export_billing_statement(
+    *,
+    tenant_id: str,
+    month_bucket: str | None = None,
+    export_format: str = "json",
+    key_id: str | None = None,
+    algorithm: str = "HS256",
+) -> dict[str, Any]:
+    fmt = str(export_format or "json").strip().lower()
+    if fmt not in {"json", "csv"}:
+        raise ValueError("export_format must be 'json' or 'csv'")
+    signed = create_signed_usage_statement(
+        tenant_id=tenant_id,
+        month_bucket=month_bucket,
+        key_id=key_id,
+        algorithm=algorithm,
+    )
+    statement = signed["statement"]
+    if fmt == "csv":
+        header = "tenant_id,month_bucket,feature_key,plan,used_amount,limit,mode,updated_at"
+        lines = [header]
+        for row in statement.get("usage", []):
+            lines.append(
+                ",".join(
+                    [
+                        str(row.get("tenant_id", "")),
+                        str(row.get("month_bucket", "")),
+                        str(row.get("feature_key", "")),
+                        str(row.get("plan", "")),
+                        str(row.get("used_amount", 0)),
+                        str(row.get("limit", 0)),
+                        str(row.get("mode", "")),
+                        str(row.get("updated_at", "")),
+                    ]
+                )
+            )
+        payload_obj: dict[str, Any] = {
+            "statement": statement,
+            "export": {"format": "csv", "content": "\n".join(lines)},
+        }
+    else:
+        payload_obj = {"statement": statement, "export": {"format": "json", "content": statement}}
+
+    export = {
+        "export_id": uuid.uuid4().hex,
+        "tenant_id": tenant_id,
+        "month_bucket": statement["month_bucket"],
+        "export_format": fmt,
+        "content_type": "text/csv" if fmt == "csv" else "application/json",
+        "created_at": _iso_now(),
+        "signature_alg": signed["signature_alg"],
+        "ca_key_id": signed["ca_key_id"],
+        "signature": signed["signature"],
+        "payload": payload_obj,
+    }
+    with _cursor() as cur:
+        cur.execute(
+            """
+            INSERT OR REPLACE INTO billing_exports(
+                export_id, tenant_id, month_bucket, format, created_at,
+                signature_alg, ca_key_id, signature, payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                export["export_id"],
+                export["tenant_id"],
+                export["month_bucket"],
+                export["export_format"],
+                export["created_at"],
+                export["signature_alg"],
+                export["ca_key_id"],
+                export["signature"],
+                json.dumps(export["payload"], sort_keys=True),
+            ),
+        )
+    return export
+
+
+def list_billing_exports(
+    *,
+    tenant_id: str,
+    month_bucket: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    month = _month_bucket(month_bucket) if month_bucket else None
+    with _cursor() as cur:
+        if month:
+            rows = cur.execute(
+                """
+                SELECT export_id, tenant_id, month_bucket, format, created_at,
+                       signature_alg, ca_key_id, signature, payload_json
+                FROM billing_exports
+                WHERE tenant_id = ? AND month_bucket = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (tenant_id, month, min(max(limit, 1), 200)),
+            ).fetchall()
+        else:
+            rows = cur.execute(
+                """
+                SELECT export_id, tenant_id, month_bucket, format, created_at,
+                       signature_alg, ca_key_id, signature, payload_json
+                FROM billing_exports
+                WHERE tenant_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (tenant_id, min(max(limit, 1), 200)),
+            ).fetchall()
+    return [
+        {
+            "export_id": row["export_id"],
+            "tenant_id": row["tenant_id"],
+            "month_bucket": row["month_bucket"],
+            "export_format": row["format"],
+            "content_type": "text/csv" if str(row["format"]) == "csv" else "application/json",
+            "created_at": row["created_at"],
+            "signature_alg": row["signature_alg"],
+            "ca_key_id": row["ca_key_id"],
+            "signature": row["signature"],
+            "payload": json.loads(row["payload_json"]),
+        }
+        for row in rows
+    ]
+
+
+def verify_billing_export_signature(export: dict[str, Any]) -> dict[str, Any]:
+    payload = export.get("payload")
+    signature = export.get("signature")
+    if not isinstance(payload, dict) or not isinstance(signature, str):
+        return {"valid": False, "reason": "invalid_export_payload"}
+    statement = payload.get("statement")
+    if not isinstance(statement, dict):
+        return {"valid": False, "reason": "invalid_statement_content"}
+    algorithm = str(export.get("signature_alg", "HS256")).upper()
+    key_id = str(export.get("ca_key_id") or "").strip()
+    signer = (
+        build_signer_for_key(key_id, algorithm)
+        if key_id
+        else build_signer_for_algorithm(algorithm)
+    )
+    ok = signer.verify(statement, signature)
+    return {
+        "valid": bool(ok),
+        "reason": "ok" if ok else "invalid_signature",
+        "export_id": export.get("export_id"),
+        "month_bucket": export.get("month_bucket"),
     }

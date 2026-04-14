@@ -1929,6 +1929,39 @@ async def api_product_usage(
     return {"tenant_id": tenant.tenant_id, "statement": statement}
 
 
+@app.get("/api/product/usage/exports")
+async def api_product_usage_exports(
+    month: str | None = None,
+    limit: int = 50,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    exports = feature_metering.list_billing_exports(
+        tenant_id=tenant.tenant_id,
+        month_bucket=(month or None),
+        limit=min(max(limit, 1), 200),
+    )
+    return {"tenant_id": tenant.tenant_id, "count": len(exports), "exports": exports}
+
+
+@app.post("/api/product/usage/export")
+async def api_product_usage_export(
+    body: dict,
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    export_format = str(body.get("format", "json")).strip().lower()
+    if export_format not in {"json", "csv"}:
+        raise HTTPException(status_code=400, detail="'format' must be json or csv")
+    export = feature_metering.export_billing_statement(
+        tenant_id=tenant.tenant_id,
+        month_bucket=(str(body.get("month", "")).strip() or None),
+        export_format=export_format,
+        key_id=(str(body.get("key_id", "")).strip() or None),
+        algorithm=str(body.get("algorithm", "HS256")).strip().upper(),
+    )
+    verification = feature_metering.verify_billing_export_signature(export)
+    return {"tenant_id": tenant.tenant_id, "export": export, "verification": verification}
+
+
 @app.post("/api/product/usage/evaluate")
 async def api_product_usage_evaluate(
     body: dict,
