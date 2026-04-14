@@ -63,6 +63,9 @@ from modules.identity.token_dna import generate_dna, migrate_dna
 from modules.identity.uis import normalize_from_protocol
 from modules.identity.attestation import create_attestation_record
 from modules.identity.mcp_attestation import verify_mcp_server
+from modules.identity.attestation_certificates import issue_certificate, verify_certificate
+from modules.identity import attestation_store
+from modules.identity import uis_store
 from modules.identity import clickhouse_client
 from modules.tenants import store as tenant_store
 from modules.tenants.middleware import get_tenant
@@ -125,6 +128,8 @@ async def startup_checks():
 
     os.makedirs("/data", exist_ok=True)
     tenant_store.init_db()
+    attestation_store.init_db()
+    uis_store.init_db()
 
     from modules.identity.cache_redis import is_available as redis_ok
     logger.info("Redis: %s", "connected" if redis_ok() else "UNREACHABLE")
@@ -271,6 +276,7 @@ async def api_uis_normalize(
         request_context=request_context,
         risk_context=risk_context,
     )
+    uis_store.insert_event(tenant_id=tenant.tenant_id, event=event)
     return {"tenant_id": tenant.tenant_id, "uis_event": event}
 
 
@@ -302,7 +308,30 @@ async def api_agent_attest(
         runtime_context=dict(body.get("runtime_context") or {}),
         behavior_features=dict(body.get("behavior_features") or {}),
     )
-    return {"tenant_id": tenant.tenant_id, "attestation": record.to_dict()}
+    attestation_payload = record.to_dict()
+    attestation_store.insert_attestation(tenant_id=tenant.tenant_id, record=attestation_payload)
+
+    issue_cert = bool(body.get("issue_certificate", False))
+    if issue_cert:
+        cert = issue_certificate(
+            tenant_id=tenant.tenant_id,
+            attestation_id=attestation_payload["attestation_id"],
+            subject=agent_id,
+            issuer=str(body.get("issuer") or "TokenDNA Trust Authority"),
+            claims={
+                "integrity_digest": attestation_payload["integrity_digest"],
+                "agent_dna_fingerprint": attestation_payload["agent_dna_fingerprint"],
+                "who": attestation_payload["who"],
+                "what": attestation_payload["what"],
+                "how": attestation_payload["how"],
+                "why": attestation_payload["why"],
+            },
+            ttl_hours=int(body.get("certificate_ttl_hours", 24)),
+        )
+        attestation_store.insert_certificate(tenant_id=tenant.tenant_id, certificate=cert)
+        return {"tenant_id": tenant.tenant_id, "attestation": attestation_payload, "certificate": cert}
+
+    return {"tenant_id": tenant.tenant_id, "attestation": attestation_payload}
 
 
 @app.post("/api/mcp/verify")
@@ -325,6 +354,119 @@ async def api_mcp_verify(
         connecting_agent_id=body.get("connecting_agent_id"),
     )
     return {"tenant_id": tenant.tenant_id, "verification": result.to_dict()}
+
+
+@app.get("/api/agent/attestations")
+async def api_list_agent_attestations(
+    limit: int = 50,
+    agent_id: str | None = None,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    rows = attestation_store.list_attestations(
+        tenant_id=tenant.tenant_id,
+        limit=min(max(limit, 1), 200),
+        agent_id=agent_id,
+    )
+    return {"tenant_id": tenant.tenant_id, "count": len(rows), "attestations": rows}
+
+
+@app.get("/api/agent/attestations/{attestation_id}")
+async def api_get_agent_attestation(
+    attestation_id: str,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    row = attestation_store.get_attestation(tenant_id=tenant.tenant_id, attestation_id=attestation_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Attestation not found")
+    return {"tenant_id": tenant.tenant_id, "attestation": row}
+
+
+@app.post("/api/agent/certificates/verify")
+async def api_verify_agent_certificate(
+    body: dict,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    certificate = body.get("certificate")
+    if not isinstance(certificate, dict):
+        raise HTTPException(status_code=400, detail="'certificate' must be an object")
+    if str(certificate.get("tenant_id", "")) != tenant.tenant_id:
+        raise HTTPException(status_code=403, detail="Certificate tenant mismatch")
+
+    result = verify_certificate(certificate)
+    if result.get("valid"):
+        stored = attestation_store.get_certificate(tenant_id=tenant.tenant_id, certificate_id=certificate["certificate_id"])
+        if stored is None:
+            attestation_store.insert_certificate(tenant_id=tenant.tenant_id, certificate=certificate)
+    return {"tenant_id": tenant.tenant_id, "verification": result}
+
+
+@app.post("/api/agent/certificates/issue")
+async def api_issue_agent_certificate(
+    body: dict,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    attestation_id = str(body.get("attestation_id", "")).strip()
+    if not attestation_id:
+        raise HTTPException(status_code=400, detail="'attestation_id' is required")
+
+    record = attestation_store.get_attestation(tenant_id=tenant.tenant_id, attestation_id=attestation_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Attestation not found")
+
+    subject = str(body.get("subject") or record.get("who", {}).get("agent_id") or "unknown-agent")
+    cert = issue_certificate(
+        tenant_id=tenant.tenant_id,
+        attestation_id=attestation_id,
+        subject=subject,
+        issuer=str(body.get("issuer") or "TokenDNA Trust Authority"),
+        claims={
+            "integrity_digest": record.get("integrity_digest"),
+            "agent_dna_fingerprint": record.get("agent_dna_fingerprint"),
+            "who": record.get("who", {}),
+            "what": record.get("what", {}),
+            "how": record.get("how", {}),
+            "why": record.get("why", {}),
+        },
+        ttl_hours=int(body.get("certificate_ttl_hours", 24)),
+    )
+    attestation_store.insert_certificate(tenant_id=tenant.tenant_id, certificate=cert)
+    return {"tenant_id": tenant.tenant_id, "certificate": cert}
+
+
+@app.get("/api/agent/certificates/{certificate_id}")
+async def api_get_agent_certificate(
+    certificate_id: str,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    cert = attestation_store.get_certificate(tenant_id=tenant.tenant_id, certificate_id=certificate_id)
+    if cert is None:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+    return {"tenant_id": tenant.tenant_id, "certificate": cert}
+
+
+@app.get("/api/uis/events")
+async def api_list_uis_events(
+    limit: int = 50,
+    subject: str | None = None,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    rows = uis_store.list_events(
+        tenant_id=tenant.tenant_id,
+        limit=min(max(limit, 1), 200),
+        subject=subject,
+    )
+    return {"tenant_id": tenant.tenant_id, "count": len(rows), "events": rows}
+
+
+@app.get("/api/uis/events/{event_id}")
+async def api_get_uis_event(
+    event_id: str,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    row = uis_store.get_event(tenant_id=tenant.tenant_id, event_id=event_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="UIS event not found")
+    return {"tenant_id": tenant.tenant_id, "event": row}
 
 
 # ── Main integrity check ──────────────────────────────────────────────────────
@@ -354,6 +496,16 @@ async def secure(
     geo     = geo_intel.lookup(ip, redis_client=r)
     current = generate_dna(ua, ip, geo.country, geo.asn)
     threat  = threat_intel.enrich(ip, asn=geo.asn, isp=geo.isp, redis_client=r)
+    session_context = {
+        "request_id": request_id,
+        "session_id": request.headers.get("x-session-id", ""),
+        "ip": ip,
+        "country": geo.country,
+        "asn": geo.asn,
+        "device_fingerprint": current.get("device", ""),
+        "dna_fingerprint": current.get("device", ""),
+        "user_agent": ua,
+    }
 
     # ── 3. Baseline establishment ─────────────────────────────────────────────
     baseline = get_baseline(user_id, tenant_id=tid)
@@ -362,12 +514,73 @@ async def secure(
         ml_model.update_profile(user_id, current, redis=tr)
         session_graph.add_event(user_id, current, geo, redis=tr)
         increment_event_counter("allow", tenant_id=tid)
+        baseline_event = normalize_from_protocol(
+            protocol="oidc",
+            tenant_id=tenant.tenant_id,
+            tenant_name=tenant.tenant_name,
+            subject=user_id,
+            claims=user,
+            request_context=session_context,
+            risk_context={"risk_score": 100, "risk_tier": "allow", "indicators": []},
+        )
+        uis_store.insert_event(tenant_id=tenant.tenant_id, event=baseline_event)
         return {"status": "baseline_set", "request_id": request_id}
 
     # ── 4. Score ──────────────────────────────────────────────────────────────
     ml_score     = ml_model.score(user_id, current, redis=tr)
     graph_result = session_graph.detect_anomalies(user_id, current, geo, redis=tr)
     breakdown    = scoring.compute(ml_score, threat, graph_result)
+
+    uis_event = normalize_from_protocol(
+        protocol="oidc",
+        tenant_id=tenant.tenant_id,
+        tenant_name=tenant.tenant_name,
+        subject=user_id,
+        claims=user,
+        request_context=session_context,
+        risk_context={
+            "risk_score": breakdown.final_score,
+            "risk_tier": breakdown.tier.value,
+            "impossible_travel": graph_result.impossible_travel,
+            "velocity_anomaly": graph_result.branching,
+            "indicators": list(getattr(threat, "flags", [])),
+        },
+    )
+    uis_store.insert_event(tenant_id=tenant.tenant_id, event=uis_event)
+
+    # Optional agent hook: if caller identifies as an agent, persist an attestation snapshot.
+    agent_id = request.headers.get("x-agent-id")
+    if agent_id:
+        agent_attestation = create_attestation_record(
+            agent_id=agent_id,
+            owner_org=tenant.tenant_name,
+            created_by=user_id,
+            soul_hash=request.headers.get("x-agent-soul-hash", ""),
+            directive_hashes=[h.strip() for h in request.headers.get("x-agent-directive-hashes", "").split(",") if h.strip()],
+            model_fingerprint=request.headers.get("x-agent-model-fingerprint", ""),
+            mcp_manifest_hash=request.headers.get("x-agent-mcp-manifest-hash", ""),
+            auth_method="token",
+            dpop_bound=bool(request.headers.get("dpop")),
+            mtls_bound=bool(request.headers.get("x-mtls-subject")),
+            behavior_confidence=max(min(breakdown.final_score / 100.0, 1.0), 0.0),
+            declared_purpose=request.headers.get("x-agent-purpose", "runtime_access"),
+            scope=user.get("scope", []) if isinstance(user.get("scope"), list) else str(user.get("scope", "")).split(),
+            delegation_chain=[v for v in request.headers.get("x-agent-delegation-chain", "").split(",") if v],
+            policy_trace_id=request_id,
+            runtime_context={
+                "tenant_id": tid,
+                "ip": ip,
+                "country": geo.country,
+                "asn": geo.asn,
+                "user_agent": ua,
+            },
+            behavior_features={
+                "risk_tier": breakdown.tier.value,
+                "risk_score": breakdown.final_score,
+                "threat_flags": list(getattr(threat, "flags", [])),
+            },
+        )
+        attestation_store.insert_attestation(tenant_id=tid, record=agent_attestation.to_dict())
 
     # ── 5. Update profile and graph ───────────────────────────────────────────
     ml_model.update_profile(user_id, current, redis=tr)
