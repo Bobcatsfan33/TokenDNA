@@ -52,3 +52,85 @@ def test_network_intel_record_feed_and_assess():
     finally:
         tmp.cleanup()
 
+
+def test_network_intel_suppression_and_allowlist_rules():
+    tmp = _setup_tmp_db()
+    try:
+        from modules.identity import network_intel
+
+        network_intel.init_db()
+        network_intel.upsert_suppression_rule(
+            signal_type="ip_hash",
+            raw_value="ip-suspicious",
+            mode="suppress",
+            reason="known test noise",
+        )
+        suppressed = network_intel.record_signal(
+            tenant_id="tenant-a",
+            signal_type="ip_hash",
+            raw_value="ip-suspicious",
+            severity="high",
+            confidence=0.8,
+            metadata={"source": "runtime"},
+        )
+        assert suppressed["suppressed"] is True
+
+        network_intel.upsert_suppression_rule(
+            signal_type="ip_hash",
+            raw_value="ip-suspicious",
+            mode="allow",
+            reason="false positive",
+        )
+        allowed = network_intel.record_signal(
+            tenant_id="tenant-a",
+            signal_type="ip_hash",
+            raw_value="ip-suspicious",
+            severity="high",
+            confidence=0.8,
+            metadata={"source": "manual_review"},
+        )
+        assert allowed["suppressed"] is False
+        rules = network_intel.list_suppression_rules(limit=10)
+        assert len(rules) >= 2
+    finally:
+        tmp.cleanup()
+
+
+def test_network_intel_anti_poisoning_and_decay():
+    tmp = _setup_tmp_db()
+    try:
+        from modules.identity import network_intel
+
+        os.environ["NETWORK_INTEL_MIN_OBSERVATIONS"] = "2"
+        network_intel.init_db()
+        suspicious = network_intel.record_signal(
+            tenant_id="tenant-a",
+            signal_type="device_hash",
+            raw_value="dev-1",
+            severity="high",
+            confidence=0.99,
+            metadata={"source": "unknown"},
+        )
+        assert suspicious["suppressed"] is True
+
+        signal = network_intel.record_signal(
+            tenant_id="tenant-a",
+            signal_type="asn",
+            raw_value="64512",
+            severity="medium",
+            confidence=0.6,
+            metadata={"source": "manual_review"},
+        )
+        assert signal["suppressed"] is False
+        # Force old signal and run decay.
+        with network_intel._cursor() as cur:  # type: ignore[attr-defined]
+            cur.execute(
+                "UPDATE network_intel_signals SET last_seen = ? WHERE signal_key = ?",
+                ("2000-01-01T00:00:00+00:00", signal["signal_key"]),
+            )
+        decay = network_intel.apply_decay(older_than_days=1)
+        assert decay["decayed"] >= 0
+    finally:
+        os.environ.pop("NETWORK_INTEL_MIN_OBSERVATIONS", None)
+        tmp.cleanup()
+

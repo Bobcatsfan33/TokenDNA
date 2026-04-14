@@ -983,6 +983,59 @@ async def api_network_intel_record(
     return {"tenant_id": tenant.tenant_id, "signal": record}
 
 
+@app.post("/api/intel/rules")
+async def api_network_intel_upsert_rule(
+    body: dict,
+    _tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    signal_type = str(body.get("signal_type", "")).strip()
+    raw_value = str(body.get("raw_value", "")).strip()
+    mode = str(body.get("mode", "")).strip().lower()
+    if not signal_type:
+        raise HTTPException(status_code=400, detail="'signal_type' is required")
+    if not raw_value:
+        raise HTTPException(status_code=400, detail="'raw_value' is required")
+    if mode not in {"suppress", "allow"}:
+        raise HTTPException(status_code=400, detail="'mode' must be suppress or allow")
+    rule = network_intel.upsert_suppression_rule(
+        signal_type=signal_type,
+        raw_value=raw_value,
+        mode=mode,
+        reason=str(body.get("reason", "")),
+        expires_at=(str(body.get("expires_at", "")).strip() or None),
+    )
+    return {"rule": rule}
+
+
+@app.get("/api/intel/rules")
+async def api_network_intel_list_rules(
+    mode: str | None = None,
+    limit: int = 100,
+    _tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    if mode is not None:
+        mode = mode.strip().lower()
+        if mode not in {"suppress", "allow"}:
+            raise HTTPException(status_code=400, detail="'mode' must be suppress or allow")
+    rules = network_intel.list_suppression_rules(mode=mode, limit=min(max(limit, 1), 500))
+    return {"count": len(rules), "rules": rules}
+
+
+@app.post("/api/intel/decay")
+async def api_network_intel_decay(
+    body: dict,
+    _tenant: TenantContext = Depends(require_role(Role.OWNER)),
+):
+    older_than_days = body.get("older_than_days")
+    if older_than_days is not None:
+        try:
+            older_than_days = int(older_than_days)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="'older_than_days' must be an integer") from exc
+    result = network_intel.apply_decay(older_than_days=older_than_days)
+    return {"result": result}
+
+
 @app.post("/api/intel/assess")
 async def api_network_intel_assess(
     body: dict,
@@ -1002,7 +1055,14 @@ async def api_network_intel_assess(
         normalized.append({"signal_type": signal_type, "raw_value": raw_value})
 
     assessment = network_intel.assess_runtime_penalty(normalized)
-    return {"tenant_id": tenant.tenant_id, "assessment": assessment}
+    suppression_status = [
+        {
+            "signal_type": candidate["signal_type"],
+            "status": network_intel.is_suppressed(candidate["signal_type"], candidate["raw_value"]),
+        }
+        for candidate in normalized
+    ]
+    return {"tenant_id": tenant.tenant_id, "assessment": assessment, "suppression_status": suppression_status}
 
 
 @app.get("/api/intel/feed/taxii")
