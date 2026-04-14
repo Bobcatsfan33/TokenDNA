@@ -6,7 +6,11 @@ from datetime import timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from modules.identity.attestation_certificates import issue_certificate, verify_certificate
+from modules.identity.attestation_certificates import (
+    issue_certificate,
+    revoke_certificate,
+    verify_certificate,
+)
 
 
 def test_issue_and_verify_certificate_success():
@@ -64,4 +68,34 @@ def test_verify_certificate_missing_fields():
     result = verify_certificate({"certificate_id": "x"}, secret="test-secret")
     assert result["valid"] is False
     assert result["reason"].startswith("missing_fields:")
+
+
+def test_revoke_certificate_marks_certificate_revoked():
+    cert = issue_certificate(
+        tenant_id="tenant-1",
+        attestation_id="att-4",
+        subject="agent-4",
+        issuer="TokenDNA Trust Authority",
+        claims={"integrity_digest": "abc"},
+        ttl_hours=1,
+        secret="test-secret",
+    )
+    revoked = revoke_certificate(cert, reason="compromised")
+    result = verify_certificate(revoked, secret="test-secret")
+    assert result["valid"] is False
+    assert result["reason"] == "revoked"
+
+
+def test_issue_certificate_includes_signature_metadata():
+    cert = issue_certificate(
+        tenant_id="tenant-1",
+        attestation_id="att-5",
+        subject="agent-5",
+        issuer="TokenDNA Trust Authority",
+        claims={"integrity_digest": "abc"},
+        ttl_hours=1,
+        secret="test-secret",
+    )
+    assert cert["signature_alg"] in {"HS256", "RS256"}
+    assert "ca_key_id" in cert
 

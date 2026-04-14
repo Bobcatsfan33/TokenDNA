@@ -63,7 +63,8 @@ from modules.identity.token_dna import generate_dna, migrate_dna
 from modules.identity.uis import normalize_from_protocol
 from modules.identity.attestation import create_attestation_record
 from modules.identity.mcp_attestation import verify_mcp_server
-from modules.identity.attestation_certificates import issue_certificate, verify_certificate
+from modules.identity.attestation_certificates import issue_certificate, revoke_certificate, verify_certificate
+from modules.identity.attestation_drift import assess_runtime_drift, build_drift_event
 from modules.identity import attestation_store
 from modules.identity import uis_store
 from modules.identity import clickhouse_client
@@ -444,6 +445,47 @@ async def api_get_agent_certificate(
     return {"tenant_id": tenant.tenant_id, "certificate": cert}
 
 
+@app.get("/api/agent/certificates")
+async def api_list_agent_certificates(
+    limit: int = 50,
+    subject: str | None = None,
+    status: str | None = None,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    rows = attestation_store.list_certificates(
+        tenant_id=tenant.tenant_id,
+        limit=min(max(limit, 1), 200),
+        subject=subject,
+        status=status,
+    )
+    return {"tenant_id": tenant.tenant_id, "count": len(rows), "certificates": rows}
+
+
+@app.post("/api/agent/certificates/revoke")
+async def api_revoke_agent_certificate(
+    body: dict,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    certificate_id = str(body.get("certificate_id", "")).strip()
+    if not certificate_id:
+        raise HTTPException(status_code=400, detail="'certificate_id' is required")
+    existing = attestation_store.get_certificate(tenant_id=tenant.tenant_id, certificate_id=certificate_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+
+    revoked = revoke_certificate(existing, reason=str(body.get("reason") or "manual_revoke"))
+    attestation_store.insert_certificate(tenant_id=tenant.tenant_id, certificate=revoked)
+    log_event(
+        AuditEventType.CONFIG_CHANGED,
+        AuditOutcome.SUCCESS,
+        tenant_id=tenant.tenant_id,
+        subject=tenant.tenant_name,
+        resource=f"certificate:{certificate_id}",
+        detail={"action": "revoke_certificate", "reason": revoked.get("revocation_reason")},
+    )
+    return {"tenant_id": tenant.tenant_id, "certificate": revoked}
+
+
 @app.get("/api/uis/events")
 async def api_list_uis_events(
     limit: int = 50,
@@ -467,6 +509,65 @@ async def api_get_uis_event(
     if row is None:
         raise HTTPException(status_code=404, detail="UIS event not found")
     return {"tenant_id": tenant.tenant_id, "event": row}
+
+
+@app.post("/api/agent/drift/assess")
+async def api_assess_agent_drift(
+    body: dict,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    agent_id = str(body.get("agent_id", "")).strip()
+    if not agent_id:
+        raise HTTPException(status_code=400, detail="'agent_id' is required")
+
+    attestation = None
+    attestation_id = str(body.get("attestation_id", "")).strip()
+    if attestation_id:
+        attestation = attestation_store.get_attestation(tenant_id=tenant.tenant_id, attestation_id=attestation_id)
+    else:
+        attestation = attestation_store.get_latest_attestation_for_agent(tenant_id=tenant.tenant_id, agent_id=agent_id)
+
+    if attestation is None:
+        raise HTTPException(status_code=404, detail="Attestation baseline not found")
+
+    headers = body.get("request_headers") or {}
+    if not isinstance(headers, dict):
+        raise HTTPException(status_code=400, detail="'request_headers' must be an object")
+
+    observed_scope = body.get("observed_scope") or []
+    if not isinstance(observed_scope, list):
+        raise HTTPException(status_code=400, detail="'observed_scope' must be an array")
+
+    assessment = assess_runtime_drift(
+        attestation=attestation,
+        request_headers={str(k).lower(): str(v) for k, v in headers.items()},
+        observed_scope=[str(v) for v in observed_scope],
+    )
+    request_id = str(body.get("request_id") or str(uuid.uuid4()))
+    drift_event = build_drift_event(
+        tenant_id=tenant.tenant_id,
+        agent_id=agent_id,
+        attestation_id=attestation.get("attestation_id"),
+        certificate_id=body.get("certificate_id"),
+        assessment=assessment,
+        request_id=request_id,
+    )
+    attestation_store.insert_drift_event(tenant_id=tenant.tenant_id, event=drift_event)
+    return {"tenant_id": tenant.tenant_id, "drift": assessment.to_dict(), "drift_event": drift_event}
+
+
+@app.get("/api/agent/drift/events")
+async def api_list_agent_drift_events(
+    limit: int = 100,
+    agent_id: str | None = None,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    rows = attestation_store.list_drift_events(
+        tenant_id=tenant.tenant_id,
+        limit=min(max(limit, 1), 500),
+        agent_id=agent_id,
+    )
+    return {"tenant_id": tenant.tenant_id, "count": len(rows), "events": rows}
 
 
 # ── Main integrity check ──────────────────────────────────────────────────────
@@ -548,39 +649,111 @@ async def secure(
     )
     uis_store.insert_event(tenant_id=tenant.tenant_id, event=uis_event)
 
-    # Optional agent hook: if caller identifies as an agent, persist an attestation snapshot.
+    # Optional agent policy hook for machine identities.
     agent_id = request.headers.get("x-agent-id")
+    dpop_present = bool(request.headers.get("dpop"))
+    mtls_present = bool(request.headers.get("x-mtls-subject"))
     if agent_id:
-        agent_attestation = create_attestation_record(
-            agent_id=agent_id,
-            owner_org=tenant.tenant_name,
-            created_by=user_id,
-            soul_hash=request.headers.get("x-agent-soul-hash", ""),
-            directive_hashes=[h.strip() for h in request.headers.get("x-agent-directive-hashes", "").split(",") if h.strip()],
-            model_fingerprint=request.headers.get("x-agent-model-fingerprint", ""),
-            mcp_manifest_hash=request.headers.get("x-agent-mcp-manifest-hash", ""),
-            auth_method="token",
-            dpop_bound=bool(request.headers.get("dpop")),
-            mtls_bound=bool(request.headers.get("x-mtls-subject")),
-            behavior_confidence=max(min(breakdown.final_score / 100.0, 1.0), 0.0),
-            declared_purpose=request.headers.get("x-agent-purpose", "runtime_access"),
-            scope=user.get("scope", []) if isinstance(user.get("scope"), list) else str(user.get("scope", "")).split(),
-            delegation_chain=[v for v in request.headers.get("x-agent-delegation-chain", "").split(",") if v],
-            policy_trace_id=request_id,
-            runtime_context={
-                "tenant_id": tid,
-                "ip": ip,
-                "country": geo.country,
-                "asn": geo.asn,
-                "user_agent": ua,
-            },
-            behavior_features={
-                "risk_tier": breakdown.tier.value,
-                "risk_score": breakdown.final_score,
-                "threat_flags": list(getattr(threat, "flags", [])),
-            },
+        observed_scope = (
+            user.get("scope", [])
+            if isinstance(user.get("scope"), list)
+            else str(user.get("scope", "")).split()
         )
-        attestation_store.insert_attestation(tenant_id=tid, record=agent_attestation.to_dict())
+        latest_attestation = attestation_store.get_latest_attestation_for_agent(
+            tenant_id=tid, agent_id=agent_id
+        )
+
+        if latest_attestation is None:
+            # Bootstrap first attestation snapshot when agent has no baseline yet.
+            bootstrap_attestation = create_attestation_record(
+                agent_id=agent_id,
+                owner_org=tenant.tenant_name,
+                created_by=user_id,
+                soul_hash=request.headers.get("x-agent-soul-hash", ""),
+                directive_hashes=[h.strip() for h in request.headers.get("x-agent-directive-hashes", "").split(",") if h.strip()],
+                model_fingerprint=request.headers.get("x-agent-model-fingerprint", ""),
+                mcp_manifest_hash=request.headers.get("x-agent-mcp-manifest-hash", ""),
+                auth_method="token",
+                dpop_bound=dpop_present,
+                mtls_bound=mtls_present,
+                behavior_confidence=max(min(breakdown.final_score / 100.0, 1.0), 0.0),
+                declared_purpose=request.headers.get("x-agent-purpose", "runtime_access"),
+                scope=observed_scope,
+                delegation_chain=[v for v in request.headers.get("x-agent-delegation-chain", "").split(",") if v],
+                policy_trace_id=request_id,
+                runtime_context={
+                    "tenant_id": tid,
+                    "ip": ip,
+                    "country": geo.country,
+                    "asn": geo.asn,
+                    "user_agent": ua,
+                },
+                behavior_features={
+                    "risk_tier": breakdown.tier.value,
+                    "risk_score": breakdown.final_score,
+                    "threat_flags": list(getattr(threat, "flags", [])),
+                },
+            )
+            attestation_store.insert_attestation(tenant_id=tid, record=bootstrap_attestation.to_dict())
+        else:
+            certificate_id = request.headers.get("x-agent-certificate-id", "")
+            if certificate_id:
+                cert = attestation_store.get_certificate(tenant_id=tid, certificate_id=certificate_id)
+                if cert is None:
+                    raise HTTPException(status_code=401, detail="Agent certificate not found")
+                cert_verification = verify_certificate(cert)
+                if not cert_verification.get("valid", False):
+                    raise HTTPException(status_code=401, detail=f"Invalid agent certificate: {cert_verification.get('reason')}")
+                if cert.get("attestation_id") != latest_attestation.get("attestation_id"):
+                    raise HTTPException(status_code=401, detail="Agent certificate does not match latest attestation baseline")
+
+            drift_assessment = assess_runtime_drift(
+                attestation=latest_attestation,
+                request_headers={k.lower(): v for k, v in request.headers.items()},
+                observed_scope=[str(v) for v in observed_scope],
+            )
+            if drift_assessment.is_drift:
+                drift_event = build_drift_event(
+                    tenant_id=tid,
+                    agent_id=agent_id,
+                    attestation_id=latest_attestation.get("attestation_id"),
+                    certificate_id=certificate_id or None,
+                    assessment=drift_assessment,
+                    request_id=request_id,
+                )
+                attestation_store.insert_drift_event(tenant_id=tid, event=drift_event)
+
+                log_event(
+                    AuditEventType.THREAT_STEP_UP if drift_assessment.should_step_up else AuditEventType.THREAT_BLOCK,
+                    AuditOutcome.FAILURE if drift_assessment.should_block else AuditOutcome.UNKNOWN,
+                    tenant_id=tid,
+                    subject=user_id,
+                    source_ip=ip or "0.0.0.0",
+                    resource="/secure",
+                    detail={
+                        "agent_id": agent_id,
+                        "drift_score": drift_assessment.score,
+                        "drift_reasons": drift_assessment.reasons,
+                        "severity": drift_assessment.severity,
+                    },
+                    correlation_id=request_id,
+                )
+
+            if drift_assessment.should_block:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "status": "blocked",
+                        "message": "Agent attestation drift exceeds policy threshold",
+                        "drift": drift_assessment.to_dict(),
+                    },
+                )
+            if drift_assessment.should_step_up:
+                return Response(
+                    content=f'{{"status":"step_up","reason":"agent_drift","score":{breakdown.final_score}}}',
+                    status_code=202,
+                    media_type="application/json",
+                )
 
     # ── 5. Update profile and graph ───────────────────────────────────────────
     ml_model.update_profile(user_id, current, redis=tr)
