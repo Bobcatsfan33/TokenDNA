@@ -144,6 +144,7 @@ def test_operator_status_contains_slos_and_dependency_health():
                 "sqlite": {"ok": True},
                 "redis": {"ok": True},
                 "clickhouse": {"ok": True},
+                "storage_backend": {"backend": "sqlite", "dual_write": False, "postgres_dsn": None},
             },
             "slo": {
                 "edge_decision_ms": {

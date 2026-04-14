@@ -78,6 +78,7 @@ from modules.identity import compliance
 from modules.identity import attestation_store
 from modules.identity import uis_store
 from modules.identity import decision_audit
+from modules.identity import trust_federation
 from modules.identity import certificate_transparency as ct_log
 from modules.identity import clickhouse_client
 from modules.integrations.siem_taxii import build_taxii_bundle
@@ -206,6 +207,7 @@ async def _startup_checks() -> None:
     compliance.init_db()
     policy_bundles.init_db()
     decision_audit.init_db()
+    trust_federation.init_db()
 
     from modules.identity.cache_redis import is_available as redis_ok
     logger.info("Redis: %s", "connected" if redis_ok() else "UNREACHABLE")
@@ -1169,6 +1171,107 @@ async def api_get_decision_audit(
     return {"tenant_id": tenant.tenant_id, "audit": record}
 
 
+@app.post("/api/federation/verifiers")
+async def api_upsert_federation_verifier(
+    body: dict,
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    name = str(body.get("name", "")).strip()
+    issuer = str(body.get("issuer", "")).strip()
+    if not name or not issuer:
+        raise HTTPException(status_code=400, detail="'name' and 'issuer' are required")
+    verifier = trust_federation.upsert_verifier(
+        tenant_id=tenant.tenant_id,
+        verifier_id=(str(body.get("verifier_id", "")).strip() or None),
+        name=name,
+        trust_score=float(body.get("trust_score", 0.7)),
+        issuer=issuer,
+        jwks_uri=(str(body.get("jwks_uri", "")).strip() or None),
+        metadata=(body.get("metadata") if isinstance(body.get("metadata"), dict) else {}),
+        status=str(body.get("status", "active")).strip().lower(),
+    )
+    return {"tenant_id": tenant.tenant_id, "verifier": verifier}
+
+
+@app.get("/api/federation/verifiers")
+async def api_list_federation_verifiers(
+    status: str | None = None,
+    limit: int = 100,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    verifiers = trust_federation.list_verifiers(
+        tenant_id=tenant.tenant_id,
+        status=status,
+        limit=min(max(limit, 1), 200),
+    )
+    return {"tenant_id": tenant.tenant_id, "count": len(verifiers), "verifiers": verifiers}
+
+
+@app.post("/api/federation/attestations")
+async def api_issue_federation_attestation(
+    body: dict,
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    verifier_id = str(body.get("verifier_id", "")).strip()
+    target_type = str(body.get("target_type", "")).strip()
+    target_id = str(body.get("target_id", "")).strip()
+    verdict = str(body.get("verdict", "allow")).strip().lower()
+    if not verifier_id or not target_type or not target_id:
+        raise HTTPException(status_code=400, detail="'verifier_id', 'target_type', and 'target_id' are required")
+    attestation = trust_federation.issue_federation_attestation(
+        tenant_id=tenant.tenant_id,
+        verifier_id=verifier_id,
+        target_type=target_type,
+        target_id=target_id,
+        verdict=verdict,
+        confidence=float(body.get("confidence", 0.7)),
+        expires_at=(str(body.get("expires_at", "")).strip() or None),
+        metadata=(body.get("metadata") if isinstance(body.get("metadata"), dict) else {}),
+        key_id=(str(body.get("key_id", "")).strip() or None),
+        algorithm=str(body.get("algorithm", "HS256")).strip().upper(),
+    )
+    verification = trust_federation.verify_attestation_signature(attestation)
+    return {"tenant_id": tenant.tenant_id, "attestation": attestation, "verification": verification}
+
+
+@app.get("/api/federation/attestations")
+async def api_list_federation_attestations(
+    target_type: str | None = None,
+    target_id: str | None = None,
+    verifier_id: str | None = None,
+    limit: int = 100,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    rows = trust_federation.list_federation_attestations(
+        tenant_id=tenant.tenant_id,
+        target_type=target_type,
+        target_id=target_id,
+        verifier_id=verifier_id,
+        limit=min(max(limit, 1), 200),
+    )
+    return {"tenant_id": tenant.tenant_id, "count": len(rows), "attestations": rows}
+
+
+@app.post("/api/federation/quorum/evaluate")
+async def api_evaluate_federation_quorum(
+    body: dict,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    target_type = str(body.get("target_type", "")).strip()
+    target_id = str(body.get("target_id", "")).strip()
+    if not target_type or not target_id:
+        raise HTTPException(status_code=400, detail="'target_type' and 'target_id' are required")
+    result = trust_federation.evaluate_federation_quorum(
+        tenant_id=tenant.tenant_id,
+        target_type=target_type,
+        target_id=target_id,
+        min_verifiers=max(1, int(body.get("min_verifiers", 2))),
+        min_trust_score=max(0.0, min(float(body.get("min_trust_score", 0.6)), 1.0)),
+        min_confidence=max(0.0, min(float(body.get("min_confidence", 0.6)), 1.0)),
+    )
+    return {"tenant_id": tenant.tenant_id, "quorum": result}
+
+
 @app.post("/api/decision-audit/{audit_id}/replay")
 async def api_replay_decision_audit(
     audit_id: str,
@@ -1819,6 +1922,44 @@ async def secure(
                 observed_scope=[str(v) for v in observed_scope],
                 required_scope=[],
             )
+            try:
+                min_verifiers = max(1, int(request.headers.get("x-federation-min-verifiers", "2")))
+            except Exception:
+                min_verifiers = 2
+            try:
+                min_trust_score = max(
+                    0.0,
+                    min(float(request.headers.get("x-federation-min-trust-score", "0.6")), 1.0),
+                )
+            except Exception:
+                min_trust_score = 0.6
+            try:
+                min_confidence = max(
+                    0.0,
+                    min(float(request.headers.get("x-federation-min-confidence", "0.6")), 1.0),
+                )
+            except Exception:
+                min_confidence = 0.6
+            federation_quorum = trust_federation.evaluate_federation_quorum(
+                tenant_id=tid,
+                target_type="agent",
+                target_id=agent_id,
+                min_verifiers=min_verifiers,
+                min_trust_score=min_trust_score,
+                min_confidence=min_confidence,
+            )
+            enforcement["federation_quorum"] = federation_quorum
+            if not federation_quorum.get("quorum", {}).get("met", False):
+                decision = enforcement.get("decision") or {}
+                if decision.get("action") == "allow":
+                    decision["action"] = "step_up"
+                decision["reasons"] = list(decision.get("reasons", [])) + ["federation_quorum_not_met"]
+                enforcement["decision"] = decision
+            elif federation_quorum.get("effective_action") == "block":
+                decision = enforcement.get("decision") or {}
+                decision["action"] = "block"
+                decision["reasons"] = list(decision.get("reasons", [])) + ["federation_quorum_block"]
+                enforcement["decision"] = decision
             decision_audit.record_decision(
                 tenant_id=tid,
                 request_id=request_id,
