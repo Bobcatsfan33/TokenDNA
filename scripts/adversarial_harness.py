@@ -151,6 +151,174 @@ def run(strict: bool = False) -> dict[str, object]:
                 f"reason={fed_verify.get('reason')}",
             )
         )
+
+        # 5) Replay-event detector should catch duplicate event IDs.
+        evt = {
+            "event_id": "replay-evt-1",
+            "event_timestamp": "2026-04-15T00:00:00+00:00",
+            "identity": {"subject": "user-replay"},
+            "auth": {"protocol": "oidc"},
+            "threat": {"risk_tier": "allow"},
+        }
+        uis_store.insert_event("tenant-1", evt)
+        uis_store.insert_event("tenant-1", evt)
+        replayed = uis_store.get_event("tenant-1", "replay-evt-1")
+        checks.append(
+            _assert(
+                "replayed_event_id_tracked",
+                bool(replayed and replayed.get("event_id") == "replay-evt-1"),
+                "event_id=replay-evt-1",
+            )
+        )
+
+        # 6) Cross-tenant signal noise remains bounded by anti-poisoning thresholds.
+        for t in ("tenant-a", "tenant-b", "tenant-c"):
+            network_intel.record_signal(
+                tenant_id=t,
+                signal_type="ip_hash",
+                raw_value="203.0.113.42",
+                severity="medium",
+                confidence=0.61,
+                metadata={"source": "secure_runtime", "trust_tier": "trusted"},
+            )
+        penalty = network_intel.assess_runtime_penalty(
+            [{"signal_type": "ip_hash", "raw_value": "203.0.113.42"}]
+        )
+        checks.append(
+            _assert(
+                "cross_tenant_signal_noise_has_limited_effect",
+                int(penalty.get("penalty", 0)) <= 20,
+                f"penalty={penalty.get('penalty')},reasons={penalty.get('reasons')}",
+            )
+        )
+
+        # 7) Expired federation verifier should be rejected by quorum evaluation.
+        verifier_exp = trust_federation.upsert_verifier(
+            tenant_id="tenant-1",
+            verifier_id=None,
+            name="Verifier Expired",
+            trust_score=0.9,
+            issuer="https://verifier-expired.example",
+            jwks_uri="https://verifier-expired.example/jwks.json",
+            metadata={"region": "us"},
+            status="active",
+        )
+        trust_federation.rotate_verifier_key(
+            tenant_id="tenant-1",
+            verifier_id=verifier_exp["verifier_id"],
+            actor="harness",
+            key_version="v2",
+            key_expires_at="2001-01-01T00:00:00+00:00",
+        )
+        att_expired = trust_federation.issue_federation_attestation(
+            tenant_id="tenant-1",
+            verifier_id=verifier_exp["verifier_id"],
+            target_type="agent",
+            target_id="agent-2",
+            verdict="allow",
+            confidence=0.95,
+        )
+        _ = att_expired
+        quorum_expired = trust_federation.evaluate_federation_quorum(
+            tenant_id="tenant-1",
+            target_type="agent",
+            target_id="agent-2",
+            min_verifiers=1,
+            min_trust_score=0.6,
+            min_confidence=0.6,
+        )
+        reasons = [str(v.get("reason", "")) for v in quorum_expired.get("rejected", []) if isinstance(v, dict)]
+        checks.append(
+            _assert(
+                "expired_verifier_rejected",
+                "verifier_key_expired" in reasons,
+                f"reasons={reasons}",
+            )
+        )
+
+        # 8) Revoked verifier should be rejected by quorum evaluation.
+        verifier_rev = trust_federation.upsert_verifier(
+            tenant_id="tenant-1",
+            verifier_id=None,
+            name="Verifier Revoked",
+            trust_score=0.92,
+            issuer="https://verifier-revoked.example",
+            jwks_uri="https://verifier-revoked.example/jwks.json",
+            metadata={"region": "eu"},
+            status="active",
+        )
+        trust_federation.revoke_verifier(
+            tenant_id="tenant-1",
+            verifier_id=verifier_rev["verifier_id"],
+            actor="harness",
+            reason="compromised",
+        )
+        att_revoked = trust_federation.issue_federation_attestation(
+            tenant_id="tenant-1",
+            verifier_id=verifier_rev["verifier_id"],
+            target_type="agent",
+            target_id="agent-3",
+            verdict="allow",
+            confidence=0.9,
+        )
+        _ = att_revoked
+        quorum_revoked = trust_federation.evaluate_federation_quorum(
+            tenant_id="tenant-1",
+            target_type="agent",
+            target_id="agent-3",
+            min_verifiers=1,
+            min_trust_score=0.6,
+            min_confidence=0.6,
+        )
+        reasons = [str(v.get("reason", "")) for v in quorum_revoked.get("rejected", []) if isinstance(v, dict)]
+        checks.append(
+            _assert(
+                "revoked_verifier_rejected",
+                ("verifier_revoked" in reasons) or ("unknown_or_inactive_verifier" in reasons),
+                f"reasons={reasons}",
+            )
+        )
+
+        # 7) Replayed UIS event IDs should upsert deterministically (no growth).
+        replay_event = {
+            "event_id": "evt-replay-1",
+            "event_timestamp": "2026-04-14T00:00:00+00:00",
+            "identity": {"subject": "user-replay"},
+            "auth": {"protocol": "oidc"},
+            "threat": {"risk_tier": "allow"},
+        }
+        uis_store.insert_event("tenant-1", replay_event)
+        uis_store.insert_event("tenant-1", replay_event)
+        replay_rows = uis_store.list_events("tenant-1", limit=500)
+        replay_count = len([row for row in replay_rows if str(row.get("event_id")) == "evt-replay-1"])
+        checks.append(
+            _assert(
+                "replayed_event_id_upserted",
+                replay_count == 1,
+                f"replay_count={replay_count}",
+            )
+        )
+
+        # 8) Cross-tenant poisoning noise should cap runtime penalty impact.
+        for idx in range(15):
+            network_intel.record_signal(
+                tenant_id=f"tenant-noise-{idx}",
+                signal_type="ip_hash",
+                raw_value="203.0.113.5",
+                severity="critical",
+                confidence=0.99,
+                metadata={"source": "unknown", "trust_tier": "untrusted"},
+            )
+        penalty_eval = network_intel.assess_runtime_penalty(
+            [{"signal_type": "ip_hash", "raw_value": "203.0.113.5"}]
+        )
+        checks.append(
+            _assert(
+                "cross_tenant_noise_penalty_capped",
+                int(penalty_eval.get("penalty", 0)) <= 40,
+                f"penalty={penalty_eval.get('penalty')}",
+            )
+        )
     finally:
         tmp.cleanup()
 

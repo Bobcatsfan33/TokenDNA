@@ -19,4 +19,8 @@ def test_adversarial_harness_runs_and_returns_all_checks():
     assert "scope_replay_escalation_handled" in names
     assert "intel_poisoning_suppressed" in names
     assert "tampered_federation_signature_detected" in names
+    assert "replayed_event_id_tracked" in names
+    assert "cross_tenant_signal_noise_has_limited_effect" in names
+    assert "expired_verifier_rejected" in names
+    assert "revoked_verifier_rejected" in names
     assert result["failed_count"] == len([c for c in checks if not c["ok"]])
