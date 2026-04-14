@@ -291,3 +291,62 @@ def test_policy_bundle_governance_two_person_activation_and_log():
     finally:
         os.environ.pop("ATTESTATION_CA_SECRET", None)
         tmp.cleanup()
+
+
+def test_policy_bundle_governance_dsl_min_approvals():
+    tmp = _setup_tmp_db()
+    try:
+        policy_bundles.init_db()
+        bundle = policy_bundles.create_bundle(
+            tenant_id="tenant-1",
+            name="edge-default",
+            version="2026.04.21",
+            description="governance-dsl",
+            config={
+                "required_scope": ["orders:read"],
+                "expected_action": "allow",
+                "review_required": True,
+                "two_person_activation": True,
+                "approval_policy": {
+                    "require_actions": ["approved"],
+                    "min_approvals": 2,
+                    "enforce_distinct_actors": True,
+                },
+            },
+        )
+
+        policy_bundles.approve_bundle(
+            tenant_id="tenant-1",
+            bundle_id=bundle["bundle_id"],
+            actor_id="approver-1",
+            note="role=owner",
+        )
+        blocked = False
+        try:
+            policy_bundles.activate_bundle_with_approval(
+                tenant_id="tenant-1",
+                bundle_id=bundle["bundle_id"],
+                actor_id="deployer-1",
+                approval_actor_id="approver-1",
+            )
+        except ValueError as exc:
+            blocked = "approval_policy_not_met:min_approvals" in str(exc)
+        assert blocked is True
+
+        policy_bundles.approve_bundle(
+            tenant_id="tenant-1",
+            bundle_id=bundle["bundle_id"],
+            actor_id="approver-2",
+            note="role=owner",
+        )
+        active = policy_bundles.activate_bundle_with_approval(
+            tenant_id="tenant-1",
+            bundle_id=bundle["bundle_id"],
+            actor_id="deployer-2",
+            approval_actor_id="approver-2",
+        )
+        assert active is not None
+        assert active["status"] == "active"
+    finally:
+        os.environ.pop("ATTESTATION_CA_SECRET", None)
+        tmp.cleanup()

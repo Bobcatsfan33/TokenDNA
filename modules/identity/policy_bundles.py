@@ -171,6 +171,11 @@ def create_bundle(
         "two_person_activation": bool(config.get("two_person_activation", False)),
         "rollback_guard_seconds": max(0, int(config.get("rollback_guard_seconds", 0))),
         "created_by": str(config.get("created_by", "unknown")),
+        "approval_policy": (
+            config.get("approval_policy")
+            if isinstance(config.get("approval_policy"), dict)
+            else {}
+        ),
     }
     bundle = {
         "bundle_id": uuid.uuid4().hex,
@@ -778,6 +783,31 @@ def activate_bundle_with_approval(
     actor_id: str,
     approval_actor_id: str | None = None,
 ) -> dict[str, Any] | None:
+    bundle = get_bundle(tenant_id, bundle_id)
+    if bundle is None:
+        return None
+    governance = bundle.get("governance") or {}
+    dsl = governance.get("approval_policy")
+    if isinstance(dsl, dict):
+        min_approvals = max(1, int(dsl.get("min_approvals", 1)))
+        require_actions = [str(v).strip().lower() for v in dsl.get("require_actions", ["approved"]) if str(v).strip()]
+        enforce_distinct = bool(dsl.get("enforce_distinct_actors", True))
+        require_min_role = str(dsl.get("min_role", "")).strip().lower()
+        logs = list_governance_log(tenant_id=tenant_id, bundle_id=bundle_id, limit=500)
+        matched = []
+        for entry in logs:
+            if str(entry.get("action", "")).lower() not in set(require_actions):
+                continue
+            if require_min_role:
+                note = str(entry.get("note", "")).lower()
+                if f"role={require_min_role}" not in note:
+                    continue
+            matched.append(entry)
+        actors = {str(entry.get("actor_id", "")) for entry in matched if str(entry.get("actor_id", ""))}
+        if len(matched) < min_approvals:
+            raise ValueError(f"approval_policy_not_met:min_approvals:{len(matched)}/{min_approvals}")
+        if enforce_distinct and len(actors) < min_approvals:
+            raise ValueError("approval_policy_not_met:distinct_actors")
     return activate_bundle(
         tenant_id=tenant_id,
         bundle_id=bundle_id,
