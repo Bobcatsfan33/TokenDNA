@@ -89,6 +89,7 @@ from modules.integrations.sdk_wrappers import (
     sdk_normalize_event,
 )
 from modules.product.feature_gates import PlanTier, evaluate_feature_access, list_feature_matrix
+from modules.storage import db_backend
 from modules.tenants import store as tenant_store
 from modules.tenants.middleware import get_tenant
 from modules.tenants.models import Plan, TenantContext
@@ -332,6 +333,7 @@ async def api_operator_status(
         "sqlite": {"ok": True},
         "redis": {"ok": redis_ok()},
         "clickhouse": {"ok": clickhouse_client.is_available()},
+        "storage_backend": db_backend.get_backend_config().__dict__,
     }
     slo = {
         "edge_decision_ms": {

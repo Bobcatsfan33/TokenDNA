@@ -13,6 +13,7 @@ cryptography==46.0.6
 # ── HTTP client (JWKS fetch, webhooks, AbuseIPDB, ip-api) ────────────────────
 requests==2.33.0
 httpx==0.28.1                    # async-capable alternative used by some deps
+psycopg[binary]==3.3.3           # PostgreSQL backend for production data plane
 
 # ── Redis ─────────────────────────────────────────────────────────────────────
 redis==7.3.0

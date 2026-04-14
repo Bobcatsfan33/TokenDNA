@@ -103,6 +103,9 @@ All settings are read from environment variables (see `.env.example`).
 | `ATTESTATION_CA_KEY_ID` | `tokendna-ca-default` | Active CA key id used for certificate issuance |
 | `ATTESTATION_ACTIVE_KEY_ID` | — | Explicit active key selection override |
 | `ATTESTATION_KEYRING_JSON` | — | JSON keyring for rotation lifecycle automation |
+| `TOKENDNA_DB_BACKEND` | `sqlite` | Data backend selector: `sqlite` or `postgres` |
+| `TOKENDNA_PG_DSN` | — | PostgreSQL DSN used when backend is `postgres` |
+| `TOKENDNA_DB_DUAL_WRITE` | `false` | When true, SQLite writes are mirrored to Postgres for migration |
 | `IMPOSSIBLE_TRAVEL_SPEED_KMH` | `900` | km/h threshold |
 | `BRANCHING_THRESHOLD` | `3` | Distinct devices before flagging |
 | `SIEM_WEBHOOK_URL` | — | HTTPS webhook for SIEM events |
