@@ -1,5 +1,5 @@
 """
-TokenDNA / Aegis Security Platform -- FastAPI v2.1.0
+TokenDNA Identity Backbone -- FastAPI v2.5.0
 
 Endpoints
 ─────────
@@ -25,6 +25,10 @@ DELETE /admin/tenants/{id}/keys/{kid}  revoke a key
 
 POST /onboarding/aws/external-id   generate ExternalId for CloudFormation
 POST /onboarding/aws/test          test IAM role + quick posture scan
+
+POST /api/uis/normalize            normalize a protocol event into UIS v1.0
+POST /api/agent/attest             generate 4D agent attestation record
+POST /api/mcp/verify               verify MCP server integrity/capabilities
 """
 
 import asyncio
@@ -56,6 +60,9 @@ from modules.identity.cache_redis import (
 )
 from modules.identity.scoring import RiskTier
 from modules.identity.token_dna import generate_dna, migrate_dna
+from modules.identity.uis import normalize_from_protocol
+from modules.identity.attestation import create_attestation_record
+from modules.identity.mcp_attestation import verify_mcp_server
 from modules.identity import clickhouse_client
 from modules.tenants import store as tenant_store
 from modules.tenants.middleware import get_tenant
@@ -71,13 +78,14 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+APP_VERSION = "2.5.0"
 
 _DASHBOARD_PATH = Path(__file__).parent / "dashboard" / "index.html"
 
 app = FastAPI(
-    title="Aegis Security Platform",
-    description="TokenDNA zero-trust session integrity + Aegis cloud posture management",
-    version="2.4.0",
+    title="TokenDNA Identity Backbone",
+    description="Zero-trust identity exchange, UIS normalization, and agent supply-chain attestation",
+    version=APP_VERSION,
     docs_url="/api/docs",
     redoc_url="/api/redoc",
 )
@@ -127,7 +135,7 @@ async def startup_checks():
 
     # Emit startup audit event (AU-2: application startup)
     log_event(AuditEventType.STARTUP, AuditOutcome.SUCCESS,
-              detail={"version": "2.4.0", "dev_mode": DEV_MODE})
+              detail={"version": APP_VERSION, "dev_mode": DEV_MODE})
 
 
 # ── Rate limiting dependency ──────────────────────────────────────────────────
@@ -155,7 +163,7 @@ async def health():
     from modules.identity.cache_redis import is_available as redis_ok
     return {
         "service":    "TokenDNA",
-        "version":    "2.4.0",
+        "version":    APP_VERSION,
         "redis":      redis_ok(),
         "clickhouse": clickhouse_client.is_available(),
         "dev_mode":   DEV_MODE,
@@ -228,10 +236,95 @@ async def api_health_detail(_tenant: TenantContext = Depends(get_tenant)):
         "clickhouse":  {"ok": clickhouse_client.is_available()},
         "tor_list":    {"ok": len(_tor_ips) > 0, "count": len(_tor_ips), "age_seconds": tor_age},
         "dev_mode":    DEV_MODE,
-        "version":     "2.4.0",
+        "version":     APP_VERSION,
         "fips_active": fips.is_active(),
         "il_environment": os.getenv("ENVIRONMENT", "dev"),
     }
+
+
+# ── Consolidation endpoints: UIS + Agent Attestation + MCP Verification ──────
+
+@app.post("/api/uis/normalize")
+async def api_uis_normalize(
+    body: dict,
+    request: Request,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    protocol = str(body.get("protocol", "custom"))
+    claims = body.get("claims") or {}
+    provided_context = body.get("request_context") or {}
+    request_context = {
+        "request_id": str(uuid.uuid4()),
+        "ip": request.client.host if request.client else "",
+        "user_agent": request.headers.get("user-agent", ""),
+        **provided_context,
+    }
+    risk_context = body.get("risk_context") or {}
+    subject = str(body.get("subject") or claims.get("sub") or "unknown")
+
+    event = normalize_from_protocol(
+        protocol=protocol,
+        tenant_id=tenant.tenant_id,
+        tenant_name=tenant.tenant_name,
+        subject=subject,
+        claims=claims,
+        request_context=request_context,
+        risk_context=risk_context,
+    )
+    return {"tenant_id": tenant.tenant_id, "uis_event": event}
+
+
+@app.post("/api/agent/attest")
+async def api_agent_attest(
+    body: dict,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    agent_id = str(body.get("agent_id", "")).strip()
+    if not agent_id:
+        raise HTTPException(status_code=400, detail="'agent_id' is required")
+
+    record = create_attestation_record(
+        agent_id=agent_id,
+        owner_org=str(body.get("owner_org") or tenant.tenant_name),
+        created_by=str(body.get("created_by") or "unknown"),
+        soul_hash=str(body.get("soul_hash") or ""),
+        directive_hashes=list(body.get("directive_hashes") or []),
+        model_fingerprint=str(body.get("model_fingerprint") or ""),
+        mcp_manifest_hash=str(body.get("mcp_manifest_hash") or ""),
+        auth_method=str(body.get("auth_method") or "token"),
+        dpop_bound=bool(body.get("dpop_bound", False)),
+        mtls_bound=bool(body.get("mtls_bound", False)),
+        behavior_confidence=float(body.get("behavior_confidence", 0.0)),
+        declared_purpose=str(body.get("declared_purpose") or "unspecified"),
+        scope=list(body.get("scope") or []),
+        delegation_chain=list(body.get("delegation_chain") or []),
+        policy_trace_id=body.get("policy_trace_id"),
+        runtime_context=dict(body.get("runtime_context") or {}),
+        behavior_features=dict(body.get("behavior_features") or {}),
+    )
+    return {"tenant_id": tenant.tenant_id, "attestation": record.to_dict()}
+
+
+@app.post("/api/mcp/verify")
+async def api_mcp_verify(
+    body: dict,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    manifest = body.get("manifest")
+    expected_manifest_hash = str(body.get("expected_manifest_hash") or "").strip()
+    if not isinstance(manifest, dict):
+        raise HTTPException(status_code=400, detail="'manifest' must be an object")
+    if not expected_manifest_hash:
+        raise HTTPException(status_code=400, detail="'expected_manifest_hash' is required")
+
+    result = verify_mcp_server(
+        manifest=manifest,
+        expected_manifest_hash=expected_manifest_hash,
+        observed_capabilities=list(body.get("observed_capabilities") or []),
+        authorized_agent_ids=(list(body["authorized_agent_ids"]) if "authorized_agent_ids" in body else None),
+        connecting_agent_id=body.get("connecting_agent_id"),
+    )
+    return {"tenant_id": tenant.tenant_id, "verification": result.to_dict()}
 
 
 # ── Main integrity check ──────────────────────────────────────────────────────
