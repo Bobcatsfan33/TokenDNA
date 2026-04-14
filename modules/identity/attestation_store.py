@@ -16,12 +16,18 @@ import threading
 from contextlib import contextmanager
 from typing import Any
 
+from modules.storage import db_backend
+
 
 _lock = threading.Lock()
 
 
 def _db_path() -> str:
     return os.getenv("DATA_DB_PATH", "/data/tokendna.db")
+
+
+def _pg_dsn() -> str:
+    return str(os.getenv("TOKENDNA_PG_DSN", "")).strip()
 
 
 def _encode_cursor(order_value: str, item_id: str) -> str:
@@ -175,6 +181,69 @@ def init_db() -> None:
 
 
 def insert_attestation(tenant_id: str, record: dict[str, Any]) -> None:
+    if db_backend.should_dual_write():
+        # Postgres dual-write for migration safety; never blocks sqlite success.
+        try:
+            import psycopg
+            dsn = _pg_dsn()
+            if dsn:
+                with psycopg.connect(dsn) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            CREATE TABLE IF NOT EXISTS agent_attestations (
+                                attestation_id         TEXT PRIMARY KEY,
+                                tenant_id              TEXT NOT NULL,
+                                agent_id               TEXT NOT NULL,
+                                created_at             TEXT NOT NULL,
+                                integrity_digest       TEXT NOT NULL,
+                                agent_dna_fingerprint  TEXT NOT NULL,
+                                who_json               TEXT NOT NULL,
+                                what_json              TEXT NOT NULL,
+                                how_json               TEXT NOT NULL,
+                                why_json               TEXT NOT NULL,
+                                record_json            JSONB NOT NULL
+                            )
+                            """
+                        )
+                        cur.execute(
+                            """
+                            INSERT INTO agent_attestations (
+                                attestation_id, tenant_id, agent_id, created_at, integrity_digest,
+                                agent_dna_fingerprint, who_json, what_json, how_json, why_json, record_json
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (attestation_id) DO UPDATE SET
+                                tenant_id = EXCLUDED.tenant_id,
+                                agent_id = EXCLUDED.agent_id,
+                                created_at = EXCLUDED.created_at,
+                                integrity_digest = EXCLUDED.integrity_digest,
+                                agent_dna_fingerprint = EXCLUDED.agent_dna_fingerprint,
+                                who_json = EXCLUDED.who_json,
+                                what_json = EXCLUDED.what_json,
+                                how_json = EXCLUDED.how_json,
+                                why_json = EXCLUDED.why_json,
+                                record_json = EXCLUDED.record_json
+                            """,
+                            (
+                                record["attestation_id"],
+                                tenant_id,
+                                record.get("who", {}).get("agent_id", "unknown"),
+                                record["created_at"],
+                                record["integrity_digest"],
+                                record["agent_dna_fingerprint"],
+                                json.dumps(record.get("who", {})),
+                                json.dumps(record.get("what", {})),
+                                json.dumps(record.get("how", {})),
+                                json.dumps(record.get("why", {})),
+                                json.dumps(record),
+                            ),
+                        )
+                    conn.commit()
+        except Exception as exc:
+            db_backend.record_backend_fallback(
+                "attestation_store.insert_attestation dual-write postgres failed",
+                context={"error": str(exc), "tenant_id": tenant_id},
+            )
     with _cursor() as cur:
         cur.execute(
             """
@@ -287,6 +356,78 @@ def list_attestations_paginated(
 
 
 def insert_certificate(tenant_id: str, certificate: dict[str, Any]) -> None:
+    if db_backend.should_dual_write():
+        try:
+            import psycopg
+            dsn = _pg_dsn()
+            if dsn:
+                with psycopg.connect(dsn) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            CREATE TABLE IF NOT EXISTS attestation_certificates (
+                                certificate_id         TEXT PRIMARY KEY,
+                                tenant_id              TEXT NOT NULL,
+                                attestation_id         TEXT NOT NULL,
+                                issued_at              TEXT NOT NULL,
+                                expires_at             TEXT NOT NULL,
+                                issuer                 TEXT NOT NULL,
+                                subject                TEXT NOT NULL,
+                                signature_alg          TEXT NOT NULL,
+                                ca_key_id              TEXT NOT NULL,
+                                status                 TEXT NOT NULL,
+                                revoked_at             TEXT,
+                                revocation_reason      TEXT,
+                                signature              TEXT NOT NULL,
+                                certificate_json       JSONB NOT NULL
+                            )
+                            """
+                        )
+                        cur.execute(
+                            """
+                            INSERT INTO attestation_certificates (
+                                certificate_id, tenant_id, attestation_id, issued_at, expires_at,
+                                issuer, subject, signature_alg, ca_key_id, status, revoked_at, revocation_reason,
+                                signature, certificate_json
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (certificate_id) DO UPDATE SET
+                                tenant_id = EXCLUDED.tenant_id,
+                                attestation_id = EXCLUDED.attestation_id,
+                                issued_at = EXCLUDED.issued_at,
+                                expires_at = EXCLUDED.expires_at,
+                                issuer = EXCLUDED.issuer,
+                                subject = EXCLUDED.subject,
+                                signature_alg = EXCLUDED.signature_alg,
+                                ca_key_id = EXCLUDED.ca_key_id,
+                                status = EXCLUDED.status,
+                                revoked_at = EXCLUDED.revoked_at,
+                                revocation_reason = EXCLUDED.revocation_reason,
+                                signature = EXCLUDED.signature,
+                                certificate_json = EXCLUDED.certificate_json
+                            """,
+                            (
+                                certificate["certificate_id"],
+                                tenant_id,
+                                certificate["attestation_id"],
+                                certificate["issued_at"],
+                                certificate["expires_at"],
+                                certificate["issuer"],
+                                certificate["subject"],
+                                certificate.get("signature_alg", "HS256"),
+                                certificate.get("ca_key_id", "tokendna-ca-default"),
+                                certificate.get("status", "active"),
+                                certificate.get("revoked_at"),
+                                certificate.get("revocation_reason"),
+                                certificate["signature"],
+                                json.dumps(certificate),
+                            ),
+                        )
+                    conn.commit()
+        except Exception as exc:
+            db_backend.record_backend_fallback(
+                "attestation_store.insert_certificate dual-write postgres failed",
+                context={"error": str(exc), "tenant_id": tenant_id},
+            )
     with _cursor() as cur:
         cur.execute(
             """
