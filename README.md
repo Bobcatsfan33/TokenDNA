@@ -94,6 +94,15 @@ All settings are read from environment variables (see `.env.example`).
 | `SCORE_THRESHOLD_STEP_UP` | `50` | Score above → STEP_UP |
 | `SCORE_THRESHOLD_BLOCK` | `30` | Score above → BLOCK |
 | `SCORE_THRESHOLD_REVOKE` | `15` | Score at/below → REVOKE |
+| `EDGE_DECISION_SLO_MS` | `5` | Runtime enforcement target latency in ms |
+| `EDGE_SLO_VIOLATION_ACTION` | `allow` | SLO breach action: `allow`, `step_up`, or `block` |
+| `NETWORK_INTEL_MIN_OBSERVATIONS` | `2` | Anti-poisoning minimum observations before full confidence |
+| `NETWORK_INTEL_ANTI_POISONING_MIN_TENANTS` | `2` | Minimum tenant corroboration threshold for runtime penalty |
+| `NETWORK_INTEL_DECAY_DAYS` | `30` | Stale intelligence decay window for cleanup |
+| `ATTESTATION_KEY_BACKEND` | `software` | `software`, `hsm`, or `aws_kms` signer backend |
+| `ATTESTATION_CA_KEY_ID` | `tokendna-ca-default` | Active CA key id used for certificate issuance |
+| `ATTESTATION_ACTIVE_KEY_ID` | — | Explicit active key selection override |
+| `ATTESTATION_KEYRING_JSON` | — | JSON keyring for rotation lifecycle automation |
 | `IMPOSSIBLE_TRAVEL_SPEED_KMH` | `900` | km/h threshold |
 | `BRANCHING_THRESHOLD` | `3` | Distinct devices before flagging |
 | `SIEM_WEBHOOK_URL` | — | HTTPS webhook for SIEM events |
