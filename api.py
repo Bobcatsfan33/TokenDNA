@@ -35,6 +35,7 @@ import asyncio
 import logging
 import os
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -117,12 +118,19 @@ def _decode_cursor(value: str | None) -> str | None:
     except Exception:
         return None
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await _startup_checks()
+    yield
+
+
 app = FastAPI(
     title="TokenDNA Identity Backbone",
     description="Zero-trust identity exchange, UIS normalization, and agent supply-chain attestation",
     version=APP_VERSION,
     docs_url="/api/docs",
     redoc_url="/api/redoc",
+    lifespan=lifespan,
 )
 
 # Security middleware (order matters — validation runs first, then headers)
@@ -137,10 +145,7 @@ app.add_middleware(
 )
 
 
-# ── Startup ───────────────────────────────────────────────────────────────────
-
-@app.on_event("startup")
-async def startup_checks():
+async def _startup_checks() -> None:
     if DEV_MODE:
         logger.warning("DEV_MODE=true — JWT auth disabled. Not for production.")
     if not OIDC_ISSUER and not DEV_MODE:
