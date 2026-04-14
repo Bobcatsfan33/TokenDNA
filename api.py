@@ -1311,12 +1311,14 @@ async def api_create_policy_bundle(
     config = body.get("config")
     if not isinstance(config, dict):
         raise HTTPException(status_code=400, detail="'config' must be an object")
+    cfg = dict(config)
+    cfg.setdefault("created_by", tenant.api_key_id)
     bundle = policy_bundles.create_bundle(
         tenant_id=tenant.tenant_id,
         name=name,
         version=version,
         description=str(body.get("description", "")).strip(),
-        config=config,
+        config=cfg,
     )
     return {"tenant_id": tenant.tenant_id, "bundle": bundle}
 
@@ -1348,12 +1350,96 @@ async def api_list_policy_bundles(
 @app.post("/api/policy/bundles/{bundle_id}/activate")
 async def api_activate_policy_bundle(
     bundle_id: str,
+    body: dict,
     tenant: TenantContext = Depends(require_role(Role.OWNER)),
 ):
-    bundle = policy_bundles.activate_bundle(tenant.tenant_id, bundle_id)
+    approval_actor_id = str(body.get("approval_actor_id", "")).strip() or None
+    try:
+        bundle = policy_bundles.activate_bundle_with_approval(
+            tenant_id=tenant.tenant_id,
+            bundle_id=bundle_id,
+            actor_id=tenant.api_key_id,
+            approval_actor_id=approval_actor_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if bundle is None:
         raise HTTPException(status_code=404, detail="Policy bundle not found")
     return {"tenant_id": tenant.tenant_id, "bundle": bundle}
+
+
+@app.post("/api/policy/bundles/{bundle_id}/review")
+async def api_review_policy_bundle(
+    bundle_id: str,
+    body: dict,
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    note = str(body.get("note", "")).strip()
+    review = policy_bundles.review_bundle(
+        tenant_id=tenant.tenant_id,
+        bundle_id=bundle_id,
+        actor_id=tenant.api_key_id,
+        note=note,
+    )
+    if review is None:
+        raise HTTPException(status_code=404, detail="Policy bundle not found")
+    return {"tenant_id": tenant.tenant_id, "review": review}
+
+
+@app.post("/api/policy/bundles/{bundle_id}/approve")
+async def api_approve_policy_bundle(
+    bundle_id: str,
+    body: dict,
+    tenant: TenantContext = Depends(require_role(Role.OWNER)),
+):
+    note = str(body.get("note", "")).strip()
+    approval = policy_bundles.approve_bundle(
+        tenant_id=tenant.tenant_id,
+        bundle_id=bundle_id,
+        actor_id=tenant.api_key_id,
+        note=note,
+    )
+    if approval is None:
+        raise HTTPException(status_code=404, detail="Policy bundle not found")
+    return {"tenant_id": tenant.tenant_id, "approval": approval}
+
+
+@app.get("/api/policy/bundles/{bundle_id}/governance-log")
+async def api_policy_bundle_governance_log(
+    bundle_id: str,
+    limit: int = 100,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    bundle = policy_bundles.get_bundle(tenant.tenant_id, bundle_id)
+    if bundle is None:
+        raise HTTPException(status_code=404, detail="Policy bundle not found")
+    rows = policy_bundles.list_governance_log(
+        tenant_id=tenant.tenant_id,
+        bundle_id=bundle_id,
+        limit=min(max(limit, 1), 200),
+    )
+    return {"tenant_id": tenant.tenant_id, "count": len(rows), "events": rows}
+
+
+@app.post("/api/policy/bundles/{bundle_id}/rollback")
+async def api_policy_bundle_rollback(
+    bundle_id: str,
+    tenant: TenantContext = Depends(require_role(Role.OWNER)),
+):
+    bundle = policy_bundles.get_bundle(tenant.tenant_id, bundle_id)
+    if bundle is None:
+        raise HTTPException(status_code=404, detail="Policy bundle not found")
+    try:
+        rolled = policy_bundles.rollback_to_previous_active(
+            tenant_id=tenant.tenant_id,
+            name=str(bundle.get("name") or "edge-default"),
+            actor_id=tenant.api_key_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if rolled is None:
+        raise HTTPException(status_code=400, detail="No previous active bundle available")
+    return {"tenant_id": tenant.tenant_id, "bundle": rolled}
 
 
 @app.post("/api/policy/bundles/simulate")
@@ -1377,6 +1463,12 @@ async def api_simulate_policy_bundle(
         simulation=simulation,
         bundle_config=bundle.get("config", {}),
     )
+    policy_bundles.record_simulation_result(
+        tenant_id=tenant.tenant_id,
+        bundle_id=bundle.get("bundle_id", ""),
+        actor_id=tenant.api_key_id,
+        simulation=result,
+    )
     return {"tenant_id": tenant.tenant_id, "bundle": bundle, "simulation": result}
 
 
@@ -1395,6 +1487,12 @@ async def api_simulate_active_policy_bundle(
     result = policy_bundles.simulate_bundle(
         simulation=simulation,
         bundle_config=bundle.get("config", {}),
+    )
+    policy_bundles.record_simulation_result(
+        tenant_id=tenant.tenant_id,
+        bundle_id=bundle.get("bundle_id", ""),
+        actor_id=tenant.api_key_id,
+        simulation=result,
     )
     return {"tenant_id": tenant.tenant_id, "bundle": bundle, "simulation": result}
 

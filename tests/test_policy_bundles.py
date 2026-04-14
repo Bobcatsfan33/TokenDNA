@@ -66,11 +66,26 @@ def test_policy_bundle_lifecycle_and_activation():
             name="edge-default",
             version="2026.04.14",
             description="baseline",
-            config={"required_scope": ["orders:read"], "expected_action": "allow"},
+            config={
+                "required_scope": ["orders:read"],
+                "expected_action": "allow",
+                "review_required": True,
+                "two_person_activation": True,
+            },
         )
-        assert bundle["status"] == "draft"
-
-        activated = policy_bundles.activate_bundle("tenant-1", bundle["bundle_id"])
+        assert bundle["status"] == "review"
+        policy_bundles.approve_bundle(
+            tenant_id="tenant-1",
+            bundle_id=bundle["bundle_id"],
+            actor_id="approver-seed",
+            note="approve baseline",
+        )
+        activated = policy_bundles.activate_bundle_with_approval(
+            tenant_id="tenant-1",
+            bundle_id=bundle["bundle_id"],
+            actor_id="deployer-seed",
+            approval_actor_id="approver-seed",
+        )
         assert activated is not None
         assert activated["status"] == "active"
         assert activated["activated_at"] is not None
@@ -92,9 +107,25 @@ def test_policy_bundle_simulation_matches_expected_action():
             name="edge-default",
             version="2026.04.14",
             description="baseline",
-            config={"required_scope": ["orders:read"], "expected_action": "allow"},
+            config={
+                "required_scope": ["orders:read"],
+                "expected_action": "allow",
+                "review_required": True,
+                "two_person_activation": True,
+            },
         )
-        policy_bundles.activate_bundle("tenant-1", bundle["bundle_id"])
+        policy_bundles.approve_bundle(
+            tenant_id="tenant-1",
+            bundle_id=bundle["bundle_id"],
+            actor_id="approver-sim",
+            note="approve simulation",
+        )
+        policy_bundles.activate_bundle_with_approval(
+            tenant_id="tenant-1",
+            bundle_id=bundle["bundle_id"],
+            actor_id="deployer-sim",
+            approval_actor_id="approver-sim",
+        )
 
         simulation = {
             "scenarios": [
@@ -121,9 +152,25 @@ def test_policy_bundle_simulation_can_replay_decision_audit_record():
             name="edge-default",
             version="2026.04.15",
             description="replay-bundle",
-            config={"required_scope": ["orders:read"], "expected_action": "allow"},
+            config={
+                "required_scope": ["orders:read"],
+                "expected_action": "allow",
+                "review_required": True,
+                "two_person_activation": True,
+            },
         )
-        policy_bundles.activate_bundle("tenant-1", bundle["bundle_id"])
+        policy_bundles.approve_bundle(
+            tenant_id="tenant-1",
+            bundle_id=bundle["bundle_id"],
+            actor_id="approver-replay",
+            note="approve replay bundle",
+        )
+        policy_bundles.activate_bundle_with_approval(
+            tenant_id="tenant-1",
+            bundle_id=bundle["bundle_id"],
+            actor_id="deployer-replay",
+            approval_actor_id="approver-replay",
+        )
 
         scenario = _scenario()
         # Remove cert to keep replay deterministic and avoid signature/env coupling.
@@ -170,6 +217,77 @@ def test_policy_bundle_simulation_can_replay_decision_audit_record():
         assert replay["previous_decision"]["action"] in {"allow", "step_up", "block"}
         assert replay["replay_decision"]["action"] in {"allow", "step_up", "block"}
         assert "action_changed" in replay["diff"]
+    finally:
+        os.environ.pop("ATTESTATION_CA_SECRET", None)
+        tmp.cleanup()
+
+
+def test_policy_bundle_governance_two_person_activation_and_log():
+    tmp = _setup_tmp_db()
+    try:
+        policy_bundles.init_db()
+        bundle = policy_bundles.create_bundle(
+            tenant_id="tenant-1",
+            name="edge-default",
+            version="2026.04.20",
+            description="governance",
+            config={
+                "required_scope": ["orders:read"],
+                "expected_action": "allow",
+                "review_required": True,
+                "two_person_activation": True,
+                "rollback_guard_seconds": 0,
+                "created_by": "author-1",
+            },
+        )
+        assert bundle["status"] == "review"
+
+        review = policy_bundles.review_bundle(
+            tenant_id="tenant-1",
+            bundle_id=bundle["bundle_id"],
+            actor_id="reviewer-1",
+            note="looks good",
+        )
+        assert review is not None
+        approval = policy_bundles.approve_bundle(
+            tenant_id="tenant-1",
+            bundle_id=bundle["bundle_id"],
+            actor_id="approver-1",
+            note="approved for rollout",
+        )
+        assert approval is not None
+
+        # Same actor as approver is blocked by two-person rule.
+        blocked = False
+        try:
+            policy_bundles.activate_bundle_with_approval(
+                tenant_id="tenant-1",
+                bundle_id=bundle["bundle_id"],
+                actor_id="approver-1",
+            )
+        except ValueError as exc:
+            blocked = str(exc) == "two_person_activation_violation"
+        assert blocked is True
+
+        active = policy_bundles.activate_bundle_with_approval(
+            tenant_id="tenant-1",
+            bundle_id=bundle["bundle_id"],
+            actor_id="deployer-1",
+            approval_actor_id="approver-1",
+        )
+        assert active is not None
+        assert active["status"] == "active"
+        assert active["activated_by"] == "deployer-1"
+
+        logs = policy_bundles.list_governance_log(
+            tenant_id="tenant-1",
+            bundle_id=bundle["bundle_id"],
+            limit=20,
+        )
+        actions = [entry["action"] for entry in logs]
+        assert "reviewed" in actions
+        assert "approved" in actions
+        assert "activated" in actions
     finally:
         os.environ.pop("ATTESTATION_CA_SECRET", None)
         tmp.cleanup()
