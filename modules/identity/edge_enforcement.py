@@ -31,6 +31,30 @@ def _slo_violation_action() -> str:
     return "allow"
 
 
+def with_policy_bundle(
+    *,
+    policy_bundle_config: dict[str, Any] | None,
+    required_scope: list[str] | None,
+) -> tuple[list[str], str | None, float | None, str | None]:
+    config = policy_bundle_config or {}
+    effective_scope = required_scope
+    if not effective_scope:
+        bundle_scope = config.get("required_scope")
+        if isinstance(bundle_scope, list):
+            effective_scope = [str(v) for v in bundle_scope if str(v)]
+    expected_action = str(config.get("expected_action", "")).strip() or None
+    bundle_slo_ms = None
+    if config.get("slo_target_ms") is not None:
+        try:
+            bundle_slo_ms = max(0.001, float(config.get("slo_target_ms")))
+        except Exception:
+            bundle_slo_ms = None
+    bundle_slo_action = str(config.get("slo_violation_action", "")).strip().lower() or None
+    if bundle_slo_action not in {None, "allow", "step_up", "block"}:
+        bundle_slo_action = None
+    return (effective_scope or []), expected_action, bundle_slo_ms, bundle_slo_action
+
+
 def evaluate_runtime_enforcement(
     *,
     uis_event: dict[str, Any],
@@ -40,8 +64,14 @@ def evaluate_runtime_enforcement(
     request_headers: dict[str, str],
     observed_scope: list[str],
     required_scope: list[str] | None = None,
+    policy_bundle_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
+    effective_scope, expected_action, bundle_slo_ms, bundle_slo_action = with_policy_bundle(
+        policy_bundle_config=policy_bundle_config,
+        required_scope=required_scope,
+    )
+
     certificate_verified: bool | None = None
     authn_failure = False
     cert_status: dict[str, Any] | None = None
@@ -76,14 +106,14 @@ def evaluate_runtime_enforcement(
         attestation=attestation,
         drift=drift,
         certificate_verified=certificate_verified,
-        required_scope=required_scope or [],
+        required_scope=effective_scope,
     ).to_dict()
     policy_ms = round((time.perf_counter() - policy_started) * 1000.0, 3)
 
     elapsed_ms = round((time.perf_counter() - started) * 1000.0, 3)
-    slo_target_ms = _slo_target_ms()
+    slo_target_ms = bundle_slo_ms if bundle_slo_ms is not None else _slo_target_ms()
     slo_met = elapsed_ms <= slo_target_ms
-    slo_action = _slo_violation_action()
+    slo_action = bundle_slo_action or _slo_violation_action()
 
     if not slo_met:
         decision["reasons"] = list(decision.get("reasons", [])) + ["edge_slo_exceeded"]
@@ -100,6 +130,16 @@ def evaluate_runtime_enforcement(
             decision["action"] = slo_action
         elif slo_action == "block" and decision.get("action") == "step_up":
             decision["action"] = "block"
+
+    if expected_action and decision.get("action") != expected_action:
+        decision["reasons"] = list(decision.get("reasons", [])) + ["policy_bundle_expected_action_mismatch"]
+        trace = decision.get("policy_trace", {})
+        if isinstance(trace, dict):
+            trace["bundle"] = {
+                "expected_action": expected_action,
+                "actual_action": decision.get("action"),
+            }
+            decision["policy_trace"] = trace
 
     return {
         "decision": decision,

@@ -69,6 +69,7 @@ from modules.identity.certificate_status import build_crl, certificate_status_pa
 from modules.identity.edge_enforcement import evaluate_runtime_enforcement
 from modules.identity.trust_authority import list_key_configs
 from modules.identity.attestation_drift import build_drift_event, DriftAssessment
+from modules.identity import policy_bundles
 from modules.identity import network_intel
 from modules.identity import compliance
 from modules.identity import attestation_store
@@ -143,6 +144,7 @@ async def startup_checks():
     ct_log.init_db()
     network_intel.init_db()
     compliance.init_db()
+    policy_bundles.init_db()
 
     from modules.identity.cache_redis import is_available as redis_ok
     logger.info("Redis: %s", "connected" if redis_ok() else "UNREACHABLE")
@@ -845,6 +847,98 @@ async def api_abac_evaluate(
             ]
 
     return {"tenant_id": tenant.tenant_id, **enforcement}
+
+
+@app.post("/api/policy/bundles")
+async def api_create_policy_bundle(
+    body: dict,
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    name = str(body.get("name", "edge-default")).strip() or "edge-default"
+    version = str(body.get("version", "")).strip()
+    if not version:
+        raise HTTPException(status_code=400, detail="'version' is required")
+    config = body.get("config")
+    if not isinstance(config, dict):
+        raise HTTPException(status_code=400, detail="'config' must be an object")
+    bundle = policy_bundles.create_bundle(
+        tenant_id=tenant.tenant_id,
+        name=name,
+        version=version,
+        description=str(body.get("description", "")).strip(),
+        config=config,
+    )
+    return {"tenant_id": tenant.tenant_id, "bundle": bundle}
+
+
+@app.get("/api/policy/bundles")
+async def api_list_policy_bundles(
+    name: str | None = None,
+    status: str | None = None,
+    limit: int = 50,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    rows = policy_bundles.list_bundles(
+        tenant_id=tenant.tenant_id,
+        name=name,
+        status=status,
+        limit=min(max(limit, 1), 200),
+    )
+    return {"tenant_id": tenant.tenant_id, "count": len(rows), "bundles": rows}
+
+
+@app.post("/api/policy/bundles/{bundle_id}/activate")
+async def api_activate_policy_bundle(
+    bundle_id: str,
+    tenant: TenantContext = Depends(require_role(Role.OWNER)),
+):
+    bundle = policy_bundles.activate_bundle(tenant.tenant_id, bundle_id)
+    if bundle is None:
+        raise HTTPException(status_code=404, detail="Policy bundle not found")
+    return {"tenant_id": tenant.tenant_id, "bundle": bundle}
+
+
+@app.post("/api/policy/bundles/simulate")
+async def api_simulate_policy_bundle(
+    body: dict,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    simulation = body.get("simulation")
+    if not isinstance(simulation, dict):
+        raise HTTPException(status_code=400, detail="'simulation' must be an object")
+    bundle_id = str(body.get("bundle_id", "")).strip()
+    bundle = None
+    if bundle_id:
+        bundle = policy_bundles.get_bundle(tenant.tenant_id, bundle_id)
+    else:
+        bundle_name = str(body.get("name", "edge-default")).strip() or "edge-default"
+        bundle = policy_bundles.get_active_bundle(tenant.tenant_id, bundle_name)
+    if bundle is None:
+        raise HTTPException(status_code=404, detail="Policy bundle not found")
+    result = policy_bundles.simulate_bundle(
+        simulation=simulation,
+        bundle_config=bundle.get("config", {}),
+    )
+    return {"tenant_id": tenant.tenant_id, "bundle": bundle, "simulation": result}
+
+
+@app.post("/api/policy/bundles/active/simulate")
+async def api_simulate_active_policy_bundle(
+    body: dict,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    simulation = body.get("simulation")
+    if not isinstance(simulation, dict):
+        raise HTTPException(status_code=400, detail="'simulation' must be an object")
+    bundle_name = str(body.get("name", "edge-default")).strip() or "edge-default"
+    bundle = policy_bundles.get_active_bundle(tenant.tenant_id, bundle_name)
+    if bundle is None:
+        raise HTTPException(status_code=404, detail="Active policy bundle not found")
+    result = policy_bundles.simulate_bundle(
+        simulation=simulation,
+        bundle_config=bundle.get("config", {}),
+    )
+    return {"tenant_id": tenant.tenant_id, "bundle": bundle, "simulation": result}
 
 
 @app.get("/api/intel/feed")
