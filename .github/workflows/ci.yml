@@ -192,3 +192,24 @@ jobs:
         run: |
           pkill -f "uvicorn api:app" || true
           cat /tmp/tokendna-ci.log || true
+
+  # ── Adversarial security regression lane ───────────────────────────────────
+  adversarial-security:
+    name: Adversarial Security Harness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run adversarial harness (strict)
+        run: python scripts/adversarial_harness.py --strict
+
+      - name: Run adversarial harness tests
+        run: python -m pytest -q tests/test_adversarial_harness.py
