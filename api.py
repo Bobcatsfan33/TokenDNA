@@ -61,14 +61,14 @@ from modules.identity.cache_redis import (
 from modules.identity.scoring import RiskTier
 from modules.identity.token_dna import generate_dna, migrate_dna
 from modules.identity.uis import normalize_from_protocol
-from modules.identity.abac import evaluate_attestation_policy
 from modules.identity.uis_protocol import get_uis_spec, normalize_with_adapter
 from modules.identity.attestation import create_attestation_record
 from modules.identity.mcp_attestation import verify_mcp_server
 from modules.identity.attestation_certificates import issue_certificate, revoke_certificate, verify_certificate
 from modules.identity.certificate_status import build_crl, certificate_status_payload
+from modules.identity.edge_enforcement import evaluate_runtime_enforcement
 from modules.identity.trust_authority import list_key_configs
-from modules.identity.attestation_drift import assess_runtime_drift, build_drift_event
+from modules.identity.attestation_drift import build_drift_event, DriftAssessment
 from modules.identity import network_intel
 from modules.identity import compliance
 from modules.identity import attestation_store
@@ -803,14 +803,48 @@ async def api_abac_evaluate(
     if certificate_verified is not None and not isinstance(certificate_verified, bool):
         raise HTTPException(status_code=400, detail="'certificate_verified' must be a boolean when provided")
 
-    decision = evaluate_attestation_policy(
+    certificate = body.get("certificate")
+    if certificate is not None and not isinstance(certificate, dict):
+        raise HTTPException(status_code=400, detail="'certificate' must be an object when provided")
+    certificate_id = str(body.get("certificate_id", "")).strip()
+    if not certificate_id and isinstance(certificate, dict):
+        certificate_id = str(certificate.get("certificate_id", "")).strip()
+
+    request_headers = body.get("request_headers") or {}
+    if not isinstance(request_headers, dict):
+        raise HTTPException(status_code=400, detail="'request_headers' must be an object when provided")
+    observed_scope = body.get("observed_scope")
+    if observed_scope is None:
+        observed_scope = required_scope or []
+    if not isinstance(observed_scope, list):
+        raise HTTPException(status_code=400, detail="'observed_scope' must be an array when provided")
+
+    if certificate_verified is not None:
+        # Keep backward-compat override path for callers passing pre-verified status.
+        cert_for_eval = certificate
+    else:
+        cert_for_eval = certificate
+
+    enforcement = evaluate_runtime_enforcement(
         uis_event=uis_event,
         attestation=attestation,
-        drift=drift,
-        certificate_verified=certificate_verified,
+        certificate=cert_for_eval,
+        certificate_id=certificate_id,
+        request_headers={str(k).lower(): str(v) for k, v in request_headers.items()},
+        observed_scope=[str(v) for v in observed_scope],
         required_scope=[str(v) for v in (required_scope or [])],
     )
-    return {"tenant_id": tenant.tenant_id, "decision": decision.to_dict()}
+
+    # Optional backward-compatible override.
+    if certificate_verified is not None and enforcement["decision"].get("action") != "block":
+        enforcement["decision"]["policy_trace"]["inputs"]["certificate_verified_override"] = certificate_verified
+        if certificate_verified is False:
+            enforcement["decision"]["action"] = "block"
+            enforcement["decision"]["reasons"] = list(enforcement["decision"].get("reasons", [])) + [
+                "certificate_verification_failed"
+            ]
+
+    return {"tenant_id": tenant.tenant_id, **enforcement}
 
 
 @app.get("/api/intel/feed")
@@ -1212,60 +1246,87 @@ async def secure(
             attestation_store.insert_attestation(tenant_id=tid, record=bootstrap_attestation.to_dict())
         else:
             certificate_id = request.headers.get("x-agent-certificate-id", "")
+            cert = (
+                attestation_store.get_certificate(tenant_id=tid, certificate_id=certificate_id)
+                if certificate_id
+                else None
+            )
+            enforcement = evaluate_runtime_enforcement(
+                uis_event=uis_event,
+                attestation=latest_attestation,
+                certificate=cert,
+                certificate_id=certificate_id,
+                request_headers={k.lower(): str(v) for k, v in request.headers.items()},
+                observed_scope=[str(v) for v in observed_scope],
+                required_scope=[],
+            )
+            decision = enforcement["decision"]
+            drift_dict = enforcement.get("drift")
+
             if certificate_id:
-                cert = attestation_store.get_certificate(tenant_id=tid, certificate_id=certificate_id)
                 if cert is None:
                     raise HTTPException(status_code=401, detail="Agent certificate not found")
-                cert_verification = verify_certificate(cert)
-                if not cert_verification.get("valid", False):
-                    raise HTTPException(status_code=401, detail=f"Invalid agent certificate: {cert_verification.get('reason')}")
                 if cert.get("attestation_id") != latest_attestation.get("attestation_id"):
                     raise HTTPException(status_code=401, detail="Agent certificate does not match latest attestation baseline")
+                if enforcement.get("authn_failure"):
+                    cert_status = enforcement.get("certificate_status") or {}
+                    raise HTTPException(
+                        status_code=401,
+                        detail=f"Invalid agent certificate: {cert_status.get('reason', 'invalid')}",
+                    )
 
-            drift_assessment = assess_runtime_drift(
-                attestation=latest_attestation,
-                request_headers={k.lower(): v for k, v in request.headers.items()},
-                observed_scope=[str(v) for v in observed_scope],
-            )
-            if drift_assessment.is_drift:
+            if drift_dict and float(drift_dict.get("score", 0.0)) > 0:
                 drift_event = build_drift_event(
                     tenant_id=tid,
                     agent_id=agent_id,
                     attestation_id=latest_attestation.get("attestation_id"),
                     certificate_id=certificate_id or None,
-                    assessment=drift_assessment,
+                    assessment=DriftAssessment(
+                        score=float(drift_dict.get("score", 0.0)),
+                        severity=str(drift_dict.get("severity", "none")),
+                        reasons=[str(v) for v in drift_dict.get("reasons", [])],
+                    ),
                     request_id=request_id,
                 )
                 attestation_store.insert_drift_event(tenant_id=tid, event=drift_event)
 
                 log_event(
-                    AuditEventType.THREAT_STEP_UP if drift_assessment.should_step_up else AuditEventType.THREAT_BLOCK,
-                    AuditOutcome.FAILURE if drift_assessment.should_block else AuditOutcome.UNKNOWN,
+                    AuditEventType.THREAT_STEP_UP if decision.get("action") == "step_up" else AuditEventType.THREAT_BLOCK,
+                    AuditOutcome.FAILURE if decision.get("action") == "block" else AuditOutcome.UNKNOWN,
                     tenant_id=tid,
                     subject=user_id,
                     source_ip=ip or "0.0.0.0",
                     resource="/secure",
                     detail={
                         "agent_id": agent_id,
-                        "drift_score": drift_assessment.score,
-                        "drift_reasons": drift_assessment.reasons,
-                        "severity": drift_assessment.severity,
+                        "drift_score": float(drift_dict.get("score", 0.0)),
+                        "drift_reasons": [str(v) for v in drift_dict.get("reasons", [])],
+                        "severity": str(drift_dict.get("severity", "none")),
+                        "timing_ms": enforcement.get("timing", {}),
                     },
                     correlation_id=request_id,
                 )
 
-            if drift_assessment.should_block:
+            if decision.get("action") == "block":
                 raise HTTPException(
                     status_code=403,
                     detail={
                         "status": "blocked",
-                        "message": "Agent attestation drift exceeds policy threshold",
-                        "drift": drift_assessment.to_dict(),
+                        "message": "Agent attestation policy blocked request",
+                        "decision": decision,
+                        "drift": drift_dict,
+                        "timing_ms": enforcement.get("timing", {}),
                     },
                 )
-            if drift_assessment.should_step_up:
+            if decision.get("action") == "step_up":
                 return Response(
-                    content=f'{{"status":"step_up","reason":"agent_drift","score":{breakdown.final_score}}}',
+                    content=(
+                        '{"status":"step_up","reason":"agent_policy","score":'
+                        + str(breakdown.final_score)
+                        + ',"timing_ms":'
+                        + __import__("json").dumps(enforcement.get("timing", {}), separators=(",", ":"))
+                        + "}"
+                    ),
                     status_code=202,
                     media_type="application/json",
                 )
