@@ -89,6 +89,7 @@ from modules.integrations.sdk_wrappers import (
     sdk_create_attestation,
     sdk_normalize_event,
 )
+from modules.product import metering as feature_metering
 from modules.product.feature_gates import PlanTier, evaluate_feature_access, list_feature_matrix
 from modules.storage import db_backend
 from modules.tenants import store as tenant_store
@@ -208,6 +209,7 @@ async def _startup_checks() -> None:
     policy_bundles.init_db()
     decision_audit.init_db()
     trust_federation.init_db()
+    feature_metering.init_db()
 
     from modules.identity.cache_redis import is_available as redis_ok
     logger.info("Redis: %s", "connected" if redis_ok() else "UNREACHABLE")
@@ -363,7 +365,8 @@ async def api_operator_status(
 async def api_product_feature_matrix(
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
 ):
-    plan_value = str(getattr(tenant, "plan", Plan.FREE).value if hasattr(tenant.plan, "value") else tenant.plan).lower()
+    tenant_plan = getattr(tenant, "plan", Plan.FREE)
+    plan_value = str(tenant_plan.value if hasattr(tenant_plan, "value") else tenant_plan).lower()
     plan_tier = PlanTier(plan_value) if plan_value in {p.value for p in PlanTier} else PlanTier.FREE
     return {
         "tenant_id": tenant.tenant_id,
@@ -380,7 +383,8 @@ async def api_evaluate_product_feature(
     feature = str(body.get("feature", "")).strip()
     if not feature:
         raise HTTPException(status_code=400, detail="'feature' is required")
-    plan_value = str(getattr(tenant, "plan", Plan.FREE).value if hasattr(tenant.plan, "value") else tenant.plan).lower()
+    tenant_plan = getattr(tenant, "plan", Plan.FREE)
+    plan_value = str(tenant_plan.value if hasattr(tenant_plan, "value") else tenant_plan).lower()
     plan_tier = PlanTier(plan_value) if plan_value in {p.value for p in PlanTier} else PlanTier.FREE
     result = evaluate_feature_access(
         feature_name=feature,
@@ -1459,6 +1463,15 @@ async def api_simulate_policy_bundle(
         bundle = policy_bundles.get_active_bundle(tenant.tenant_id, bundle_name)
     if bundle is None:
         raise HTTPException(status_code=404, detail="Policy bundle not found")
+    usage = feature_metering.record_usage(
+        tenant_id=tenant.tenant_id,
+        feature_key="policy.simulation.advanced",
+        plan=PlanTier(str(tenant.plan.value) if hasattr(tenant.plan, "value") else str(tenant.plan)),
+        amount=1,
+        detail={"bundle_id": bundle.get("bundle_id"), "api": "/api/policy/bundles/simulate"},
+    )
+    if usage["usage"]["status"] == "blocked":
+        raise HTTPException(status_code=402, detail="feature_usage_limit_exceeded:policy.simulation.advanced")
     result = policy_bundles.simulate_bundle(
         simulation=simulation,
         bundle_config=bundle.get("config", {}),
@@ -1484,6 +1497,15 @@ async def api_simulate_active_policy_bundle(
     bundle = policy_bundles.get_active_bundle(tenant.tenant_id, bundle_name)
     if bundle is None:
         raise HTTPException(status_code=404, detail="Active policy bundle not found")
+    usage = feature_metering.record_usage(
+        tenant_id=tenant.tenant_id,
+        feature_key="policy.simulation.advanced",
+        plan=PlanTier(str(tenant.plan.value) if hasattr(tenant.plan, "value") else str(tenant.plan)),
+        amount=1,
+        detail={"bundle_id": bundle.get("bundle_id"), "api": "/api/policy/bundles/active/simulate"},
+    )
+    if usage["usage"]["status"] == "blocked":
+        raise HTTPException(status_code=402, detail="feature_usage_limit_exceeded:policy.simulation.advanced")
     result = policy_bundles.simulate_bundle(
         simulation=simulation,
         bundle_config=bundle.get("config", {}),
@@ -1542,7 +1564,7 @@ async def api_network_intel_record(
 @app.post("/api/intel/rules")
 async def api_network_intel_upsert_rule(
     body: dict,
-    _tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
 ):
     signal_type = str(body.get("signal_type", "")).strip()
     raw_value = str(body.get("raw_value", "")).strip()
@@ -1553,6 +1575,15 @@ async def api_network_intel_upsert_rule(
         raise HTTPException(status_code=400, detail="'raw_value' is required")
     if mode not in {"suppress", "allow"}:
         raise HTTPException(status_code=400, detail="'mode' must be suppress or allow")
+    usage = feature_metering.record_usage(
+        tenant_id=tenant.tenant_id,
+        feature_key="intel.cross_tenant_controls",
+        plan=PlanTier(str(tenant.plan.value) if hasattr(tenant.plan, "value") else str(tenant.plan)),
+        amount=1,
+        detail={"mode": mode, "api": "/api/intel/rules"},
+    )
+    if usage["usage"]["status"] == "blocked":
+        raise HTTPException(status_code=402, detail="feature_usage_limit_exceeded:intel.cross_tenant_controls")
     rule = network_intel.upsert_suppression_rule(
         signal_type=signal_type,
         raw_value=raw_value,
@@ -1567,8 +1598,9 @@ async def api_network_intel_upsert_rule(
 async def api_network_intel_list_rules(
     mode: str | None = None,
     limit: int = 100,
-    _tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
 ):
+    _ = tenant
     if mode is not None:
         mode = mode.strip().lower()
         if mode not in {"suppress", "allow"}:
@@ -1812,6 +1844,15 @@ async def api_create_compliance_signed_snapshot(
     package = compliance.get_evidence_package(tenant.tenant_id, package_id)
     if package is None:
         raise HTTPException(status_code=404, detail="Evidence package not found")
+    usage = feature_metering.record_usage(
+        tenant_id=tenant.tenant_id,
+        feature_key="compliance.signed_snapshots",
+        plan=PlanTier(str(tenant.plan.value) if hasattr(tenant.plan, "value") else str(tenant.plan)),
+        amount=1,
+        detail={"package_id": package_id, "api": "/api/compliance/evidence/snapshot"},
+    )
+    if usage["usage"]["status"] == "blocked":
+        raise HTTPException(status_code=402, detail="feature_usage_limit_exceeded:compliance.signed_snapshots")
     snapshot = compliance.create_signed_snapshot(
         package=package,
         export_format=export_format,
@@ -1821,6 +1862,38 @@ async def api_create_compliance_signed_snapshot(
     compliance.store_signed_snapshot(snapshot)
     verification = compliance.verify_signed_snapshot(snapshot)
     return {"tenant_id": tenant.tenant_id, "snapshot": snapshot, "verification": verification}
+
+
+@app.get("/api/product/usage")
+async def api_product_usage(
+    month: str | None = None,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    statement = feature_metering.build_usage_statement(
+        tenant_id=tenant.tenant_id,
+        month_bucket=month,
+    )
+    return {"tenant_id": tenant.tenant_id, "statement": statement}
+
+
+@app.post("/api/product/usage/evaluate")
+async def api_product_usage_evaluate(
+    body: dict,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    feature = str(body.get("feature", "")).strip()
+    if not feature:
+        raise HTTPException(status_code=400, detail="'feature' is required")
+    amount = int(body.get("amount", 1))
+    plan = PlanTier(str(tenant.plan.value) if hasattr(tenant.plan, "value") else str(tenant.plan))
+    assessment = feature_metering.evaluate_usage(
+        tenant_id=tenant.tenant_id,
+        feature_key=feature,
+        plan=plan,
+        amount=max(1, amount),
+        month_bucket=(str(body.get("month", "")).strip() or None),
+    )
+    return {"tenant_id": tenant.tenant_id, "assessment": assessment}
 
 
 @app.get("/api/compliance/evidence/snapshots")

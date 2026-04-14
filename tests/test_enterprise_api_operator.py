@@ -19,6 +19,27 @@ def test_feature_gate_module_exposes_plan_tier_and_evaluate():
     assert result["reason"] == "ok"
 
 
+def test_metering_module_usage_evaluation_contract():
+    import tempfile
+    from pathlib import Path
+    from modules.product.metering import evaluate_usage
+    from modules.product.feature_gates import PlanTier
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        os.environ["DATA_DB_PATH"] = str(Path(tmpdir) / "tokendna-metering-contract.db")
+        from modules.product import metering
+        metering.init_db()
+        assessment = evaluate_usage(
+            tenant_id="tenant-1",
+            feature_key="policy.simulation.advanced",
+            plan=PlanTier.STARTER,
+            amount=1,
+        )
+    assert assessment["feature_key"] == "policy.simulation.advanced"
+    assert assessment["plan"] == "starter"
+    assert assessment["status"] in {"ok", "warning", "blocked"}
+
+
 def test_operator_status_payload_shape():
     from api import api_operator_status
 
