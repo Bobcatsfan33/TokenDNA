@@ -61,13 +61,20 @@ from modules.identity.cache_redis import (
 from modules.identity.scoring import RiskTier
 from modules.identity.token_dna import generate_dna, migrate_dna
 from modules.identity.uis import normalize_from_protocol
+from modules.identity.abac import evaluate_attestation_policy
+from modules.identity.uis_protocol import get_uis_spec, normalize_with_adapter
 from modules.identity.attestation import create_attestation_record
 from modules.identity.mcp_attestation import verify_mcp_server
 from modules.identity.attestation_certificates import issue_certificate, revoke_certificate, verify_certificate
 from modules.identity.attestation_drift import assess_runtime_drift, build_drift_event
+from modules.identity import network_intel
+from modules.identity import compliance
 from modules.identity import attestation_store
 from modules.identity import uis_store
+from modules.identity import certificate_transparency as ct_log
 from modules.identity import clickhouse_client
+from modules.integrations.siem_taxii import build_taxii_bundle
+from modules.integrations.idp_events import adapt_idp_event
 from modules.tenants import store as tenant_store
 from modules.tenants.middleware import get_tenant
 from modules.tenants.models import Plan, TenantContext
@@ -131,6 +138,9 @@ async def startup_checks():
     tenant_store.init_db()
     attestation_store.init_db()
     uis_store.init_db()
+    ct_log.init_db()
+    network_intel.init_db()
+    compliance.init_db()
 
     from modules.identity.cache_redis import is_available as redis_ok
     logger.info("Redis: %s", "connected" if redis_ok() else "UNREACHABLE")
@@ -401,6 +411,90 @@ async def api_verify_agent_certificate(
     return {"tenant_id": tenant.tenant_id, "verification": result}
 
 
+@app.get("/api/threat-intel/feed")
+async def api_threat_intel_feed(
+    limit: int = 100,
+    min_tenant_count: int = 2,
+    min_confidence: float = 0.6,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    rows = network_intel.get_feed(
+        limit=min(max(limit, 1), 500),
+        min_tenant_count=max(min_tenant_count, 1),
+        min_confidence=max(min(min_confidence, 1.0), 0.0),
+    )
+    return {"tenant_id": tenant.tenant_id, "count": len(rows), "signals": rows}
+
+
+@app.get("/api/uis/spec")
+async def api_uis_spec(
+    _tenant: TenantContext = Depends(get_tenant),
+):
+    return {"uis_spec": get_uis_spec()}
+
+
+@app.post("/api/uis/adapters/normalize")
+async def api_uis_adapter_normalize(
+    body: dict,
+    request: Request,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    protocol = str(body.get("protocol", "custom"))
+    payload = body.get("payload") or {}
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="'payload' must be an object")
+
+    provided_context = body.get("request_context") or {}
+    if not isinstance(provided_context, dict):
+        raise HTTPException(status_code=400, detail="'request_context' must be an object when provided")
+
+    request_context = {
+        "request_id": str(uuid.uuid4()),
+        "ip": request.client.host if request.client else "",
+        "user_agent": request.headers.get("user-agent", ""),
+        **provided_context,
+    }
+
+    risk_context = body.get("risk_context") or {}
+    if not isinstance(risk_context, dict):
+        raise HTTPException(status_code=400, detail="'risk_context' must be an object when provided")
+
+    event = normalize_with_adapter(
+        protocol=protocol,
+        tenant_id=tenant.tenant_id,
+        tenant_name=tenant.tenant_name,
+        payload=payload,
+        request_context=request_context,
+        risk_context=risk_context,
+    )
+    uis_store.insert_event(tenant_id=tenant.tenant_id, event=event)
+    return {"tenant_id": tenant.tenant_id, "uis_event": event}
+
+
+@app.get("/api/attestation/spec")
+async def api_attestation_protocol_spec(
+    _tenant: TenantContext = Depends(get_tenant),
+):
+    return {
+        "version": "1.0",
+        "record_dimensions": {
+            "who": ["agent_id", "created_by", "owner_org"],
+            "what": ["soul_hash", "directive_hashes", "model_fingerprint", "mcp_manifest_hash"],
+            "how": ["auth_method", "dpop_bound", "mtls_bound", "behavior_confidence"],
+            "why": ["declared_purpose", "scope", "delegation_chain", "policy_trace_id"],
+        },
+        "certificate_fields": [
+            "certificate_id", "tenant_id", "attestation_id", "issuer", "subject",
+            "issued_at", "expires_at", "signature_alg", "ca_key_id",
+            "status", "revoked_at", "revocation_reason", "claims", "signature",
+        ],
+        "transparency_log": {
+            "actions": ["issued", "revoked"],
+            "integrity_fields": ["previous_entry_hash", "entry_hash", "merkle_root"],
+        },
+    }
+
+
 @app.post("/api/agent/certificates/issue")
 async def api_issue_agent_certificate(
     body: dict,
@@ -431,7 +525,14 @@ async def api_issue_agent_certificate(
         ttl_hours=int(body.get("certificate_ttl_hours", 24)),
     )
     attestation_store.insert_certificate(tenant_id=tenant.tenant_id, certificate=cert)
-    return {"tenant_id": tenant.tenant_id, "certificate": cert}
+    ct_entry = ct_log.append_log_entry(
+        tenant_id=tenant.tenant_id,
+        certificate_id=cert["certificate_id"],
+        attestation_id=attestation_id,
+        action="issued",
+        payload=cert,
+    )
+    return {"tenant_id": tenant.tenant_id, "certificate": cert, "transparency_log_entry": ct_entry}
 
 
 @app.get("/api/agent/certificates/{certificate_id}")
@@ -475,6 +576,17 @@ async def api_revoke_agent_certificate(
 
     revoked = revoke_certificate(existing, reason=str(body.get("reason") or "manual_revoke"))
     attestation_store.insert_certificate(tenant_id=tenant.tenant_id, certificate=revoked)
+    ct_entry = ct_log.append_log_entry(
+        tenant_id=tenant.tenant_id,
+        certificate_id=certificate_id,
+        attestation_id=str(revoked.get("attestation_id", "")),
+        action="revoked",
+        payload={
+            "reason": revoked.get("revocation_reason"),
+            "status": revoked.get("status"),
+            "revoked_at": revoked.get("revoked_at"),
+        },
+    )
     log_event(
         AuditEventType.CONFIG_CHANGED,
         AuditOutcome.SUCCESS,
@@ -483,7 +595,27 @@ async def api_revoke_agent_certificate(
         resource=f"certificate:{certificate_id}",
         detail={"action": "revoke_certificate", "reason": revoked.get("revocation_reason")},
     )
-    return {"tenant_id": tenant.tenant_id, "certificate": revoked}
+    return {"tenant_id": tenant.tenant_id, "certificate": revoked, "transparency_log_entry": ct_entry}
+
+
+@app.get("/api/agent/certificates/transparency-log")
+async def api_certificate_transparency_log(
+    limit: int = 100,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    rows = ct_log.list_log_entries(
+        tenant_id=tenant.tenant_id,
+        limit=min(max(limit, 1), 500),
+    )
+    return {"tenant_id": tenant.tenant_id, "count": len(rows), "entries": rows}
+
+
+@app.get("/api/agent/certificates/transparency-log/verify")
+async def api_verify_certificate_transparency_log(
+    tenant: TenantContext = Depends(get_tenant),
+):
+    result = ct_log.verify_log_integrity(tenant_id=tenant.tenant_id)
+    return {"tenant_id": tenant.tenant_id, "integrity": result}
 
 
 @app.get("/api/uis/events")
@@ -570,6 +702,281 @@ async def api_list_agent_drift_events(
     return {"tenant_id": tenant.tenant_id, "count": len(rows), "events": rows}
 
 
+@app.post("/api/abac/evaluate")
+async def api_abac_evaluate(
+    body: dict,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    uis_event = body.get("uis_event")
+    if not isinstance(uis_event, dict):
+        raise HTTPException(status_code=400, detail="'uis_event' must be an object")
+
+    attestation = body.get("attestation")
+    if attestation is not None and not isinstance(attestation, dict):
+        raise HTTPException(status_code=400, detail="'attestation' must be an object when provided")
+
+    drift = body.get("drift")
+    if drift is not None and not isinstance(drift, dict):
+        raise HTTPException(status_code=400, detail="'drift' must be an object when provided")
+
+    required_scope = body.get("required_scope")
+    if required_scope is not None and not isinstance(required_scope, list):
+        raise HTTPException(status_code=400, detail="'required_scope' must be an array when provided")
+
+    certificate_verified = body.get("certificate_verified")
+    if certificate_verified is not None and not isinstance(certificate_verified, bool):
+        raise HTTPException(status_code=400, detail="'certificate_verified' must be a boolean when provided")
+
+    decision = evaluate_attestation_policy(
+        uis_event=uis_event,
+        attestation=attestation,
+        drift=drift,
+        certificate_verified=certificate_verified,
+        required_scope=[str(v) for v in (required_scope or [])],
+    )
+    return {"tenant_id": tenant.tenant_id, "decision": decision.to_dict()}
+
+
+@app.get("/api/intel/feed")
+async def api_network_intel_feed(
+    limit: int = 100,
+    min_tenant_count: int = 2,
+    min_confidence: float = 0.6,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    rows = network_intel.get_feed(
+        limit=min(max(limit, 1), 500),
+        min_tenant_count=max(min_tenant_count, 1),
+        min_confidence=max(min(min_confidence, 1.0), 0.0),
+    )
+    return {"tenant_id": tenant.tenant_id, "count": len(rows), "feed": rows}
+
+
+@app.post("/api/intel/record")
+async def api_network_intel_record(
+    body: dict,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    signal_type = str(body.get("signal_type", "")).strip()
+    raw_value = str(body.get("raw_value", "")).strip()
+    if not signal_type:
+        raise HTTPException(status_code=400, detail="'signal_type' is required")
+    if not raw_value:
+        raise HTTPException(status_code=400, detail="'raw_value' is required")
+
+    metadata = body.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        raise HTTPException(status_code=400, detail="'metadata' must be an object when provided")
+
+    record = network_intel.record_signal(
+        tenant_id=tenant.tenant_id,
+        signal_type=signal_type,
+        raw_value=raw_value,
+        severity=str(body.get("severity") or "medium"),
+        confidence=float(body.get("confidence", 0.5)),
+        metadata=metadata,
+    )
+    return {"tenant_id": tenant.tenant_id, "signal": record}
+
+
+@app.post("/api/intel/assess")
+async def api_network_intel_assess(
+    body: dict,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    candidates = body.get("candidates")
+    if not isinstance(candidates, list):
+        raise HTTPException(status_code=400, detail="'candidates' must be an array")
+    normalized: list[dict[str, str]] = []
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        signal_type = str(item.get("signal_type", "")).strip()
+        raw_value = str(item.get("raw_value", "")).strip()
+        if not signal_type or not raw_value:
+            continue
+        normalized.append({"signal_type": signal_type, "raw_value": raw_value})
+
+    assessment = network_intel.assess_runtime_penalty(normalized)
+    return {"tenant_id": tenant.tenant_id, "assessment": assessment}
+
+
+@app.get("/api/intel/feed/taxii")
+async def api_network_intel_feed_taxii(
+    limit: int = 100,
+    min_tenant_count: int = 2,
+    min_confidence: float = 0.6,
+    _tenant: TenantContext = Depends(get_tenant),
+):
+    rows = network_intel.get_feed(
+        limit=min(max(limit, 1), 500),
+        min_tenant_count=max(min_tenant_count, 1),
+        min_confidence=max(min(min_confidence, 1.0), 0.0),
+    )
+    return {"taxii_bundle": build_taxii_bundle(rows)}
+
+
+@app.post("/api/integrations/idp/normalize")
+async def api_integrations_idp_normalize(
+    body: dict,
+    request: Request,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    provider = str(body.get("provider", "")).strip().lower()
+    event = body.get("event")
+    if not provider:
+        raise HTTPException(status_code=400, detail="'provider' is required")
+    if not isinstance(event, dict):
+        raise HTTPException(status_code=400, detail="'event' must be an object")
+
+    adapted_claims = adapt_idp_event(provider, event)
+    normalized_event = normalize_with_adapter(
+        protocol="oidc",
+        tenant_id=tenant.tenant_id,
+        tenant_name=tenant.tenant_name,
+        payload=adapted_claims,
+        request_context={
+            "request_id": str(uuid.uuid4()),
+            "ip": request.client.host if request.client else "",
+            "user_agent": request.headers.get("user-agent", ""),
+            "integration_provider": provider,
+        },
+        risk_context=body.get("risk_context") if isinstance(body.get("risk_context"), dict) else {},
+    )
+    uis_store.insert_event(tenant_id=tenant.tenant_id, event=normalized_event)
+    return {"tenant_id": tenant.tenant_id, "provider": provider, "uis_event": normalized_event}
+
+
+@app.get("/api/oss/onboarding")
+async def api_oss_onboarding(
+    _tenant: TenantContext = Depends(get_tenant),
+):
+    return {
+        "cli_commands": [
+            'python3 bin/tokendna-cli.py uis-spec',
+            'python3 bin/tokendna-cli.py normalize --protocol oidc --tenant-id demo --tenant-name Demo --payload-json \'{"sub":"user-1","iss":"issuer","aud":"tokendna","jti":"j1"}\'',
+        ],
+        "developer_flow": [
+            "Use UIS spec endpoint or CLI to understand schema contracts",
+            "Normalize IdP or protocol events into UIS via adapter endpoint",
+            "Use attestation APIs to create baseline and issue certificates",
+            "Verify certs and monitor drift events in runtime",
+            "Graduate to managed enforcement via /secure policy checks",
+        ],
+        "integration_endpoints": [
+            "/api/integrations/idp/normalize",
+            "/api/intel/feed/taxii",
+            "/api/uis/adapters/normalize",
+            "/api/agent/certificates/issue",
+        ],
+    }
+
+
+@app.get("/api/integrations/catalog")
+async def api_integrations_catalog(
+    _tenant: TenantContext = Depends(get_tenant),
+):
+    return {
+        "siem_soar": [
+            {
+                "name": "STIX/TAXII feed",
+                "endpoint": "/api/intel/feed/taxii",
+                "description": "Consume TokenDNA anonymized threat intel as STIX bundle",
+            },
+            {
+                "name": "UIS event ingestion",
+                "endpoint": "/api/uis/adapters/normalize",
+                "description": "Normalize protocol/provider payloads into UIS",
+            },
+        ],
+        "idp": [
+            {
+                "name": "Okta/Entra event adapter",
+                "endpoint": "/api/integrations/idp/normalize",
+                "description": "Translate IdP event formats into UIS-normalized identity events",
+            }
+        ],
+        "agent_security": [
+            {
+                "name": "Attestation + trust authority",
+                "endpoints": [
+                    "/api/agent/attest",
+                    "/api/agent/certificates/issue",
+                    "/api/agent/certificates/verify",
+                    "/api/agent/certificates/revoke",
+                    "/api/agent/certificates/transparency-log",
+                ],
+            },
+            {
+                "name": "Runtime enforcement",
+                "endpoints": ["/secure", "/api/abac/evaluate", "/api/agent/drift/assess"],
+            },
+        ],
+    }
+
+
+@app.get("/api/compliance/frameworks")
+async def api_compliance_frameworks(
+    _tenant: TenantContext = Depends(get_tenant),
+):
+    return {"frameworks": sorted(list(compliance.CONTROL_MAPS.keys()))}
+
+
+@app.get("/api/compliance/controls/{framework}")
+async def api_compliance_controls(
+    framework: str,
+    _tenant: TenantContext = Depends(get_tenant),
+):
+    return {"control_map": compliance.build_control_map(framework)}
+
+
+@app.post("/api/compliance/evidence/generate")
+async def api_generate_compliance_evidence(
+    body: dict,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    framework = str(body.get("framework", "")).strip().lower()
+    if not framework:
+        raise HTTPException(status_code=400, detail="'framework' is required")
+    if framework not in compliance.CONTROL_MAPS:
+        raise HTTPException(status_code=400, detail=f"Unsupported framework '{framework}'")
+
+    uis_events = uis_store.list_events(tenant_id=tenant.tenant_id, limit=1000)
+    attestations = attestation_store.list_attestations(tenant_id=tenant.tenant_id, limit=1000)
+    certificates = attestation_store.list_certificates(tenant_id=tenant.tenant_id, limit=1000)
+    drift_events = attestation_store.list_drift_events(tenant_id=tenant.tenant_id, limit=1000)
+    threat_signals = network_intel.get_feed(limit=1000, min_tenant_count=1, min_confidence=0.0)
+
+    package = compliance.generate_evidence_package(
+        tenant_id=tenant.tenant_id,
+        framework=framework,
+        inputs={
+            "uis_event_count": len(uis_events),
+            "attestation_count": len(attestations),
+            "certificate_count": len(certificates),
+            "revoked_certificate_count": len([c for c in certificates if c.get("status") == "revoked"]),
+            "drift_event_count": len(drift_events),
+            "threat_signal_count": len(threat_signals),
+        },
+    )
+    compliance.store_evidence_package(package)
+    return {"tenant_id": tenant.tenant_id, "evidence_package": package}
+
+
+@app.get("/api/compliance/evidence/packages")
+async def api_list_compliance_evidence_packages(
+    framework: str | None = None,
+    limit: int = 50,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    rows = compliance.list_evidence_packages(
+        tenant_id=tenant.tenant_id,
+        framework=framework.lower() if framework else None,
+        limit=min(max(limit, 1), 200),
+    )
+    return {"tenant_id": tenant.tenant_id, "count": len(rows), "packages": rows}
+
+
 # ── Main integrity check ──────────────────────────────────────────────────────
 
 @app.get("/secure")
@@ -630,7 +1037,19 @@ async def secure(
     # ── 4. Score ──────────────────────────────────────────────────────────────
     ml_score     = ml_model.score(user_id, current, redis=tr)
     graph_result = session_graph.detect_anomalies(user_id, current, geo, redis=tr)
-    breakdown    = scoring.compute(ml_score, threat, graph_result)
+    network_signal_candidates = [
+        {"signal_type": "ip_hash", "raw_value": current.get("ip", "")},
+        {"signal_type": "device_hash", "raw_value": current.get("device", "")},
+        {"signal_type": "asn", "raw_value": current.get("asn", "")},
+    ]
+    network_assessment = network_intel.assess_runtime_penalty(network_signal_candidates)
+    breakdown = scoring.compute(
+        ml_score,
+        threat,
+        graph_result,
+        network_penalty=network_assessment.get("penalty", 0),
+        network_reasons=network_assessment.get("reasons", []),
+    )
 
     uis_event = normalize_from_protocol(
         protocol="oidc",
@@ -648,6 +1067,26 @@ async def secure(
         },
     )
     uis_store.insert_event(tenant_id=tenant.tenant_id, event=uis_event)
+    # Record high-confidence malicious indicators to bootstrap network effects.
+    if breakdown.tier in {RiskTier.BLOCK, RiskTier.REVOKE}:
+        if current.get("ip"):
+            network_intel.record_signal(
+                tenant_id=tid,
+                signal_type="ip_hash",
+                raw_value=current["ip"],
+                severity="high" if breakdown.tier == RiskTier.BLOCK else "critical",
+                confidence=0.7 if breakdown.tier == RiskTier.BLOCK else 0.9,
+                metadata={"tier": breakdown.tier.value, "reasons": breakdown.reasons},
+            )
+        if current.get("device"):
+            network_intel.record_signal(
+                tenant_id=tid,
+                signal_type="device_hash",
+                raw_value=current["device"],
+                severity="high" if breakdown.tier == RiskTier.BLOCK else "critical",
+                confidence=0.65 if breakdown.tier == RiskTier.BLOCK else 0.85,
+                metadata={"tier": breakdown.tier.value, "reasons": breakdown.reasons},
+            )
 
     # Optional agent policy hook for machine identities.
     agent_id = request.headers.get("x-agent-id")

@@ -99,3 +99,18 @@ def test_issue_certificate_includes_signature_metadata():
     assert cert["signature_alg"] in {"HS256", "RS256"}
     assert "ca_key_id" in cert
 
+
+def test_verify_certificate_reports_signature_alg():
+    cert = issue_certificate(
+        tenant_id="tenant-1",
+        attestation_id="att-6",
+        subject="agent-6",
+        issuer="TokenDNA Trust Authority",
+        claims={"integrity_digest": "abc"},
+        ttl_hours=1,
+        secret="test-secret",
+    )
+    result = verify_certificate(cert, secret="test-secret")
+    assert result["valid"] is True
+    assert result["signature_alg"] in {"HS256", "RS256"}
+

@@ -16,9 +16,9 @@ import hmac
 import json
 import os
 import uuid
-from base64 import urlsafe_b64decode, urlsafe_b64encode
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from modules.identity.trust_authority import build_signer
 
 
 DEFAULT_TTL_HOURS = 24
@@ -40,81 +40,8 @@ def _signing_alg() -> str:
     return alg
 
 
-def _b64url_encode(value: bytes) -> str:
-    return urlsafe_b64encode(value).rstrip(b"=").decode("utf-8")
-
-
-def _b64url_decode(value: str) -> bytes:
-    padded = value + "=" * ((4 - len(value) % 4) % 4)
-    return urlsafe_b64decode(padded.encode("utf-8"))
-
-
-def _rsa_private_key_pem() -> str | None:
-    pem = os.getenv("ATTESTATION_CA_PRIVATE_KEY_PEM", "").strip()
-    return pem or None
-
-
-def _rsa_public_key_pem() -> str | None:
-    pem = os.getenv("ATTESTATION_CA_PUBLIC_KEY_PEM", "").strip()
-    return pem or None
-
-
 def _canonical_payload(payload: dict[str, Any]) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
-
-
-def _sign_hs256(payload: dict[str, Any], secret: str) -> str:
-    message = _canonical_payload(payload).encode("utf-8")
-    key = secret.encode("utf-8")
-    digest = hmac.new(key, message, hashlib.sha256).digest()
-    return _b64url_encode(digest)
-
-
-def _sign_rs256(payload: dict[str, Any], private_key_pem: str) -> str:
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import padding
-
-    private_key = serialization.load_pem_private_key(
-        private_key_pem.encode("utf-8"),
-        password=None,
-    )
-    signature = private_key.sign(
-        _canonical_payload(payload).encode("utf-8"),
-        padding.PKCS1v15(),
-        hashes.SHA256(),
-    )
-    return _b64url_encode(signature)
-
-
-def _verify_hs256(payload: dict[str, Any], signature: str, secret: str) -> bool:
-    expected = _sign_hs256(payload, secret)
-    return hmac.compare_digest(signature, expected)
-
-
-def _verify_rs256(payload: dict[str, Any], signature: str, public_key_pem: str | None, private_key_pem: str | None) -> bool:
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import padding
-
-    key_pem = public_key_pem or private_key_pem
-    if not key_pem:
-        return False
-
-    loaded_key = serialization.load_pem_private_key(
-        key_pem.encode("utf-8"), password=None
-    ) if "PRIVATE KEY" in key_pem else serialization.load_pem_public_key(key_pem.encode("utf-8"))
-
-    public_key = loaded_key.public_key() if hasattr(loaded_key, "public_key") else loaded_key
-
-    try:
-        public_key.verify(
-            _b64url_decode(signature),
-            _canonical_payload(payload).encode("utf-8"),
-            padding.PKCS1v15(),
-            hashes.SHA256(),
-        )
-        return True
-    except Exception:
-        return False
 
 
 def issue_certificate(
@@ -130,6 +57,7 @@ def issue_certificate(
     now = _utc_now()
     expires = now + timedelta(hours=max(1, int(ttl_hours)))
     certificate_id = uuid.uuid4().hex
+    signer = build_signer()
     signing_alg = _signing_alg()
     ca_key_id = os.getenv("ATTESTATION_CA_KEY_ID", "tokendna-ca-default")
 
@@ -148,16 +76,10 @@ def issue_certificate(
         "revoked_at": None,
         "revocation_reason": None,
     }
-    if signing_alg == "RS256":
-        private_pem = _rsa_private_key_pem()
-        if not private_pem:
-            # Safe fallback for environments that have not yet provisioned RSA keys.
-            payload["signature_alg"] = "HS256"
-            signature = _sign_hs256(payload, secret or _secret())
-        else:
-            signature = _sign_rs256(payload, private_pem)
-    else:
-        signature = _sign_hs256(payload, secret or _secret())
+    sign_result = signer.sign(payload)
+    payload["signature_alg"] = sign_result.algorithm
+    payload["ca_key_id"] = sign_result.key_id
+    signature = signer.sign(payload).signature
     return {**payload, "signature": signature}
 
 
@@ -169,17 +91,13 @@ def revoke_certificate(certificate: dict[str, Any], reason: str, *, secret: str 
     # Lifecycle metadata is part of the signed payload; re-sign after mutation.
     payload = dict(updated)
     payload.pop("signature", None)
-    alg = str(payload.get("signature_alg", DEFAULT_SIGNING_ALG)).upper()
-    if alg == "RS256":
-        private_pem = _rsa_private_key_pem()
-        if private_pem:
-            updated["signature"] = _sign_rs256(payload, private_pem)
-        else:
-            payload["signature_alg"] = "HS256"
-            updated["signature_alg"] = "HS256"
-            updated["signature"] = _sign_hs256(payload, secret or _secret())
-    else:
-        updated["signature"] = _sign_hs256(payload, secret or _secret())
+    signer = build_signer()
+    sign_result = signer.sign(payload)
+    updated["signature_alg"] = sign_result.algorithm
+    updated["ca_key_id"] = sign_result.key_id
+    payload["signature_alg"] = sign_result.algorithm
+    payload["ca_key_id"] = sign_result.key_id
+    updated["signature"] = signer.sign(payload).signature
     return updated
 
 
@@ -208,15 +126,7 @@ def verify_certificate(
     provided_sig = payload.pop("signature")
     alg = str(certificate.get("signature_alg", DEFAULT_SIGNING_ALG)).upper()
 
-    if alg == "RS256":
-        sig_ok = _verify_rs256(
-            payload,
-            provided_sig,
-            _rsa_public_key_pem(),
-            _rsa_private_key_pem(),
-        )
-    else:
-        sig_ok = _verify_hs256(payload, provided_sig, secret or _secret())
+    sig_ok = build_signer().verify(payload, provided_sig)
 
     if not sig_ok:
         return {"valid": False, "reason": "invalid_signature"}

@@ -46,6 +46,7 @@ class ScoreBreakdown:
     final_score:     int = 100
     tier:            RiskTier = RiskTier.ALLOW
     reasons:         list[str] = field(default_factory=list)
+    network_penalty: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -55,6 +56,7 @@ class ScoreBreakdown:
             "final_score":    self.final_score,
             "tier":           self.tier.value,
             "reasons":        self.reasons,
+            "network_penalty": self.network_penalty,
         }
 
 
@@ -73,6 +75,8 @@ def compute(
     ml_score: int,
     threat_context=None,   # ThreatContext | None
     graph_result=None,     # GraphAnomalyResult | None
+    network_penalty: int = 0,
+    network_reasons: list[str] | None = None,
 ) -> ScoreBreakdown:
     """
     Compute the final risk score and tier from all available signals.
@@ -111,9 +115,13 @@ def compute(
             bd.graph_penalty += _BRANCHING_PENALTY
             bd.reasons.append("session_branching")
 
+    bd.network_penalty = max(int(network_penalty), 0)
+    if network_reasons:
+        bd.reasons.extend(network_reasons)
+
     # ── Final score ───────────────────────────────────────────────────────────
     bd.final_score = max(
-        ml_score - bd.threat_penalty - bd.graph_penalty,
+        ml_score - bd.threat_penalty - bd.graph_penalty - bd.network_penalty,
         0,
     )
 
