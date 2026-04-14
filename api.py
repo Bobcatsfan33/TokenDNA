@@ -103,6 +103,20 @@ APP_VERSION = "2.5.0"
 
 _DASHBOARD_PATH = Path(__file__).parent / "dashboard" / "index.html"
 
+
+def _encode_cursor(value: str) -> str:
+    return __import__("base64").urlsafe_b64encode(value.encode("utf-8")).decode("utf-8")
+
+
+def _decode_cursor(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        raw = __import__("base64").urlsafe_b64decode(value.encode("utf-8"))
+        return raw.decode("utf-8")
+    except Exception:
+        return None
+
 app = FastAPI(
     title="TokenDNA Identity Backbone",
     description="Zero-trust identity exchange, UIS normalization, and agent supply-chain attestation",
@@ -269,6 +283,39 @@ async def api_health_detail(_tenant: TenantContext = Depends(get_tenant)):
     }
 
 
+@app.get("/api/operator/status")
+async def api_operator_status(
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    from modules.identity.cache_redis import is_available as redis_ok
+
+    dependencies = {
+        "sqlite": {"ok": True},
+        "redis": {"ok": redis_ok()},
+        "clickhouse": {"ok": clickhouse_client.is_available()},
+    }
+    slo = {
+        "edge_decision_ms": {
+            "target": float(os.getenv("EDGE_DECISION_SLO_MS", "5")),
+        },
+        "rate_limit_per_minute": {
+            "target": RATE_LIMIT_PER_MINUTE,
+        },
+    }
+    posture = {
+        "fips_active": fips.is_active(),
+        "environment": os.getenv("ENVIRONMENT", "dev"),
+        "dev_mode": DEV_MODE,
+    }
+    return {
+        "tenant_id": tenant.tenant_id,
+        "version": APP_VERSION,
+        "dependencies": dependencies,
+        "slo": slo,
+        "posture": posture,
+    }
+
+
 # ── Consolidation endpoints: UIS + Agent Attestation + MCP Verification ──────
 
 @app.post("/api/uis/normalize")
@@ -380,16 +427,25 @@ async def api_mcp_verify(
 
 @app.get("/api/agent/attestations")
 async def api_list_agent_attestations(
-    limit: int = 50,
+    page_size: int = 50,
     agent_id: str | None = None,
-    tenant: TenantContext = Depends(get_tenant),
+    cursor: str | None = None,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
 ):
-    rows = attestation_store.list_attestations(
+    page = attestation_store.list_attestations_paginated(
         tenant_id=tenant.tenant_id,
-        limit=min(max(limit, 1), 200),
+        page_size=min(max(page_size, 1), 200),
+        cursor=cursor,
         agent_id=agent_id,
     )
-    return {"tenant_id": tenant.tenant_id, "count": len(rows), "attestations": rows}
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(page["items"]),
+        "attestations": page["items"],
+        "next_cursor": page["next_cursor"],
+        "has_more": page["has_more"],
+        "page_size": page["page_size"],
+    }
 
 
 @app.get("/api/agent/attestations/{attestation_id}")
@@ -670,15 +726,25 @@ async def api_list_agent_certificates(
     limit: int = 50,
     subject: str | None = None,
     status: str | None = None,
-    tenant: TenantContext = Depends(get_tenant),
+    cursor: str | None = None,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
 ):
-    rows = attestation_store.list_certificates(
+    page = attestation_store.list_certificates_paginated(
         tenant_id=tenant.tenant_id,
-        limit=min(max(limit, 1), 200),
+        page_size=min(max(limit, 1), 200),
+        cursor=cursor,
         subject=subject,
         status=status,
     )
-    return {"tenant_id": tenant.tenant_id, "count": len(rows), "certificates": rows}
+    rows = page["items"]
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(rows),
+        "certificates": rows,
+        "next_cursor": page["next_cursor"],
+        "has_more": page["has_more"],
+        "page_size": page["page_size"],
+    }
 
 
 @app.get("/api/agent/certificates/status/{certificate_id}")
@@ -815,14 +881,23 @@ async def api_verify_certificate_transparency_log(
 async def api_list_uis_events(
     limit: int = 50,
     subject: str | None = None,
-    tenant: TenantContext = Depends(get_tenant),
+    cursor: str | None = None,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
 ):
-    rows = uis_store.list_events(
+    decoded = _decode_cursor(cursor)
+    rows, next_ts = uis_store.list_events_with_cursor(
         tenant_id=tenant.tenant_id,
         limit=min(max(limit, 1), 200),
         subject=subject,
+        before_event_timestamp=decoded,
     )
-    return {"tenant_id": tenant.tenant_id, "count": len(rows), "events": rows}
+    next_cursor = _encode_cursor(next_ts) if next_ts else None
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(rows),
+        "events": rows,
+        "next_cursor": next_cursor,
+    }
 
 
 @app.get("/api/uis/events/{event_id}")
@@ -885,14 +960,22 @@ async def api_assess_agent_drift(
 async def api_list_agent_drift_events(
     limit: int = 100,
     agent_id: str | None = None,
-    tenant: TenantContext = Depends(get_tenant),
+    cursor: str | None = None,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
 ):
-    rows = attestation_store.list_drift_events(
+    page = attestation_store.list_drift_events_paginated(
         tenant_id=tenant.tenant_id,
-        limit=min(max(limit, 1), 500),
+        page_size=min(max(limit, 1), 500),
+        cursor=cursor,
         agent_id=agent_id,
     )
-    return {"tenant_id": tenant.tenant_id, "count": len(rows), "events": rows}
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(page["items"]),
+        "events": page["items"],
+        "next_cursor": page["next_cursor"],
+        "has_more": page["has_more"],
+    }
 
 
 @app.post("/api/abac/evaluate")
@@ -991,15 +1074,23 @@ async def api_list_policy_bundles(
     name: str | None = None,
     status: str | None = None,
     limit: int = 50,
+    cursor: str | None = None,
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
 ):
-    rows = policy_bundles.list_bundles(
+    page = policy_bundles.list_bundles_paginated(
         tenant_id=tenant.tenant_id,
         name=name,
         status=status,
-        limit=min(max(limit, 1), 200),
+        page_size=min(max(limit, 1), 200),
+        cursor=cursor,
     )
-    return {"tenant_id": tenant.tenant_id, "count": len(rows), "bundles": rows}
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(page["items"]),
+        "bundles": page["items"],
+        "next_cursor": page["next_cursor"],
+        "has_more": page["has_more"],
+    }
 
 
 @app.post("/api/policy/bundles/{bundle_id}/activate")

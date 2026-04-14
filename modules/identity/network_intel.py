@@ -625,6 +625,44 @@ def apply_decay(*, older_than_days: int | None = None) -> dict[str, Any]:
     return {"decayed": decayed, "removed": removed, "cutoff": cutoff}
 
 
+def status() -> dict[str, Any]:
+    with _cursor() as cur:
+        signal_count = int(cur.execute("SELECT COUNT(*) AS cnt FROM network_intel_signals").fetchone()["cnt"])
+        observation_count = int(cur.execute("SELECT COUNT(*) AS cnt FROM network_intel_observations").fetchone()["cnt"])
+        rule_count = int(cur.execute("SELECT COUNT(*) AS cnt FROM network_intel_rules").fetchone()["cnt"])
+        active_rule_count = int(
+            cur.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM network_intel_rules
+                WHERE expires_at IS NULL OR expires_at >= ?
+                """,
+                (_iso_now(),),
+            ).fetchone()["cnt"]
+        )
+        latest_signal_row = cur.execute(
+            """
+            SELECT last_seen
+            FROM network_intel_signals
+            ORDER BY last_seen DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    return {
+        "signals": signal_count,
+        "observations": observation_count,
+        "rules": rule_count,
+        "active_rules": active_rule_count,
+        "latest_signal_at": latest_signal_row["last_seen"] if latest_signal_row else None,
+        "decay_days": _decay_days(),
+        "anti_poisoning": {
+            "min_observations": _min_observation_count(),
+            "min_tenants": _anti_poisoning_tenant_threshold(),
+            "confidence_threshold": _anti_poisoning_threshold(),
+        },
+    }
+
+
 def upsert_suppression_rule(
     *,
     signal_type: str,

@@ -4,6 +4,7 @@ TokenDNA -- Versioned policy bundle store and simulation utilities.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sqlite3
@@ -24,6 +25,26 @@ def _db_path() -> str:
 
 def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _encode_cursor(created_at: str, bundle_id: str) -> str:
+    raw = f"{created_at}|{bundle_id}".encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("utf-8")
+
+
+def _decode_cursor(cursor: str | None) -> tuple[str, str] | None:
+    if not cursor:
+        return None
+    try:
+        decoded = base64.urlsafe_b64decode(cursor.encode("utf-8")).decode("utf-8")
+    except Exception:
+        return None
+    if "|" not in decoded:
+        return None
+    created_at, bundle_id = decoded.split("|", 1)
+    if not created_at or not bundle_id:
+        return None
+    return created_at, bundle_id
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -154,6 +175,7 @@ def list_bundles(
     name: str | None = None,
     status: str | None = None,
     limit: int = 50,
+    cursor_created_at: str | None = None,
 ) -> list[dict[str, Any]]:
     with _cursor() as cur:
         params: list[Any] = [tenant_id]
@@ -164,13 +186,16 @@ def list_bundles(
         if status:
             where.append("status = ?")
             params.append(status)
+        if cursor_created_at:
+            where.append("created_at < ?")
+            params.append(cursor_created_at)
         params.append(limit)
         rows = cur.execute(
             f"""
             SELECT bundle_id, tenant_id, name, version, description, config_json, status, created_at, activated_at
             FROM policy_bundles
             WHERE {' AND '.join(where)}
-            ORDER BY created_at DESC
+            ORDER BY created_at DESC, bundle_id DESC
             LIMIT ?
             """,
             tuple(params),
@@ -189,6 +214,68 @@ def list_bundles(
         }
         for row in rows
     ]
+
+
+def list_bundles_paginated(
+    tenant_id: str,
+    *,
+    page_size: int = 50,
+    cursor: str | None = None,
+    name: str | None = None,
+    status: str | None = None,
+) -> dict[str, Any]:
+    size = max(1, min(int(page_size), 200))
+    decoded = _decode_cursor(cursor)
+    params: list[Any] = [tenant_id]
+    where = ["tenant_id = ?"]
+    if name:
+        where.append("name = ?")
+        params.append(name)
+    if status:
+        where.append("status = ?")
+        params.append(status)
+    if decoded:
+        created_at, bundle_id = decoded
+        where.append("(created_at < ? OR (created_at = ? AND bundle_id < ?))")
+        params.extend([created_at, created_at, bundle_id])
+    params.append(size + 1)
+    with _cursor() as cur:
+        rows = cur.execute(
+            f"""
+            SELECT bundle_id, tenant_id, name, version, description, config_json, status, created_at, activated_at
+            FROM policy_bundles
+            WHERE {' AND '.join(where)}
+            ORDER BY created_at DESC, bundle_id DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        ).fetchall()
+    has_more = len(rows) > size
+    selected = rows[:size]
+    items = [
+        {
+            "bundle_id": row["bundle_id"],
+            "tenant_id": row["tenant_id"],
+            "name": row["name"],
+            "version": row["version"],
+            "description": row["description"] or "",
+            "config": json.loads(row["config_json"]),
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "activated_at": row["activated_at"],
+        }
+        for row in selected
+    ]
+    next_cursor = None
+    if has_more and selected:
+        last = selected[-1]
+        next_cursor = _encode_cursor(str(last["created_at"]), str(last["bundle_id"]))
+    return {
+        "items": items,
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "page_size": size,
+    }
 
 
 def activate_bundle(tenant_id: str, bundle_id: str) -> dict[str, Any] | None:

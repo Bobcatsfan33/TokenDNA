@@ -7,7 +7,9 @@ behind the same function interface.
 
 from __future__ import annotations
 
+import base64
 import json
+import math
 import os
 import sqlite3
 import threading
@@ -20,6 +22,26 @@ _lock = threading.Lock()
 
 def _db_path() -> str:
     return os.getenv("DATA_DB_PATH", "/data/tokendna.db")
+
+
+def _encode_cursor(order_value: str, item_id: str) -> str:
+    raw = f"{order_value}|{item_id}".encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("utf-8")
+
+
+def _decode_cursor(cursor: str | None) -> tuple[str, str] | None:
+    if not cursor:
+        return None
+    try:
+        decoded = base64.urlsafe_b64decode(cursor.encode("utf-8")).decode("utf-8")
+    except Exception:
+        return None
+    if "|" not in decoded:
+        return None
+    order_value, item_id = decoded.split("|", 1)
+    if not order_value or not item_id:
+        return None
+    return order_value, item_id
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -219,6 +241,51 @@ def list_attestations(tenant_id: str, limit: int = 50, agent_id: str | None = No
     return [json.loads(row["record_json"]) for row in rows]
 
 
+def list_attestations_paginated(
+    tenant_id: str,
+    *,
+    page_size: int = 50,
+    cursor: str | None = None,
+    agent_id: str | None = None,
+) -> dict[str, Any]:
+    size = max(1, min(int(page_size), 200))
+    decoded = _decode_cursor(cursor)
+    params: list[Any] = [tenant_id]
+    where = ["tenant_id = ?"]
+    if agent_id:
+        where.append("agent_id = ?")
+        params.append(agent_id)
+    if decoded:
+        ts, attestation_id = decoded
+        where.append("(created_at < ? OR (created_at = ? AND attestation_id < ?))")
+        params.extend([ts, ts, attestation_id])
+    params.append(size + 1)
+    with _cursor() as cur:
+        rows = cur.execute(
+            f"""
+            SELECT attestation_id, created_at, record_json
+            FROM agent_attestations
+            WHERE {' AND '.join(where)}
+            ORDER BY created_at DESC, attestation_id DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        ).fetchall()
+    has_more = len(rows) > size
+    selected = rows[:size]
+    items = [json.loads(row["record_json"]) for row in selected]
+    next_cursor = None
+    if has_more and selected:
+        last = selected[-1]
+        next_cursor = _encode_cursor(str(last["created_at"]), str(last["attestation_id"]))
+    return {
+        "items": items,
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "page_size": size,
+    }
+
+
 def insert_certificate(tenant_id: str, certificate: dict[str, Any]) -> None:
     with _cursor() as cur:
         cur.execute(
@@ -334,6 +401,55 @@ def list_certificates(
     return [json.loads(row["certificate_json"]) for row in rows]
 
 
+def list_certificates_paginated(
+    tenant_id: str,
+    *,
+    page_size: int = 50,
+    cursor: str | None = None,
+    subject: str | None = None,
+    status: str | None = None,
+) -> dict[str, Any]:
+    size = max(1, min(int(page_size), 200))
+    decoded = _decode_cursor(cursor)
+    params: list[Any] = [tenant_id]
+    where = ["tenant_id = ?"]
+    if subject:
+        where.append("subject = ?")
+        params.append(subject)
+    if status:
+        where.append("status = ?")
+        params.append(status)
+    if decoded:
+        issued_at, certificate_id = decoded
+        where.append("(issued_at < ? OR (issued_at = ? AND certificate_id < ?))")
+        params.extend([issued_at, issued_at, certificate_id])
+    params.append(size + 1)
+    with _cursor() as cur:
+        rows = cur.execute(
+            f"""
+            SELECT certificate_id, issued_at, certificate_json
+            FROM attestation_certificates
+            WHERE {' AND '.join(where)}
+            ORDER BY issued_at DESC, certificate_id DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        ).fetchall()
+    has_more = len(rows) > size
+    selected = rows[:size]
+    items = [json.loads(row["certificate_json"]) for row in selected]
+    next_cursor = None
+    if has_more and selected:
+        last = selected[-1]
+        next_cursor = _encode_cursor(str(last["issued_at"]), str(last["certificate_id"]))
+    return {
+        "items": items,
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "page_size": size,
+    }
+
+
 def revoke_certificate(
     tenant_id: str,
     certificate_id: str,
@@ -422,6 +538,51 @@ def list_drift_events(
                 (tenant_id, limit),
             ).fetchall()
     return [json.loads(row["event_json"]) for row in rows]
+
+
+def list_drift_events_paginated(
+    tenant_id: str,
+    *,
+    page_size: int = 100,
+    cursor: str | None = None,
+    agent_id: str | None = None,
+) -> dict[str, Any]:
+    size = max(1, min(int(page_size), 500))
+    decoded = _decode_cursor(cursor)
+    params: list[Any] = [tenant_id]
+    where = ["tenant_id = ?"]
+    if agent_id:
+        where.append("agent_id = ?")
+        params.append(agent_id)
+    if decoded:
+        detected_at, drift_event_id = decoded
+        where.append("(detected_at < ? OR (detected_at = ? AND drift_event_id < ?))")
+        params.extend([detected_at, detected_at, drift_event_id])
+    params.append(size + 1)
+    with _cursor() as cur:
+        rows = cur.execute(
+            f"""
+            SELECT drift_event_id, detected_at, event_json
+            FROM attestation_drift_events
+            WHERE {' AND '.join(where)}
+            ORDER BY detected_at DESC, drift_event_id DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        ).fetchall()
+    has_more = len(rows) > size
+    selected = rows[:size]
+    items = [json.loads(row["event_json"]) for row in selected]
+    next_cursor = None
+    if has_more and selected:
+        last = selected[-1]
+        next_cursor = _encode_cursor(str(last["detected_at"]), str(last["drift_event_id"]))
+    return {
+        "items": items,
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "page_size": size,
+    }
 
 
 def upsert_ca_key(

@@ -28,6 +28,25 @@ def sdk_get_uis_spec() -> dict[str, Any]:
     return get_uis_spec()
 
 
+def sdk_normalize_event(
+    *,
+    protocol: str,
+    tenant_id: str,
+    tenant_name: str,
+    payload: dict[str, Any],
+    request_context: dict[str, Any] | None = None,
+    risk_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return sdk_normalize_uis_event(
+        protocol=protocol,
+        tenant_id=tenant_id,
+        tenant_name=tenant_name,
+        payload=payload,
+        request_context=request_context,
+        risk_context=risk_context,
+    )
+
+
 def build_adapter_normalize_request(
     *,
     protocol: str,
