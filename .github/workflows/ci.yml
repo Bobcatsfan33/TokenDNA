@@ -213,3 +213,76 @@ jobs:
 
       - name: Run adversarial harness tests
         run: python -m pytest -q tests/test_adversarial_harness.py
+
+  # ── Policy regression gate lane ────────────────────────────────────────────
+  policy-regression-gate:
+    name: Policy Regression Gate
+    runs-on: ubuntu-latest
+    env:
+      DATA_DB_PATH: /tmp/tokendna-policy-regression-ci.db
+      ATTESTATION_CA_SECRET: policy-regression-ci-secret
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Seed sample decision audits
+        run: |
+          python - <<'PY'
+          import os
+          from modules.identity import decision_audit
+
+          db_path = os.environ["DATA_DB_PATH"]
+          decision_audit.init_db()
+          for i in range(25):
+              decision_audit.record_decision(
+                  tenant_id="tenant-1",
+                  request_id=f"ci-req-{i}",
+                  source_endpoint="/secure",
+                  actor_subject="ci-user",
+                  evaluation_input={
+                      "uis_event": {"threat": {"risk_score": 92, "risk_tier": "allow"}},
+                      "attestation": {
+                          "attestation_id": f"att-{i}",
+                          "what": {"soul_hash": "soul-1", "model_fingerprint": "model-1", "mcp_manifest_hash": "mcp-1"},
+                          "how": {"dpop_bound": False, "mtls_bound": False},
+                          "why": {"scope": ["orders:read"], "delegation_chain": ["svc-a"]},
+                      },
+                      "certificate": None,
+                      "certificate_id": "",
+                      "request_headers": {
+                          "x-agent-soul-hash": "soul-1",
+                          "x-agent-model-fingerprint": "model-1",
+                          "x-agent-mcp-manifest-hash": "mcp-1",
+                          "x-agent-delegation-chain": "svc-a",
+                      },
+                      "observed_scope": ["orders:read"],
+                      "required_scope": [],
+                  },
+                  enforcement_result={
+                      "decision": {"action": "allow", "reasons": ["policy_allow"], "policy_trace": {}},
+                      "authn_failure": False,
+                      "certificate_status": None,
+                      "drift": {"score": 0.0, "severity": "none", "reasons": []},
+                      "timing": {"elapsed_ms": 1.0, "slo_target_ms": 5.0, "slo_met": True},
+                  },
+              )
+          print(f"seeded decision audits at {db_path}")
+          PY
+
+      - name: Run policy regression gate (strict)
+        run: |
+          POLICY_REGRESSION_TENANT_ID=tenant-1 \
+          POLICY_REGRESSION_CANDIDATE_JSON='{}' \
+          POLICY_REGRESSION_MAX_ACTION_DELTA_PCT=5.0 \
+          POLICY_REGRESSION_MIN_SAMPLES=10 \
+          python scripts/policy_regression_gate.py --strict
+
+      - name: Run policy regression gate tests
+        run: python -m pytest -q tests/test_policy_regression_gate.py
