@@ -206,7 +206,7 @@ def insert_certificate(tenant_id: str, certificate: dict[str, Any]) -> None:
                 certificate_id, tenant_id, attestation_id, issued_at, expires_at,
                 issuer, subject, signature_alg, ca_key_id, status, revoked_at, revocation_reason,
                 signature, certificate_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 certificate["certificate_id"],

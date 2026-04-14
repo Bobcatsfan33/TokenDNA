@@ -161,11 +161,25 @@ def issue_certificate(
     return {**payload, "signature": signature}
 
 
-def revoke_certificate(certificate: dict[str, Any], reason: str) -> dict[str, Any]:
+def revoke_certificate(certificate: dict[str, Any], reason: str, *, secret: str | None = None) -> dict[str, Any]:
     updated = dict(certificate)
     updated["status"] = "revoked"
     updated["revoked_at"] = _utc_now().isoformat()
     updated["revocation_reason"] = reason or "unspecified"
+    # Lifecycle metadata is part of the signed payload; re-sign after mutation.
+    payload = dict(updated)
+    payload.pop("signature", None)
+    alg = str(payload.get("signature_alg", DEFAULT_SIGNING_ALG)).upper()
+    if alg == "RS256":
+        private_pem = _rsa_private_key_pem()
+        if private_pem:
+            updated["signature"] = _sign_rs256(payload, private_pem)
+        else:
+            payload["signature_alg"] = "HS256"
+            updated["signature_alg"] = "HS256"
+            updated["signature"] = _sign_hs256(payload, secret or _secret())
+    else:
+        updated["signature"] = _sign_hs256(payload, secret or _secret())
     return updated
 
 

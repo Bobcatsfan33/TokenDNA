@@ -80,7 +80,7 @@ def test_revoke_certificate_marks_certificate_revoked():
         ttl_hours=1,
         secret="test-secret",
     )
-    revoked = revoke_certificate(cert, reason="compromised")
+    revoked = revoke_certificate(cert, reason="compromised", secret="test-secret")
     result = verify_certificate(revoked, secret="test-secret")
     assert result["valid"] is False
     assert result["reason"] == "revoked"
