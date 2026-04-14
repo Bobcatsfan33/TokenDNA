@@ -84,3 +84,51 @@ def test_trust_federation_verifier_and_quorum_flow():
     finally:
         os.environ.pop("ATTESTATION_CA_SECRET", None)
         tmp.cleanup()
+
+
+def test_trust_federation_lifecycle_rotation_and_revocation():
+    tmp = _setup_tmp_db()
+    try:
+        trust_federation.init_db()
+        verifier = trust_federation.upsert_verifier(
+            tenant_id="tenant-1",
+            verifier_id=None,
+            name="Lifecycle Verifier",
+            trust_score=0.88,
+            issuer="https://lifecycle.example",
+            jwks_uri="https://lifecycle.example/.well-known/jwks.json",
+            metadata={"key_version": "v1"},
+            status="active",
+        )
+        verifier_id = verifier["verifier_id"]
+
+        rotated = trust_federation.rotate_verifier_key(
+            tenant_id="tenant-1",
+            verifier_id=verifier_id,
+            actor="owner-1",
+            key_version="v2",
+            key_expires_at="2099-01-01T00:00:00+00:00",
+        )
+        assert rotated is not None
+        assert rotated["key_version"] == "v2"
+
+        lifecycle = trust_federation.verifier_lifecycle_status(
+            tenant_id="tenant-1",
+            verifier_id=verifier_id,
+        )
+        assert lifecycle is not None
+        assert lifecycle["status"] == "active"
+        assert lifecycle["is_expired"] is False
+
+        revoked = trust_federation.revoke_verifier(
+            tenant_id="tenant-1",
+            verifier_id=verifier_id,
+            actor="owner-1",
+            reason="compromised_key",
+        )
+        assert revoked is not None
+        assert revoked["status"] == "revoked"
+        assert revoked["revocation_reason"] == "compromised_key"
+    finally:
+        os.environ.pop("ATTESTATION_CA_SECRET", None)
+        tmp.cleanup()

@@ -101,6 +101,17 @@ def init_db() -> None:
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_trust_fed_attest_verifier ON trust_federation_attestations(tenant_id, verifier_id, attested_at DESC)"
         )
+        for ddl in (
+            "ALTER TABLE trust_federation_verifiers ADD COLUMN key_expires_at TEXT",
+            "ALTER TABLE trust_federation_verifiers ADD COLUMN revoked_at TEXT",
+            "ALTER TABLE trust_federation_verifiers ADD COLUMN revocation_reason TEXT",
+            "ALTER TABLE trust_federation_verifiers ADD COLUMN last_rotated_at TEXT",
+            "ALTER TABLE trust_federation_verifiers ADD COLUMN key_version TEXT",
+        ):
+            try:
+                cur.execute(ddl)
+            except Exception:
+                pass
 
 
 def upsert_verifier(
@@ -125,6 +136,11 @@ def upsert_verifier(
         "jwks_uri": (jwks_uri or "").strip() or None,
         "metadata": metadata or {},
         "status": (status or "active").strip().lower(),
+        "key_expires_at": (str((metadata or {}).get("key_expires_at", "")).strip() or None),
+        "revoked_at": (str((metadata or {}).get("revoked_at", "")).strip() or None),
+        "revocation_reason": (str((metadata or {}).get("revocation_reason", "")).strip() or None),
+        "last_rotated_at": (str((metadata or {}).get("last_rotated_at", "")).strip() or None),
+        "key_version": (str((metadata or {}).get("key_version", "")).strip() or None),
         "created_at": now,
         "updated_at": now,
     }
@@ -143,8 +159,9 @@ def upsert_verifier(
             """
             INSERT OR REPLACE INTO trust_federation_verifiers(
                 verifier_id, tenant_id, name, trust_score, issuer, jwks_uri,
-                metadata_json, status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                metadata_json, status, key_expires_at, revoked_at, revocation_reason,
+                last_rotated_at, key_version, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row["verifier_id"],
@@ -155,6 +172,11 @@ def upsert_verifier(
                 row["jwks_uri"],
                 json.dumps(row["metadata"], sort_keys=True),
                 row["status"],
+                row["key_expires_at"],
+                row["revoked_at"],
+                row["revocation_reason"],
+                row["last_rotated_at"],
+                row["key_version"],
                 row["created_at"],
                 row["updated_at"],
             ),
@@ -173,7 +195,8 @@ def list_verifiers(
             rows = cur.execute(
                 """
                 SELECT verifier_id, tenant_id, name, trust_score, issuer, jwks_uri,
-                       metadata_json, status, created_at, updated_at
+                       metadata_json, status, key_expires_at, revoked_at, revocation_reason,
+                       last_rotated_at, key_version, created_at, updated_at
                 FROM trust_federation_verifiers
                 WHERE tenant_id = ? AND status = ?
                 ORDER BY trust_score DESC, updated_at DESC
@@ -185,7 +208,8 @@ def list_verifiers(
             rows = cur.execute(
                 """
                 SELECT verifier_id, tenant_id, name, trust_score, issuer, jwks_uri,
-                       metadata_json, status, created_at, updated_at
+                       metadata_json, status, key_expires_at, revoked_at, revocation_reason,
+                       last_rotated_at, key_version, created_at, updated_at
                 FROM trust_federation_verifiers
                 WHERE tenant_id = ?
                 ORDER BY trust_score DESC, updated_at DESC
@@ -203,11 +227,124 @@ def list_verifiers(
             "jwks_uri": row["jwks_uri"],
             "metadata": json.loads(row["metadata_json"]),
             "status": row["status"],
+            "key_expires_at": row["key_expires_at"],
+            "revoked_at": row["revoked_at"],
+            "revocation_reason": row["revocation_reason"] or "",
+            "last_rotated_at": row["last_rotated_at"],
+            "key_version": row["key_version"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
         for row in rows
     ]
+
+
+def revoke_verifier(
+    *,
+    tenant_id: str,
+    verifier_id: str,
+    actor: str,
+    reason: str,
+) -> dict[str, Any] | None:
+    now = _iso_now()
+    with _cursor() as cur:
+        existing = cur.execute(
+            """
+            SELECT verifier_id
+            FROM trust_federation_verifiers
+            WHERE tenant_id = ? AND verifier_id = ?
+            """,
+            (tenant_id, verifier_id),
+        ).fetchone()
+        if not existing:
+            return None
+        cur.execute(
+            """
+            UPDATE trust_federation_verifiers
+            SET status = 'revoked',
+                revoked_at = ?,
+                revocation_reason = ?,
+                updated_at = ?
+            WHERE tenant_id = ? AND verifier_id = ?
+            """,
+            (now, reason, now, tenant_id, verifier_id),
+        )
+    rows = list_verifiers(tenant_id=tenant_id, limit=500)
+    verifier = next((v for v in rows if str(v.get("verifier_id")) == verifier_id), None)
+    if verifier:
+        verifier["revoked_by"] = actor
+    return verifier
+
+
+def rotate_verifier_key(
+    *,
+    tenant_id: str,
+    verifier_id: str,
+    actor: str,
+    key_version: str,
+    key_expires_at: str | None = None,
+) -> dict[str, Any] | None:
+    now = _iso_now()
+    with _cursor() as cur:
+        existing = cur.execute(
+            """
+            SELECT verifier_id
+            FROM trust_federation_verifiers
+            WHERE tenant_id = ? AND verifier_id = ?
+            """,
+            (tenant_id, verifier_id),
+        ).fetchone()
+        if not existing:
+            return None
+        cur.execute(
+            """
+            UPDATE trust_federation_verifiers
+            SET status = 'active',
+                key_version = ?,
+                key_expires_at = ?,
+                revoked_at = NULL,
+                revocation_reason = NULL,
+                last_rotated_at = ?,
+                updated_at = ?
+            WHERE tenant_id = ? AND verifier_id = ?
+            """,
+            (key_version, key_expires_at, now, now, tenant_id, verifier_id),
+        )
+    rows = list_verifiers(tenant_id=tenant_id, limit=500)
+    verifier = next((v for v in rows if str(v.get("verifier_id")) == verifier_id), None)
+    if verifier:
+        verifier["rotated_by"] = actor
+    return verifier
+
+
+def verifier_lifecycle_status(
+    *,
+    tenant_id: str,
+    verifier_id: str,
+) -> dict[str, Any] | None:
+    rows = list_verifiers(tenant_id=tenant_id, limit=500)
+    verifier = next((v for v in rows if str(v.get("verifier_id")) == verifier_id), None)
+    if verifier is None:
+        return None
+    now = datetime.now(timezone.utc)
+    expires_at = str(verifier.get("key_expires_at") or "")
+    expires_dt: datetime | None = None
+    if expires_at:
+        try:
+            expires_dt = datetime.fromisoformat(expires_at)
+        except Exception:
+            expires_dt = None
+    is_expired = bool(expires_dt and expires_dt <= now)
+    return {
+        "verifier_id": verifier_id,
+        "status": verifier.get("status"),
+        "is_expired": is_expired,
+        "key_expires_at": verifier.get("key_expires_at"),
+        "last_rotated_at": verifier.get("last_rotated_at"),
+        "key_version": verifier.get("key_version"),
+        "revoked_at": verifier.get("revoked_at"),
+        "revocation_reason": verifier.get("revocation_reason"),
+    }
 
 
 def _payload(
@@ -417,6 +554,19 @@ def evaluate_federation_quorum(
         verifier = verifier_map.get(str(att.get("verifier_id")))
         if verifier is None:
             rejected.append({"federation_id": att.get("federation_id"), "reason": "unknown_or_inactive_verifier"})
+            continue
+        lifecycle = verifier_lifecycle_status(
+            tenant_id=tenant_id,
+            verifier_id=str(att.get("verifier_id")),
+        )
+        if lifecycle is None:
+            rejected.append({"federation_id": att.get("federation_id"), "reason": "missing_lifecycle"})
+            continue
+        if lifecycle.get("status") == "revoked":
+            rejected.append({"federation_id": att.get("federation_id"), "reason": "verifier_revoked"})
+            continue
+        if bool(lifecycle.get("is_expired")):
+            rejected.append({"federation_id": att.get("federation_id"), "reason": "verifier_key_expired"})
             continue
         trust_score = float(verifier.get("trust_score", 0.0))
         confidence = float(att.get("confidence", 0.0))

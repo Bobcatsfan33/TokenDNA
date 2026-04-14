@@ -1197,6 +1197,59 @@ async def api_upsert_federation_verifier(
     return {"tenant_id": tenant.tenant_id, "verifier": verifier}
 
 
+@app.post("/api/federation/verifiers/{verifier_id}/revoke")
+async def api_revoke_federation_verifier(
+    verifier_id: str,
+    body: dict,
+    tenant: TenantContext = Depends(require_role(Role.OWNER)),
+):
+    reason = str(body.get("reason", "")).strip() or "manual_revoke"
+    verifier = trust_federation.revoke_verifier(
+        tenant_id=tenant.tenant_id,
+        verifier_id=verifier_id,
+        actor=tenant.api_key_id,
+        reason=reason,
+    )
+    if verifier is None:
+        raise HTTPException(status_code=404, detail="Verifier not found")
+    return {"tenant_id": tenant.tenant_id, "verifier": verifier}
+
+
+@app.post("/api/federation/verifiers/{verifier_id}/rotate")
+async def api_rotate_federation_verifier_key(
+    verifier_id: str,
+    body: dict,
+    tenant: TenantContext = Depends(require_role(Role.OWNER)),
+):
+    key_version = str(body.get("key_version", "")).strip()
+    if not key_version:
+        raise HTTPException(status_code=400, detail="'key_version' is required")
+    verifier = trust_federation.rotate_verifier_key(
+        tenant_id=tenant.tenant_id,
+        verifier_id=verifier_id,
+        actor=tenant.api_key_id,
+        key_version=key_version,
+        key_expires_at=(str(body.get("key_expires_at", "")).strip() or None),
+    )
+    if verifier is None:
+        raise HTTPException(status_code=404, detail="Verifier not found")
+    return {"tenant_id": tenant.tenant_id, "verifier": verifier}
+
+
+@app.get("/api/federation/verifiers/{verifier_id}/lifecycle")
+async def api_get_federation_verifier_lifecycle(
+    verifier_id: str,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    lifecycle = trust_federation.verifier_lifecycle_status(
+        tenant_id=tenant.tenant_id,
+        verifier_id=verifier_id,
+    )
+    if lifecycle is None:
+        raise HTTPException(status_code=404, detail="Verifier not found")
+    return {"tenant_id": tenant.tenant_id, "lifecycle": lifecycle}
+
+
 @app.get("/api/federation/verifiers")
 async def api_list_federation_verifiers(
     status: str | None = None,
