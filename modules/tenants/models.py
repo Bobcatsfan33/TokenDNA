@@ -92,3 +92,4 @@ class TenantContext:
     tenant_name: str
     plan:       Plan
     api_key_id: str
+    role:       str = "owner"  # default owner for dev; production keys carry their own role

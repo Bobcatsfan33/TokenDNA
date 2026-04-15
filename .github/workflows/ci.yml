@@ -176,7 +176,7 @@ jobs:
       - name: Run smoke load profile harness
         run: |
           python tests/load_security_smoke.py --base-url http://127.0.0.1:8000
-          python scripts/load_profile.py --strict
+          python scripts/load_profile.py --strict --max-p95-ms 1000
 
       - name: Operator SLO gate contract checks
         run: python scripts/operator_slo_gate.py --strict
