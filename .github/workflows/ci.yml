@@ -165,7 +165,7 @@ jobs:
 
       - name: Start API for runtime readiness checks
         run: |
-          DEV_MODE=true DATA_DB_PATH=/tmp/tokendna-ci.db python -m uvicorn api:app --host 127.0.0.1 --port 8000 > /tmp/tokendna-ci.log 2>&1 &
+          DEV_MODE=true DATA_DB_PATH=/tmp/tokendna-ci.db AUDIT_LOG_PATH=/tmp/tokendna-ci-audit.jsonl python -m uvicorn api:app --host 127.0.0.1 --port 8000 > /tmp/tokendna-ci.log 2>&1 &
           for i in {1..30}; do
             if python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=1); print('up')" >/dev/null 2>&1; then
               break
