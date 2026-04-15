@@ -17,7 +17,8 @@ from .models import ApiKey, Plan, Tenant
 
 logger = logging.getLogger(__name__)
 
-_DB_PATH = os.getenv("DATA_DB_PATH", "/data/tokendna.db")
+def _db_path() -> str:
+    return os.getenv("DATA_DB_PATH", "/data/tokendna.db")
 
 # SQLite isn't safe for concurrent writes across processes; in production
 # point DATA_DB_URL at PostgreSQL and swap the driver below.
@@ -25,7 +26,7 @@ _lock = threading.Lock()
 
 
 def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(_db_path(), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -51,6 +52,8 @@ def _cursor():
 
 def init_db() -> None:
     """Create tables if they don't exist. Idempotent."""
+    db_path = _db_path()
+    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
     with _cursor() as cur:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS tenants (
@@ -76,7 +79,7 @@ def init_db() -> None:
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_tenant ON api_keys(tenant_id)")
-    logger.info("Tenant DB initialised at %s", _DB_PATH)
+    logger.info("Tenant DB initialised at %s", db_path)
 
 
 # ── Tenants ───────────────────────────────────────────────────────────────────

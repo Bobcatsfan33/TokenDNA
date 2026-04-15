@@ -94,6 +94,18 @@ All settings are read from environment variables (see `.env.example`).
 | `SCORE_THRESHOLD_STEP_UP` | `50` | Score above → STEP_UP |
 | `SCORE_THRESHOLD_BLOCK` | `30` | Score above → BLOCK |
 | `SCORE_THRESHOLD_REVOKE` | `15` | Score at/below → REVOKE |
+| `EDGE_DECISION_SLO_MS` | `5` | Runtime enforcement target latency in ms |
+| `EDGE_SLO_VIOLATION_ACTION` | `allow` | SLO breach action: `allow`, `step_up`, or `block` |
+| `NETWORK_INTEL_MIN_OBSERVATIONS` | `2` | Anti-poisoning minimum observations before full confidence |
+| `NETWORK_INTEL_ANTI_POISONING_MIN_TENANTS` | `2` | Minimum tenant corroboration threshold for runtime penalty |
+| `NETWORK_INTEL_DECAY_DAYS` | `30` | Stale intelligence decay window for cleanup |
+| `ATTESTATION_KEY_BACKEND` | `software` | `software`, `hsm`, or `aws_kms` signer backend |
+| `ATTESTATION_CA_KEY_ID` | `tokendna-ca-default` | Active CA key id used for certificate issuance |
+| `ATTESTATION_ACTIVE_KEY_ID` | — | Explicit active key selection override |
+| `ATTESTATION_KEYRING_JSON` | — | JSON keyring for rotation lifecycle automation |
+| `TOKENDNA_DB_BACKEND` | `sqlite` | Data backend selector: `sqlite` or `postgres` |
+| `TOKENDNA_PG_DSN` | — | PostgreSQL DSN used when backend is `postgres` |
+| `TOKENDNA_DB_DUAL_WRITE` | `false` | When true, SQLite writes are mirrored to Postgres for migration |
 | `IMPOSSIBLE_TRAVEL_SPEED_KMH` | `900` | km/h threshold |
 | `BRANCHING_THRESHOLD` | `3` | Distinct devices before flagging |
 | `SIEM_WEBHOOK_URL` | — | HTTPS webhook for SIEM events |
@@ -116,6 +128,27 @@ All settings are read from environment variables (see `.env.example`).
 | `GET` | `/admin/tenants` | ADMIN+ | List tenants |
 | `POST` | `/admin/tenants` | OWNER only | Create a new tenant |
 | `GET` | `/docs` | Dev only | Swagger UI (disabled in production) |
+
+---
+
+## OSS Schema & SDK Onboarding
+
+TokenDNA now publishes machine-readable identity artifacts to speed ecosystem adoption:
+
+- `GET /api/schema/bundle` — consolidated UIS + attestation schema bundle.
+- `GET /api/schema/uis.json` — UIS JSON schema artifact.
+- `GET /api/schema/attestation.json` — attestation JSON schema artifact.
+- `GET /api/schema/artifacts` — catalog of all schema artifacts.
+- `GET /api/schema/artifacts/{name}` — fetch a specific artifact by name.
+- `POST /api/schema/publish` — generate and return publish-ready schema artifacts.
+
+Wrapper endpoints for SDK-style integrations:
+
+- `POST /api/oss/sdk/normalize` — request/response wrapped UIS normalization.
+- `POST /api/oss/sdk/attest` — request/response wrapped attestation creation.
+
+These wrappers intentionally return stable metadata fields (`sdk_version`,
+`schema_version`, `generated_at`) so third-party SDKs can map them directly.
 
 ---
 

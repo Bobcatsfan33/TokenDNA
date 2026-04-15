@@ -2,7 +2,7 @@
 # Pin major versions for reproducibility; use `pip install -r requirements.txt`
 
 # ── Web framework ─────────────────────────────────────────────────────────────
-fastapi==0.135.1
+fastapi==0.115.6
 uvicorn[standard]==0.29.0
 python-multipart==0.0.22
 
@@ -13,6 +13,7 @@ cryptography==46.0.6
 # ── HTTP client (JWKS fetch, webhooks, AbuseIPDB, ip-api) ────────────────────
 requests==2.33.0
 httpx==0.28.1                    # async-capable alternative used by some deps
+psycopg[binary]==3.3.3           # PostgreSQL backend for production data plane
 
 # ── Redis ─────────────────────────────────────────────────────────────────────
 redis==7.3.0
@@ -36,3 +37,4 @@ numpy==1.26.4                    # lightweight — used for profile distance mat
 # ── Utilities ─────────────────────────────────────────────────────────────────
 pydantic==2.7.1                  # FastAPI model validation (v2 API)
 python-dotenv==1.0.1             # load .env in development
+eval_type_backport>=0.2.0   # Python 3.9 compat for PEP 604 type unions
