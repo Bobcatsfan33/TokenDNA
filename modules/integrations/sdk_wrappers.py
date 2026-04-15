@@ -93,6 +93,13 @@ def sdk_normalize_uis_event(
     payload: dict[str, Any],
     request_context: dict[str, Any] | None = None,
     risk_context: dict[str, Any] | None = None,
+    # UIS v1.1 narrative override fields — caller-supplied values are
+    # written directly into the event's uis_narrative block.
+    # All four are optional; omit to use auto-inference only.
+    narrative_precondition: str | None = None,
+    narrative_pivot: str | None = None,
+    narrative_payload: str | None = None,
+    narrative_objective: str | None = None,
 ) -> dict[str, Any]:
     req = build_adapter_normalize_request(
         protocol=protocol,
@@ -100,7 +107,7 @@ def sdk_normalize_uis_event(
         request_context=request_context,
         risk_context=risk_context,
     )
-    return normalize_with_adapter(
+    event = normalize_with_adapter(
         protocol=req["protocol"],
         tenant_id=tenant_id,
         tenant_name=tenant_name,
@@ -108,6 +115,25 @@ def sdk_normalize_uis_event(
         request_context=req["request_context"],
         risk_context=req["risk_context"],
     )
+    # Merge caller-supplied narrative overrides into event (UIS v1.1)
+    if any(v is not None for v in (
+        narrative_precondition, narrative_pivot, narrative_payload, narrative_objective
+    )):
+        override: dict[str, Any] = {}
+        if narrative_precondition is not None:
+            override["precondition"] = narrative_precondition
+        if narrative_pivot is not None:
+            override["pivot"] = narrative_pivot
+        if narrative_payload is not None:
+            override["payload"] = narrative_payload
+        if narrative_objective is not None:
+            override["objective"] = narrative_objective
+        # Merge into existing uis_narrative block or create new one
+        existing = event.get("uis_narrative") or {}
+        existing.update(override)
+        event["uis_narrative"] = existing
+        event["uis_schema_version"] = "1.1"
+    return event
 
 
 def sdk_normalize_idp_event(*, provider: str, event: dict[str, Any]) -> dict[str, Any]:

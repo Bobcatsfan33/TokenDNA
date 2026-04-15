@@ -1,0 +1,355 @@
+openapi: "3.1.0"
+info:
+  title: TokenDNA API
+  version: "3.0.0"
+  description: |
+    TokenDNA — Identity backbone for the machine and AI era.
+
+    UIS version history:
+    - v1.0: initial eight field-set schema
+    - v1.1: +narrative block (precondition, pivot, payload, objective, MITRE mapping)
+
+servers:
+  - url: http://localhost:8000
+    description: Local development (DEV_MODE=true)
+
+security:
+  - ApiKey: []
+  - Bearer: []
+
+components:
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+    Bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+
+    # ── UIS v1.1 Narrative Block ─────────────────────────────────────────────
+    UISNarrativeBlock:
+      type: object
+      description: |
+        Chain-semantic narrative fields added to every UIS v1.1 event.
+        All fields default to null when inference is not possible.
+      properties:
+        precondition:
+          type: string
+          nullable: true
+          description: State or prerequisite that must have held for this event to occur.
+          example: "valid_session_established_at_prior_location"
+        pivot:
+          type: string
+          nullable: true
+          description: |
+            Transition type. Recommended values match the MITRE pivot vocabulary:
+            privilege_escalation, lateral_movement, credential_access,
+            scope_escalation, token_replay, impossible_travel, identity_compromise,
+            delegation_abuse, context_switch, agent_hijack, supply_chain_compromise,
+            mfa_bypass, persistence, data_exfiltration, reconnaissance.
+          example: "impossible_travel"
+        payload:
+          type: string
+          nullable: true
+          description: What was executed or transmitted (auth method, token type, binding state).
+          example: "auth:password|protocol:oidc|binding:dpop"
+        objective:
+          type: string
+          nullable: true
+          description: Inferred or declared attacker/actor intent.
+          example: "evade_geofencing"
+        confidence:
+          type: string
+          nullable: true
+          enum: [HIGH, MEDIUM, LOW]
+          description: |
+            Inference confidence level.
+            HIGH = hard signal (impossible travel, explicit flag, revocation).
+            MEDIUM = correlated soft signal (velocity + risk tier, deviation score).
+            LOW = heuristic inference from limited evidence.
+        mitre:
+          type: object
+          nullable: true
+          description: MITRE ATT&CK metadata for the pivot type.
+          properties:
+            tactic:
+              type: string
+              example: "Defense Evasion"
+            technique_id:
+              type: string
+              example: "T1556"
+            technique_name:
+              type: string
+              example: "Modify Authentication Process"
+            url:
+              type: string
+              format: uri
+              example: "https://attack.mitre.org/techniques/T1556/"
+        inference_rules:
+          type: array
+          items:
+            type: string
+          description: Rule IDs that fired during inference (e.g., R-01:impossible_travel).
+          example: ["R-01:impossible_travel", "R-04:high_risk_no_mfa"]
+        backfill:
+          type: boolean
+          description: Present and true only on backfilled legacy (pre-v1.1) events.
+
+    # ── UIS v1.1 Event ───────────────────────────────────────────────────────
+    UISEvent:
+      type: object
+      required:
+        - uis_version
+        - event_id
+        - event_timestamp
+        - identity
+        - auth
+        - token
+        - session
+        - behavior
+        - lifecycle
+        - threat
+        - binding
+      properties:
+        uis_version:
+          type: string
+          enum: ["1.0", "1.1"]
+          description: "1.1 when narrative block is present."
+        event_id:
+          type: string
+        event_timestamp:
+          type: string
+          format: date-time
+        identity:
+          type: object
+          description: Core subject/entity attributes.
+        auth:
+          type: object
+          description: Authentication context.
+        token:
+          type: object
+          description: Token metadata and binding state.
+        session:
+          type: object
+          description: Session and network context.
+        behavior:
+          type: object
+          description: Behavioral DNA and drift/anomaly context.
+        lifecycle:
+          type: object
+          description: Identity lifecycle state.
+        threat:
+          type: object
+          description: Runtime threat and risk evaluation.
+        binding:
+          type: object
+          description: Cryptographic/token/attestation bindings.
+        narrative:
+          $ref: '#/components/schemas/UISNarrativeBlock'
+          description: |
+            Present on all v1.1 events. Null fields indicate inference was not possible.
+
+    # ── Paginated UIS Event List ─────────────────────────────────────────────
+    UISEventPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/UISEvent'
+        next_cursor:
+          type: string
+          nullable: true
+        has_more:
+          type: boolean
+        page_size:
+          type: integer
+
+    Error:
+      type: object
+      properties:
+        detail:
+          type: string
+
+paths:
+
+  # ── UIS Normalize ────────────────────────────────────────────────────────
+  /api/uis/normalize:
+    post:
+      operationId: normalizeUISEvent
+      summary: Normalize a protocol event into UIS v1.1 format
+      description: |
+        Accepts a raw protocol artifact (OIDC claims, SAML projection, etc.)
+        and returns a fully-normalized UIS v1.1 event with auto-inferred
+        narrative block. The event is persisted to the tenant's event store.
+
+        **Narrative inference** runs automatically. Supply `narrative_override`
+        in the request body to override any inferred field (caller-supplied
+        values are marked confidence=HIGH).
+      tags: [UIS]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [protocol]
+              properties:
+                protocol:
+                  type: string
+                  enum: [oidc, saml, oauth2_opaque, spiffe, custom]
+                subject:
+                  type: string
+                claims:
+                  type: object
+                  description: Raw protocol claims/assertions.
+                request_context:
+                  type: object
+                  description: Session and network context.
+                risk_context:
+                  type: object
+                  description: Risk signals from upstream evaluators.
+                narrative_override:
+                  type: object
+                  description: Caller-supplied narrative overrides (optional).
+                  properties:
+                    precondition:
+                      type: string
+                    pivot:
+                      type: string
+                    payload:
+                      type: string
+                    objective:
+                      type: string
+      responses:
+        '200':
+          description: Normalized UIS v1.1 event
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenant_id:
+                    type: string
+                  uis_event:
+                    $ref: '#/components/schemas/UISEvent'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ── UIS Events List ──────────────────────────────────────────────────────
+  /api/uis/events:
+    get:
+      operationId: listUISEvents
+      summary: List UIS events for the authenticated tenant (paginated)
+      description: |
+        Returns UIS v1.1 events newest-first. Each event includes the full
+        narrative block. Use `next_cursor` for pagination.
+      tags: [UIS]
+      parameters:
+        - name: subject
+          in: query
+          schema:
+            type: string
+          description: Filter by subject identity.
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Opaque pagination cursor from a previous response.
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+      responses:
+        '200':
+          description: Paginated event list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UISEventPage'
+        '401':
+          description: Unauthorized
+
+  # ── UIS Event by ID ──────────────────────────────────────────────────────
+  /api/uis/events/{event_id}:
+    get:
+      operationId: getUISEvent
+      summary: Get a single UIS event by ID
+      tags: [UIS]
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: UIS v1.1 event
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UISEvent'
+        '404':
+          description: Event not found
+        '401':
+          description: Unauthorized
+
+  # ── UIS Protocol Spec ────────────────────────────────────────────────────
+  /api/uis/spec:
+    get:
+      operationId: getUISSpec
+      summary: Return the UIS field-set specification and adapter catalog
+      tags: [UIS]
+      responses:
+        '200':
+          description: UIS protocol specification
+
+  # ── UIS Adapters Normalize ───────────────────────────────────────────────
+  /api/uis/adapters/normalize:
+    post:
+      operationId: normalizeViaAdapter
+      summary: Normalize using a protocol-specific adapter (OIDC, SAML, etc.)
+      tags: [UIS]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [protocol, payload]
+              properties:
+                protocol:
+                  type: string
+                payload:
+                  type: object
+                request_context:
+                  type: object
+                risk_context:
+                  type: object
+      responses:
+        '200':
+          description: Normalized UIS v1.1 event
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UISEvent'
+
+  # ── Health ───────────────────────────────────────────────────────────────
+  /api/health:
+    get:
+      operationId: healthDetail
+      summary: System health detail
+      tags: [Operations]
+      responses:
+        '200':
+          description: Health status
