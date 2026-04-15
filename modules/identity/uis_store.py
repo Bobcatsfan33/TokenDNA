@@ -108,6 +108,15 @@ def init_db() -> None:
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_uis_events_tenant_subject_ts ON uis_events(tenant_id, subject, event_timestamp DESC)"
         )
+        # Zero-downtime narrative migration: add column to pre-v1.1 databases
+        _sqlite_add_column_if_missing(cur, "uis_events", "narrative_json", "TEXT")
+
+
+def _sqlite_add_column_if_missing(cur: sqlite3.Cursor, table: str, column: str, col_type: str) -> None:
+    """Idempotent ALTER TABLE — adds column only if it doesn't already exist."""
+    existing = {row[1] for row in cur.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in existing:
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
 
 
 def _pg_init_db() -> None:
