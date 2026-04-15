@@ -26,7 +26,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 
-UIS_VERSION = "1.0"
+UIS_VERSION = "1.0"        # wire format version — unchanged for v1 events
+UIS_NARRATIVE_VERSION = "1.1"  # version emitted when narrative block is attached via attach_narrative()
 SUPPORTED_PROTOCOLS = {"oidc", "saml", "oauth2_opaque", "spiffe", "custom"}
 
 

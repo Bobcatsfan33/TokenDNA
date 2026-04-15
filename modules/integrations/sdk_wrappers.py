@@ -93,6 +93,12 @@ def sdk_normalize_uis_event(
     payload: dict[str, Any],
     request_context: dict[str, Any] | None = None,
     risk_context: dict[str, Any] | None = None,
+    # UIS v1.1 narrative overrides — caller-supplied values take precedence
+    # over the auto-inferred narrative.  All four fields are optional.
+    narrative_precondition: str | None = None,
+    narrative_pivot: str | None = None,
+    narrative_payload: str | None = None,
+    narrative_objective: str | None = None,
 ) -> dict[str, Any]:
     req = build_adapter_normalize_request(
         protocol=protocol,
@@ -100,7 +106,7 @@ def sdk_normalize_uis_event(
         request_context=request_context,
         risk_context=risk_context,
     )
-    return normalize_with_adapter(
+    event = normalize_with_adapter(
         protocol=req["protocol"],
         tenant_id=tenant_id,
         tenant_name=tenant_name,
@@ -108,6 +114,28 @@ def sdk_normalize_uis_event(
         request_context=req["request_context"],
         risk_context=req["risk_context"],
     )
+    # Attach narrative block (UIS v1.0 → v1.1) via the narrative engine
+    from modules.identity.uis_narrative import attach_narrative  # noqa: PLC0415
+    event = attach_narrative(event)
+    # Merge caller-supplied narrative overrides into the auto-inferred block
+    if any(v is not None for v in (
+        narrative_precondition, narrative_pivot, narrative_payload, narrative_objective
+    )):
+        existing = event.get("narrative") or {}
+        if narrative_precondition is not None:
+            existing["precondition"] = narrative_precondition
+        if narrative_pivot is not None:
+            existing["pivot"] = narrative_pivot
+            # Re-apply MITRE mapping for overridden pivot
+            from modules.identity.uis_narrative import MITRE_PIVOT_MAP  # noqa: PLC0415
+            existing["mitre"] = MITRE_PIVOT_MAP.get(narrative_pivot)
+        if narrative_payload is not None:
+            existing["payload"] = narrative_payload
+        if narrative_objective is not None:
+            existing["objective"] = narrative_objective
+        existing["confidence"] = "HIGH"  # caller-supplied = authoritative
+        event["narrative"] = existing
+    return event
 
 
 def sdk_normalize_idp_event(*, provider: str, event: dict[str, Any]) -> dict[str, Any]:

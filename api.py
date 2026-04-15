@@ -431,6 +431,18 @@ async def api_uis_normalize(
         request_context=request_context,
         risk_context=risk_context,
     )
+    # Attach narrative block (UIS v1.0 → v1.1) and apply any caller overrides
+    from modules.identity.uis_narrative import attach_narrative
+    event = attach_narrative(event)
+    narrative_override = body.get("narrative_override") or {}
+    if narrative_override and isinstance(event.get("narrative"), dict):
+        for field in ("precondition", "pivot", "payload", "objective"):
+            if narrative_override.get(field) is not None:
+                event["narrative"][field] = narrative_override[field]
+        if narrative_override.get("pivot"):
+            from modules.identity.uis_narrative import MITRE_PIVOT_MAP
+            event["narrative"]["mitre"] = MITRE_PIVOT_MAP.get(narrative_override["pivot"])
+            event["narrative"]["confidence"] = "HIGH"
     uis_store.insert_event(tenant_id=tenant.tenant_id, event=event)
     return {"tenant_id": tenant.tenant_id, "uis_event": event}
 

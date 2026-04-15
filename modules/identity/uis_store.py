@@ -98,7 +98,8 @@ def init_db() -> None:
                 event_timestamp TEXT NOT NULL,
                 protocol        TEXT NOT NULL,
                 risk_tier       TEXT NOT NULL,
-                event_json      TEXT NOT NULL
+                event_json      TEXT NOT NULL,
+                narrative_json  TEXT
             )
             """
         )
@@ -108,6 +109,15 @@ def init_db() -> None:
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_uis_events_tenant_subject_ts ON uis_events(tenant_id, subject, event_timestamp DESC)"
         )
+        # Zero-downtime migration: add narrative_json column to existing tables
+        _sqlite_add_column_if_missing(cur, "uis_events", "narrative_json", "TEXT")
+
+
+def _sqlite_add_column_if_missing(cur: sqlite3.Cursor, table: str, column: str, col_type: str) -> None:
+    """Idempotent ALTER TABLE — adds column only if it doesn't already exist."""
+    existing = {row[1] for row in cur.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in existing:
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
 
 
 def _pg_init_db() -> None:
@@ -122,7 +132,8 @@ def _pg_init_db() -> None:
                     event_timestamp TEXT NOT NULL,
                     protocol        TEXT NOT NULL,
                     risk_tier       TEXT NOT NULL,
-                    event_json      JSONB NOT NULL
+                    event_json      JSONB NOT NULL,
+                    narrative_json  JSONB
                 )
                 """
             )
@@ -131,6 +142,17 @@ def _pg_init_db() -> None:
             )
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_uis_events_tenant_subject_ts ON uis_events(tenant_id, subject, event_timestamp DESC)"
+            )
+            # Migration: add narrative_json to existing PG tables
+            cur.execute(
+                """
+                DO $$ BEGIN
+                  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                 WHERE table_name='uis_events' AND column_name='narrative_json')
+                  THEN ALTER TABLE uis_events ADD COLUMN narrative_json JSONB;
+                  END IF;
+                END $$
+                """
             )
         conn.commit()
 
@@ -150,12 +172,14 @@ def insert_event(tenant_id: str, event: dict[str, Any]) -> None:
     identity = event.get("identity", {})
     auth = event.get("auth", {})
     threat = event.get("threat", {})
+    narrative = event.get("narrative")
     with _cursor() as cur:
         cur.execute(
             """
             INSERT OR REPLACE INTO uis_events (
-                event_id, tenant_id, subject, event_timestamp, protocol, risk_tier, event_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                event_id, tenant_id, subject, event_timestamp, protocol, risk_tier,
+                event_json, narrative_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event.get("event_id", ""),
@@ -165,6 +189,7 @@ def insert_event(tenant_id: str, event: dict[str, Any]) -> None:
                 auth.get("protocol", "custom"),
                 threat.get("risk_tier", "unknown"),
                 json.dumps(event),
+                json.dumps(narrative) if narrative is not None else None,
             ),
         )
 
@@ -173,20 +198,23 @@ def _pg_insert_event(tenant_id: str, event: dict[str, Any]) -> None:
     identity = event.get("identity", {})
     auth = event.get("auth", {})
     threat = event.get("threat", {})
+    narrative = event.get("narrative")
     with _pg_connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO uis_events (
-                    event_id, tenant_id, subject, event_timestamp, protocol, risk_tier, event_json
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    event_id, tenant_id, subject, event_timestamp, protocol, risk_tier,
+                    event_json, narrative_json
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (event_id) DO UPDATE SET
                     tenant_id = EXCLUDED.tenant_id,
                     subject = EXCLUDED.subject,
                     event_timestamp = EXCLUDED.event_timestamp,
                     protocol = EXCLUDED.protocol,
                     risk_tier = EXCLUDED.risk_tier,
-                    event_json = EXCLUDED.event_json
+                    event_json = EXCLUDED.event_json,
+                    narrative_json = EXCLUDED.narrative_json
                 """,
                 (
                     event.get("event_id", ""),
@@ -196,6 +224,7 @@ def _pg_insert_event(tenant_id: str, event: dict[str, Any]) -> None:
                     auth.get("protocol", "custom"),
                     threat.get("risk_tier", "unknown"),
                     json.dumps(event),
+                    json.dumps(narrative) if narrative is not None else None,
                 ),
             )
         conn.commit()
