@@ -321,15 +321,13 @@ async def api_threats(tenant: TenantContext = Depends(get_tenant)):
 async def api_health_detail(_tenant: TenantContext = Depends(get_tenant)):
     """Detailed system health for the health panel."""
     from modules.identity.cache_redis import is_available as redis_ok
-    from modules.identity.threat_intel import _tor_ips, _tor_last_refresh
-    import datetime
-    tor_age = None
-    if _tor_last_refresh:
-        tor_age = int((datetime.datetime.utcnow() - _tor_last_refresh).total_seconds())
+    from modules.identity.threat_intel import _tor_exits, _tor_last_refresh
+    import time as _time
+    tor_age = int(_time.time() - _tor_last_refresh) if _tor_last_refresh else None
     return {
         "redis":       {"ok": redis_ok()},
         "clickhouse":  {"ok": clickhouse_client.is_available()},
-        "tor_list":    {"ok": len(_tor_ips) > 0, "count": len(_tor_ips), "age_seconds": tor_age},
+        "tor_list":    {"ok": len(_tor_exits) > 0, "count": len(_tor_exits), "age_seconds": tor_age},
         "dev_mode":    DEV_MODE,
         "version":     APP_VERSION,
         "fips_active": fips.is_active(),

@@ -21,7 +21,8 @@ from enum import IntEnum
 from functools import wraps
 from typing import Callable
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, Security, status
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
 logger = logging.getLogger("aegis.rbac")
 
@@ -112,10 +113,14 @@ def require_role(minimum_role: Role) -> Callable:
     return _checker
 
 
-def _get_tenant_ctx():
-    """Import lazily to avoid circular imports."""
+async def _get_tenant_ctx(
+    request: Request,
+    api_key: str | None = Security(APIKeyHeader(name="X-API-Key", auto_error=False)),
+    bearer: HTTPAuthorizationCredentials | None = Security(HTTPBearer(auto_error=False)),
+):
+    """Proper async FastAPI dependency — lazy-imports get_tenant to avoid circular imports."""
     from modules.tenants.middleware import get_tenant
-    return Depends(get_tenant)
+    return await get_tenant(request, api_key, bearer)
 
 
 def _emit_audit(tenant, required_role: Role, granted: bool) -> None:
