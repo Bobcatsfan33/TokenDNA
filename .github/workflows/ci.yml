@@ -161,7 +161,7 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt pytest
 
       - name: Start API for runtime readiness checks
         run: |
