@@ -30,6 +30,7 @@ POST /api/uis/normalize            normalize a protocol event into UIS v1.0
 POST /api/agent/attest             generate 4D agent attestation record
 POST /api/mcp/verify               verify MCP server integrity/capabilities
 """
+from __future__ import annotations
 
 import asyncio
 import json
@@ -70,7 +71,7 @@ from modules.identity.attestation_certificates import issue_certificate, revoke_
 from modules.identity.certificate_status import build_crl, certificate_status_payload
 from modules.identity.edge_enforcement import evaluate_runtime_enforcement
 from modules.identity.trust_authority import list_key_configs
-from modules.identity.attestation_drift import build_drift_event, DriftAssessment
+from modules.identity.attestation_drift import build_drift_event, DriftAssessment, assess_runtime_drift
 from modules.identity import schema_registry
 from modules.identity import policy_bundles
 from modules.identity import network_intel
@@ -89,6 +90,13 @@ from modules.integrations.sdk_wrappers import (
     sdk_create_attestation,
     sdk_normalize_event,
 )
+
+# alias used in /api/oss/sdk/attest route
+def sdk_attest_agent(**kwargs):
+    """Thin alias — maps tenant_name→owner_org for sdk_create_attestation."""
+    if "tenant_name" in kwargs:
+        kwargs["owner_org"] = kwargs.pop("tenant_name")
+    return sdk_create_attestation(**kwargs)
 from modules.product import metering as feature_metering
 from modules.product.feature_gates import PlanTier, evaluate_feature_access, list_feature_matrix
 from modules.storage import db_backend
