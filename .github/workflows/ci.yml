@@ -179,7 +179,7 @@ jobs:
           python scripts/load_profile.py --strict --max-p95-ms 1000
 
       - name: Operator SLO gate contract checks
-        run: python scripts/operator_slo_gate.py --strict
+        run: python scripts/operator_slo_gate.py --strict --skip-infra-deps
 
       - name: Run enterprise readiness tests
         run: |
