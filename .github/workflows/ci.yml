@@ -42,6 +42,7 @@ jobs:
             'modules.identity.session_graph', 'modules.identity.async_pipeline',
             'modules.security.audit_log', 'modules.security.rbac', 'modules.security.headers',
             'onboarding.aws_connector',
+            'modules.identity.uis_narrative',
           ]
           failed = []
           for m in mods:

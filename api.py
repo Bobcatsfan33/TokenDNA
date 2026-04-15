@@ -100,6 +100,7 @@ def sdk_attest_agent(**kwargs):
 from modules.product import metering as feature_metering
 from modules.product.feature_gates import PlanTier, evaluate_feature_access, list_feature_matrix
 from modules.storage import db_backend
+from modules.identity.uis_narrative import enrich_event as uis_enrich_event
 from modules.tenants import store as tenant_store
 from modules.tenants.middleware import get_tenant
 from modules.tenants.models import Plan, TenantContext
@@ -2316,11 +2317,15 @@ async def secure(
     ml_model.update_profile(user_id, current, redis=tr)
     session_graph.add_event(user_id, current, geo, redis=tr)
 
+    # ── 5a. UIS Narrative Enrichment (v1.1) ────────────────────────────────────
+    uis_narrative = uis_enrich_event(user_id, current, breakdown, threat, graph_result)
+
     # ── 6. Async ClickHouse logging ───────────────────────────────────────────
     asyncio.create_task(
         async_pipeline.process_event(
             request_id, user_id, current, breakdown, threat, graph_result,
             tenant_id=tid,
+            uis_narrative=uis_narrative,
         )
     )
 
@@ -2354,7 +2359,15 @@ async def secure(
             status_code=202, media_type="application/json",
         )
 
-    return {"status": "ok", "request_id": request_id, "score": breakdown.final_score, "tier": breakdown.tier.value}
+    # Include UIS narrative in response for non-ALLOW tiers too
+    response = {
+        "status": "ok",
+        "request_id": request_id,
+        "score": breakdown.final_score,
+        "tier": breakdown.tier.value,
+        "uis_narrative": uis_narrative.to_dict() if uis_narrative else None,
+    }
+    return response
 
 
 # ── Profile endpoints ─────────────────────────────────────────────────────────

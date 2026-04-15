@@ -18,6 +18,7 @@ async def process_event(
     threat_context=None,
     graph_result=None,
     tenant_id: str = "_global_",
+    uis_narrative=None,
 ) -> None:
     try:
         await asyncio.to_thread(
@@ -29,6 +30,7 @@ async def process_event(
             threat_context,
             graph_result,
             tenant_id,
+            uis_narrative,
         )
     except Exception as e:
         logger.warning("async_pipeline.process_event failed: %s", e)

@@ -38,3 +38,4 @@ coverage.xml
 
 # Docker
 *.log
+*.pdf
