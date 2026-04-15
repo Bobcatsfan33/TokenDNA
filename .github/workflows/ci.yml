@@ -31,9 +31,6 @@ jobs:
       - name: Ruff lint
         run: ruff check . --output-format=github
 
-      - name: Operator SLO gate contract checks
-        run: python scripts/operator_slo_gate.py --strict
-
       - name: Import verification
         run: |
           python -c "
@@ -182,6 +179,9 @@ jobs:
         run: |
           python tests/load_security_smoke.py --base-url http://127.0.0.1:8000
           python scripts/load_profile.py --strict
+
+      - name: Operator SLO gate contract checks
+        run: python scripts/operator_slo_gate.py --strict
 
       - name: Run enterprise readiness tests
         run: |
