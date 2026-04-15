@@ -204,7 +204,7 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt pytest
 
       - name: Run adversarial harness (strict)
         run: python scripts/adversarial_harness.py --strict
@@ -228,7 +228,7 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt pytest
 
       - name: Seed sample decision audits
         run: |

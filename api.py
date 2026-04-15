@@ -207,7 +207,9 @@ async def _startup_checks() -> None:
     else:
         logger.info("FIPS 140-2 active ✓ (environment=%s)", il_env)
 
-    os.makedirs("/data", exist_ok=True)
+    _data_dir = os.path.dirname(os.getenv("DATA_DB_PATH", "/data/tokendna.db"))
+    if _data_dir:
+        os.makedirs(_data_dir, exist_ok=True)
     tenant_store.init_db()
     attestation_store.init_db()
     uis_store.init_db()
