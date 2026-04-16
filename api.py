@@ -73,6 +73,7 @@ from modules.identity.edge_enforcement import evaluate_runtime_enforcement
 from modules.identity.trust_authority import list_key_configs
 from modules.identity.attestation_drift import build_drift_event, DriftAssessment, assess_runtime_drift
 from modules.identity import schema_registry
+from modules.identity import trust_graph
 from modules.identity import policy_bundles
 from modules.identity import network_intel
 from modules.identity import compliance
@@ -214,6 +215,7 @@ async def _startup_checks() -> None:
     tenant_store.init_db()
     attestation_store.init_db()
     uis_store.init_db()
+    trust_graph.init_db()
     ct_log.init_db()
     network_intel.init_db()
     compliance.init_db()
@@ -2624,3 +2626,63 @@ async def api_audit_log(
         pass
 
     return {"entries": entries[-limit:], "total": len(entries)}
+
+
+# ── Trust Graph endpoints ──────────────────────────────────────────────────────
+
+@app.get("/api/graph/path/{from_label:path}")
+async def api_graph_path(
+    from_label: str,
+    to: str,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    GET /api/graph/path/{from_label}?to={to_label}
+
+    Find the shortest trust path between two nodes (identified by label).
+    Returns the path as a list of node objects and the hop count.
+    """
+    result = trust_graph.shortest_path(
+        tenant_id=tenant.tenant_id,
+        from_label=from_label,
+        to_label=to,
+    )
+    return {"tenant_id": tenant.tenant_id, **result}
+
+
+@app.get("/api/graph/anomalies")
+async def api_graph_anomalies(
+    limit: int = 50,
+    severity: str | None = None,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    GET /api/graph/anomalies
+
+    Return detected trust-graph anomalies for the tenant, newest first.
+    Optional ?severity=low|medium|high|critical filter.
+    """
+    anomalies = trust_graph.get_anomalies(
+        tenant_id=tenant.tenant_id,
+        limit=min(limit, 200),
+        severity=severity,
+    )
+    return {
+        "tenant_id": tenant.tenant_id,
+        "anomalies": anomalies,
+        "count": len(anomalies),
+    }
+
+
+@app.get("/api/graph/stats")
+async def api_graph_stats(
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    GET /api/graph/stats
+
+    Return graph shape statistics for the tenant: node count, edge count,
+    type breakdowns, and anomaly count.
+    """
+    stats = trust_graph.get_stats(tenant_id=tenant.tenant_id)
+    return {"tenant_id": tenant.tenant_id, **stats}

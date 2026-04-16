@@ -176,6 +176,14 @@ def insert_event(tenant_id: str, event: dict[str, Any]) -> None:
                 json.dumps(event),
             ),
         )
+    # Incrementally build the trust graph from this event (non-fatal)
+    try:
+        from modules.identity import trust_graph  # noqa: PLC0415
+        anomalies = trust_graph.ingest_uis_event(tenant_id, event)
+        for anomaly in anomalies:
+            trust_graph.store_anomaly(anomaly)
+    except Exception:  # noqa: BLE001
+        pass  # graph ingestion never blocks event persistence
 
 
 def _pg_insert_event(tenant_id: str, event: dict[str, Any]) -> None:
