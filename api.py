@@ -75,6 +75,7 @@ from modules.identity.attestation_drift import build_drift_event, DriftAssessmen
 from modules.identity import schema_registry
 from modules.identity import trust_graph
 from modules.identity import blast_radius
+from modules.identity import intent_correlation
 from modules.identity import policy_bundles
 from modules.identity import network_intel
 from modules.identity import compliance
@@ -217,6 +218,7 @@ async def _startup_checks() -> None:
     attestation_store.init_db()
     uis_store.init_db()
     trust_graph.init_db()
+    intent_correlation.init_db()
     ct_log.init_db()
     network_intel.init_db()
     compliance.init_db()
@@ -2741,3 +2743,124 @@ async def api_blast_radius_history(
         limit=min(limit, 100),
     )
     return {"tenant_id": tenant.tenant_id, "simulations": history, "count": len(history)}
+
+
+# ── Intent Correlation endpoints ───────────────────────────────────────────────
+
+@app.get("/api/intent/matches")
+async def api_intent_matches(
+    limit: int = 50,
+    severity: str | None = None,
+    playbook_id: str | None = None,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    GET /api/intent/matches
+
+    Return recent exploit intent matches for the tenant, newest first.
+    Optional ?severity= and ?playbook_id= filters.
+    Each match includes the playbook that fired, confidence score,
+    and the event IDs that triggered the match.
+    """
+    matches = intent_correlation.get_matches(
+        tenant_id=tenant.tenant_id,
+        limit=min(limit, 200),
+        severity=severity,
+        playbook_id=playbook_id,
+    )
+    return {
+        "tenant_id": tenant.tenant_id,
+        "matches": matches,
+        "count": len(matches),
+    }
+
+
+@app.get("/api/intent/playbooks")
+async def api_intent_playbooks(
+    include_builtin: bool = True,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    GET /api/intent/playbooks
+
+    Return all active playbooks for the tenant (global built-ins + custom).
+    """
+    playbooks = intent_correlation.get_playbooks(
+        tenant_id=tenant.tenant_id,
+        include_builtin=include_builtin,
+    )
+    return {
+        "tenant_id": tenant.tenant_id,
+        "playbooks": playbooks,
+        "count": len(playbooks),
+    }
+
+
+@app.post("/api/intent/playbooks")
+async def api_intent_add_playbook(
+    body: dict,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """
+    POST /api/intent/playbooks
+
+    Create a custom attack playbook for the tenant.
+
+    Request body:
+      {
+        "name": "My Custom Playbook",
+        "description": "...",
+        "severity": "high",
+        "steps": [
+          { "category": "auth_anomaly", "min_confidence": 0.5 },
+          { "category": "privilege_escalation" }
+        ],
+        "window_seconds": 3600
+      }
+    """
+    name = str(body.get("name") or "").strip()
+    description = str(body.get("description") or "").strip()
+    severity = str(body.get("severity") or "medium")
+    steps = body.get("steps") or []
+    window_seconds = int(body.get("window_seconds") or 3600)
+
+    if not name:
+        raise HTTPException(status_code=400, detail="'name' is required")
+    if not steps:
+        raise HTTPException(status_code=400, detail="'steps' must be a non-empty list")
+
+    try:
+        pid = intent_correlation.add_playbook(
+            tenant_id=tenant.tenant_id,
+            name=name,
+            description=description,
+            severity=severity,
+            steps=steps,
+            window_seconds=window_seconds,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    return {"playbook_id": pid, "tenant_id": tenant.tenant_id, "name": name}
+
+
+@app.delete("/api/intent/playbooks/{playbook_id}")
+async def api_intent_delete_playbook(
+    playbook_id: str,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """
+    DELETE /api/intent/playbooks/{playbook_id}
+
+    Delete a custom playbook. Built-in playbooks cannot be deleted.
+    """
+    deleted = intent_correlation.delete_playbook(
+        tenant_id=tenant.tenant_id,
+        playbook_id=playbook_id,
+    )
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail="Playbook not found, not owned by this tenant, or is a built-in",
+        )
+    return {"deleted": True, "playbook_id": playbook_id}
