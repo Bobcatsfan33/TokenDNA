@@ -165,6 +165,61 @@
   .pb-name { font-size: 13px; font-weight: 500; margin-bottom: 2px; }
   .pb-meta { font-size: 11px; color: var(--muted); display: flex; gap: 10px; }
   .loading { color: var(--muted); font-size: 13px; padding: 32px; text-align: center; }
+
+  /* ── UIS Event Inspector Modal ── */
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.75); z-index: 1000; display: flex; align-items: flex-start; justify-content: center; padding: 24px; overflow-y: auto; }
+  .modal-box { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; width: 100%; max-width: 900px; min-height: 60vh; display: flex; flex-direction: column; margin: auto; }
+  .modal-head { padding: 20px 24px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; gap: 16px; }
+  .modal-title { font-size: 16px; font-weight: 700; letter-spacing: -0.3px; flex: 1; }
+  .modal-close { background: var(--surface2); border: 1px solid var(--border); color: var(--muted); border-radius: 6px; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 16px; flex-shrink: 0; transition: all .12s; }
+  .modal-close:hover { color: var(--text); border-color: var(--muted); }
+  .modal-tabs { display: flex; gap: 0; padding: 0 24px; border-bottom: 1px solid var(--border); overflow-x: auto; }
+  .modal-tab { padding: 10px 14px; font-size: 12px; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; color: var(--muted); white-space: nowrap; transition: all .12s; }
+  .modal-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .modal-tab:hover:not(.active) { color: var(--text); }
+  .modal-body { padding: 20px 24px; flex: 1; overflow-y: auto; }
+  .schema-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .schema-row { display: flex; align-items: flex-start; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--border); }
+  .schema-row:last-child { border-bottom: none; }
+  .schema-key { font-size: 12px; font-family: 'SF Mono','Cascadia Code',monospace; font-weight: 600; min-width: 180px; flex-shrink: 0; }
+  .schema-val { font-size: 12px; color: var(--text); word-break: break-all; }
+  .schema-null { color: var(--muted); font-style: italic; }
+  .binding-highlight { background: rgba(99,102,241,.12); border-radius: 4px; padding: 2px 6px; border: 1px solid rgba(99,102,241,.25); }
+  .risk-gauge { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .gauge-track { flex: 1; height: 10px; background: var(--surface3); border-radius: 5px; overflow: hidden; }
+  .gauge-fill { height: 100%; border-radius: 5px; transition: width .4s; }
+  .indicator-chip { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; background: rgba(239,68,68,.15); color: #fca5a5; border: 1px solid rgba(239,68,68,.2); margin: 2px; }
+  .travel-warn { background: rgba(239,68,68,.12); border: 1px solid rgba(239,68,68,.3); border-radius: 6px; padding: 10px 14px; color: #fca5a5; font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+
+  /* ── Identity Card Page ── */
+  .icard-grid { display: grid; grid-template-columns: 360px 1fr; gap: 20px; margin-bottom: 20px; }
+  .icard-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; }
+  .icard-name { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+  .icard-meta { font-size: 12px; color: var(--muted); margin-bottom: 16px; }
+  .icard-section { margin-bottom: 14px; }
+  .icard-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin-bottom: 6px; }
+  .timeline-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--surface2); border-radius: 6px; margin-bottom: 4px; }
+  .timeline-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--accent); }
+  .sparkline-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; }
+
+  /* ── ZTIX Exchange Page ── */
+  .ztix-timeline { display: flex; flex-direction: column; gap: 0; }
+  .ztix-step { display: flex; gap: 16px; opacity: 0; transition: opacity .4s; }
+  .ztix-step.visible { opacity: 1; }
+  .ztix-step-line { display: flex; flex-direction: column; align-items: center; }
+  .ztix-step-num { width: 34px; height: 34px; border-radius: 50%; background: var(--surface3); border: 2px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; color: var(--muted); flex-shrink: 0; transition: all .3s; }
+  .ztix-step-num.active { background: var(--accent); border-color: var(--accent); color: white; box-shadow: 0 0 12px rgba(59,130,246,.4); }
+  .ztix-step-connector { width: 2px; flex: 1; min-height: 24px; background: var(--border); margin: 4px 0; }
+  .ztix-step-body { flex: 1; padding-bottom: 24px; }
+  .ztix-step-title { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+  .ztix-step-desc { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+  .ztix-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .ztix-check { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 12px; }
+  .ztix-check-pass { color: var(--green); }
+  .ztix-check-fail { color: var(--red); }
+  .ztix-token-card { background: linear-gradient(135deg, rgba(59,130,246,.12) 0%, rgba(99,102,241,.08) 100%); border: 1px solid rgba(59,130,246,.25); border-radius: 8px; padding: 16px; }
+  .ztix-mode-btn { padding: 7px 18px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); background: var(--surface2); color: var(--muted); transition: all .12s; }
+  .ztix-mode-btn.active { background: var(--accent); border-color: var(--accent); color: white; }
 </style>
 </head>
 <body>
@@ -222,6 +277,113 @@ function ago(iso) {
   } catch { return iso.slice(11,19); }
 }
 
+// ── UIS Event Inspector Modal ──────────────────────────────────────────────────
+const UIS_SECTIONS = {
+  identity: { color: "#3b82f6", fields: ["entity_type","subject","tenant_id","tenant_name","display_name","machine_classification","agent_id"] },
+  auth:     { color: "#10b981", fields: ["method","mfa_asserted","protocol","credential_strength"] },
+  token:    { color: "#f59e0b", fields: ["type","issuer","audience","claims_hash","dpop_bound","expires_at","issued_at","jti"] },
+  session:  { color: "#8b5cf6", fields: ["id","request_id","ip","country","asn","device_fingerprint","user_agent","impossible_travel","graph_position"] },
+  behavior: { color: "#06b6d4", fields: ["dna_fingerprint","pattern_deviation_score","velocity_anomaly"] },
+  threat:   { color: "#ef4444", fields: ["risk_score","risk_tier","indicators","lateral_movement"] },
+  binding:  { color: "#64748b", fields: ["dpop_jkt","mtls_subject","spiffe_id","attestation_id","supply_chain_hash"] },
+};
+const BINDING_FIELDS = new Set(["dpop_jkt","mtls_subject","spiffe_id","attestation_id","supply_chain_hash"]);
+
+function EventInspectorModal({ eventId, onClose }) {
+  const [ev, setEv] = useState(null);
+  const [tab, setTab] = useState("identity");
+
+  useEffect(() => {
+    if (!eventId) return;
+    fetch(`${API_BASE}/api/uis/events/${eventId}`, { headers: { "X-API-Key": "demo-key" } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => d && setEv(d.event))
+      .catch(() => {});
+  }, [eventId]);
+
+  const handleBackdrop = e => { if (e.target === e.currentTarget) onClose(); };
+
+  const section = UIS_SECTIONS[tab] || {};
+  const sectionData = ev ? (ev[tab] || {}) : {};
+
+  return h("div", { className: "modal-backdrop", onClick: handleBackdrop },
+    h("div", { className: "modal-box" },
+      // Head
+      h("div", { className: "modal-head" },
+        h("div", { style: { flex: 1, minWidth: 0 } },
+          h("div", { className: "modal-title" }, "🔍 UIS Event Inspector"),
+          ev && h("div", { style: { fontSize: 11, color: "var(--muted)", marginTop: 3, fontFamily: "monospace" } },
+            ev.event_id, " · ", ev.uis_version || "1.0", " · ", ts(ev.event_timestamp)),
+        ),
+        h("div", { className: "modal-close", onClick: onClose }, "×"),
+      ),
+      // Tabs
+      h("div", { className: "modal-tabs" },
+        Object.keys(UIS_SECTIONS).map(s =>
+          h("div", { key: s, className: `modal-tab${tab === s ? " active" : ""}`, onClick: () => setTab(s),
+            style: tab === s ? { color: UIS_SECTIONS[s].color, borderBottomColor: UIS_SECTIONS[s].color } : {} },
+            s.charAt(0).toUpperCase() + s.slice(1),
+          )
+        ),
+      ),
+      // Body
+      h("div", { className: "modal-body" },
+        !ev
+          ? h("div", { className: "loading" }, "Loading event…")
+          : h("div", null,
+              // Impossible travel warning
+              tab === "session" && sectionData.impossible_travel &&
+                h("div", { className: "travel-warn" }, "⚠️ Impossible travel detected — this session originated from a geographically inconsistent location"),
+              // Threat section: gauge + chips
+              tab === "threat" && h("div", { style: { marginBottom: 14 } },
+                h("div", { className: "risk-gauge" },
+                  h("div", { style: { fontSize: 12, color: "var(--muted)", minWidth: 80 } }, "Risk Score"),
+                  h("div", { className: "gauge-track" },
+                    h("div", { className: "gauge-fill", style: {
+                      width: (sectionData.risk_score || 0) + "%",
+                      background: (sectionData.risk_score || 0) >= 70 ? "var(--red)" : (sectionData.risk_score || 0) >= 40 ? "var(--yellow)" : "var(--green)",
+                    } }),
+                  ),
+                  h("div", { style: { fontSize: 13, fontWeight: 700, minWidth: 30 } }, sectionData.risk_score ?? "—"),
+                  h(Badge, { sev: sectionData.risk_tier || "low" }),
+                ),
+                (sectionData.indicators || []).length > 0 && h("div", { style: { marginBottom: 10 } },
+                  h("div", { style: { fontSize: 11, color: "var(--muted)", marginBottom: 6, fontWeight: 600 } }, "INDICATORS"),
+                  h("div", null, (sectionData.indicators || []).map((ind, i) =>
+                    h("span", { key: i, className: "indicator-chip" }, ind)
+                  )),
+                ),
+              ),
+              // Schema fields
+              h("div", { className: "schema-card" },
+                (section.fields || Object.keys(sectionData)).map(key =>
+                  h("div", { key, className: "schema-row" },
+                    h("div", { className: "schema-key",
+                      style: { color: BINDING_FIELDS.has(key) && sectionData[key] != null ? "#a5b4fc" : section.color || "var(--muted)" } },
+                      BINDING_FIELDS.has(key) && sectionData[key] != null
+                        ? h("span", { className: "binding-highlight" }, key)
+                        : key,
+                    ),
+                    h("div", { className: "schema-val" },
+                      sectionData[key] == null
+                        ? h("span", { className: "schema-null" }, "null")
+                        : typeof sectionData[key] === "boolean"
+                        ? h("span", { style: { color: sectionData[key] ? "var(--green)" : "var(--muted)" } }, sectionData[key].toString())
+                        : Array.isArray(sectionData[key])
+                        ? (sectionData[key].length === 0
+                          ? h("span", { className: "schema-null" }, "[]")
+                          : h("span", { className: "mono" }, JSON.stringify(sectionData[key])))
+                        : h("span", { className: "mono" }, String(sectionData[key])),
+                    ),
+                  )
+                ),
+              ),
+            ),
+      ),
+    ),
+  );
+}
+
 // ── Overview ──────────────────────────────────────────────────────────────────
 function OverviewPage() {
   const [stats]   = useApi("/api/stats",          { total_events:0, blocked:0, revoked:0, step_up:0, allow_rate:0 }, 10000);
@@ -229,6 +391,7 @@ function OverviewPage() {
   const [matches] = useApi("/api/intent/matches?limit=3", { matches:[], count:0 }, 10000);
   const [anom]    = useApi("/api/graph/anomalies?limit=5", { anomalies:[] }, 10000);
   const [events]  = useApi("/api/uis/events?limit=8", { events:[] }, 8000);
+  const [inspectId, setInspectId] = useState(null);
 
   const anoms = anom.anomalies || [];
   const mtchs = matches.matches || [];
@@ -345,7 +508,11 @@ function OverviewPage() {
                                : n.confidence === "MEDIUM" ? 0.6
                                : n.confidence === "LOW" ? 0.35 : null;
                   const proto = (ev.auth||{}).protocol || "—";
-                  return h("tr", { key: i },
+                  return h("tr", { key: i,
+                    style: { cursor: "pointer" },
+                    title: "Click to inspect",
+                    onClick: () => setInspectId(ev.event_id),
+                  },
                     h("td", { className: "mono text-muted", style:{whiteSpace:"nowrap"} }, ts(ev.event_timestamp)),
                     h("td", { style:{maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"} }, id.subject || "—"),
                     h("td", { className:"mono", style:{fontSize:11} }, proto),
@@ -359,6 +526,7 @@ function OverviewPage() {
         ),
       ),
     ),
+    inspectId && h(EventInspectorModal, { eventId: inspectId, onClose: () => setInspectId(null) }),
   );
 }
 
@@ -921,6 +1089,460 @@ function SystemPage() {
   );
 }
 
+// ── Agent Identity Card Page ─────────────────────────────────────────────────
+function RiskSparkline({ events }) {
+  const W = 600, H = 60;
+  if (!events || events.length < 2) return null;
+  const scores = events.map(e => (e.threat || {}).risk_score ?? 0);
+  const xScale = i => (i / (scores.length - 1)) * W;
+  const yScale = s => H - (s / 100) * H;
+  const pts = scores.map((s, i) => `${xScale(i)},${yScale(s)}`).join(" ");
+  const polyPts = `0,${H} ` + pts + ` ${W},${H}`;
+  const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+  const lineColor = avg >= 70 ? "#ef4444" : avg >= 40 ? "#f59e0b" : "#10b981";
+  const fillColor = avg >= 70 ? "rgba(239,68,68,.2)" : avg >= 40 ? "rgba(245,158,11,.15)" : "rgba(16,185,129,.12)";
+  return h("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", height: H, preserveAspectRatio: "none",
+    style: { display: "block", borderRadius: 4 } },
+    h("polygon", { points: polyPts, fill: fillColor }),
+    h("polyline", { points: pts, fill: "none", stroke: lineColor, strokeWidth: 2, strokeLinejoin: "round" }),
+  );
+}
+
+function IdentityCardPage() {
+  const [graphData] = useApi("/api/graph/data", { nodes: [], edges: [] }, 15000);
+  const [selectedAgent, setSelectedAgent] = useState("");
+  const [agentEvents, setAgentEvents] = useState([]);
+  const [loadingEvents, setLoadingEvents] = useState(false);
+
+  const agentNodes = (graphData.nodes || []).filter(n => n.node_type === "agent");
+
+  useEffect(() => {
+    if (!selectedAgent && agentNodes.length > 0) setSelectedAgent(agentNodes[0].label);
+  }, [agentNodes.length]);
+
+  useEffect(() => {
+    if (!selectedAgent) return;
+    setLoadingEvents(true);
+    const subject = selectedAgent.startsWith("agt-")
+      ? "agent-" + selectedAgent.slice(4) + "@acme.svc"
+      : selectedAgent + "@acme.svc";
+    fetch(`${API_BASE}/api/uis/events?limit=10&subject=${encodeURIComponent(subject)}`,
+      { headers: { "X-API-Key": "demo-key" } })
+      .then(r => r.ok ? r.json() : { events: [] })
+      .then(d => { setAgentEvents(d.events || []); setLoadingEvents(false); })
+      .catch(() => setLoadingEvents(false));
+  }, [selectedAgent]);
+
+  const selectedNode = agentNodes.find(n => n.label === selectedAgent);
+  const edges = graphData.edges || [];
+  const outEdges = edges.filter(e => e.src_label === selectedAgent);
+  const issuers   = [...new Set(outEdges.filter(e => e.edge_type === "authenticated_by" || e.edge_type === "trusts_issuer").map(e => e.dst_label))];
+  const verifiers = [...new Set(outEdges.filter(e => e.edge_type === "attested_by" || e.edge_type === "verified_by").map(e => e.dst_label))];
+  const recentEvent = agentEvents[0] || null;
+  const riskTier  = (recentEvent?.threat || {}).risk_tier  || "low";
+  const riskScore = (recentEvent?.threat || {}).risk_score ?? "\u2014";
+
+  return h("div", null,
+    h("div", { className: "section-head" },
+      h("div", { className: "section-title" }, "\ud83e\udeb9 Agent Identity Card"),
+      h("div", { className: "section-sub" }, "Inspect any agent\u2019s identity posture, trust relationships, and event history"),
+    ),
+    h("div", { className: "card", style: { marginBottom: 20 } },
+      h("div", { className: "card-body", style: { display: "flex", alignItems: "center", gap: 16 } },
+        h("div", { style: { fontSize: 11, color: "var(--muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".7px" } }, "Select Agent"),
+        h("select", {
+          value: selectedAgent,
+          onChange: e => setSelectedAgent(e.target.value),
+          style: { background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)", padding: "8px 12px", borderRadius: 6, fontSize: 13, outline: "none", minWidth: 240 },
+        },
+          agentNodes.length === 0
+            ? h("option", null, "No agents \u2014 run demo_seed.py")
+            : agentNodes.map(n => h("option", { key: n.node_id, value: n.label }, n.label))
+        ),
+        selectedNode && h("div", { style: { fontSize: 12, color: "var(--muted)" } },
+          h("span", { className: "chip", style: { marginRight: 8 } }, selectedNode.node_type),
+          `${selectedNode.observation_count || 0} observations`,
+        ),
+      ),
+    ),
+    selectedAgent && h("div", null,
+      h("div", { className: "icard-grid" },
+        h("div", { className: "icard-panel" },
+          h("div", { className: "icard-name" }, selectedAgent),
+          h("div", { className: "icard-meta" }, (selectedNode?.node_type || "agent"), " \u00b7 ", selectedNode?.observation_count || 0, " observations"),
+          h("div", { className: "icard-section" },
+            h("div", { className: "icard-label" }, "Machine Classification"),
+            h("div", { style: { fontSize: 13 } }, (recentEvent?.identity || {}).machine_classification || "agent"),
+          ),
+          h("div", { className: "icard-section" },
+            h("div", { className: "icard-label" }, "Trusted Issuers"),
+            issuers.length === 0
+              ? h("div", { style: { fontSize: 12, color: "var(--muted)" } }, "None recorded")
+              : issuers.map((iss, i) => h("div", { key: i, style: { fontSize: 12, fontFamily: "monospace", color: "var(--yellow)", marginBottom: 2 } }, iss)),
+          ),
+          h("div", { className: "icard-section" },
+            h("div", { className: "icard-label" }, "Verifiers / Attestations"),
+            verifiers.length === 0
+              ? h("div", { style: { fontSize: 12, color: "var(--muted)" } }, "None recorded")
+              : verifiers.map((v, i) => h("div", { key: i, style: { fontSize: 12, fontFamily: "monospace", color: "#fca5a5", marginBottom: 2 } }, v)),
+          ),
+          h("div", { className: "icard-section" },
+            h("div", { className: "icard-label" }, "Risk Posture"),
+            h("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
+              h(Badge, { sev: riskTier }),
+              h("span", { style: { fontSize: 13, fontWeight: 700,
+                color: typeof riskScore === "number" && riskScore >= 70 ? "var(--red)" : typeof riskScore === "number" && riskScore >= 40 ? "var(--yellow)" : "var(--green)" } },
+                typeof riskScore === "number" ? `Score: ${riskScore}` : "No events"),
+            ),
+          ),
+        ),
+        h("div", { className: "icard-panel" },
+          h("div", { style: { fontSize: 13, fontWeight: 600, marginBottom: 14 } }, "Recent Events"),
+          loadingEvents
+            ? h("div", { className: "loading" }, "Loading\u2026")
+            : agentEvents.length === 0
+            ? h("div", { className: "empty" }, h("div", { className: "empty-icon" }, "\ud83d\udcad"), h("div", { className: "empty-msg" }, "No events for this agent"))
+            : agentEvents.map((ev, i) => {
+                const t = ev.threat || {};
+                const sColor = t.risk_score >= 70 ? "var(--red)" : t.risk_score >= 40 ? "var(--yellow)" : "var(--green)";
+                return h("div", { key: i, className: "timeline-row" },
+                  h("div", { className: "timeline-dot", style: { background: sColor } }),
+                  h("div", { style: { flex: 1, minWidth: 0 } },
+                    h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+                      h("span", { className: "mono text-muted", style: { fontSize: 11 } }, ts(ev.event_timestamp)),
+                      h("span", { className: "mono", style: { fontSize: 11 } }, (ev.auth || {}).protocol || "\u2014"),
+                    ),
+                  ),
+                  h(Badge, { sev: t.risk_tier || "low" }),
+                  h("span", { style: { fontSize: 12, fontWeight: 700, color: sColor, minWidth: 28, textAlign: "right" } }, t.risk_score ?? "\u2014"),
+                );
+              }),
+        ),
+      ),
+      h("div", { className: "sparkline-wrap" },
+        h("div", { style: { fontSize: 12, fontWeight: 600, marginBottom: 10, color: "var(--muted)" } }, "Risk Score Timeline"),
+        agentEvents.length < 2
+          ? h("div", { style: { fontSize: 12, color: "var(--muted)", padding: "12px 0" } }, "Need \u22652 events to render chart")
+          : h(RiskSparkline, { events: agentEvents }),
+      ),
+    ),
+  );
+}
+
+// ── ZTIX Exchange Flow Page ───────────────────────────────────────────────────
+function ZTIXExchangePage() {
+  const [mode, setMode] = useState("walkthrough");
+  const [visibleStep, setVisibleStep] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const playRef = useRef(null);
+  const [graphData] = useApi("/api/graph/data", { nodes: [], edges: [] }, 30000);
+  const agentNodes = (graphData.nodes || []).filter(n => n.node_type === "agent");
+  const [agentA, setAgentA] = useState("");
+  const [agentB, setAgentB] = useState("");
+  const [simResult, setSimResult] = useState(null);
+  const [simLoading, setSimLoading] = useState(false);
+  const [simVisStep, setSimVisStep] = useState(0);
+
+  useEffect(() => {
+    if (agentNodes.length > 0 && !agentA) setAgentA(agentNodes[0].label);
+    if (agentNodes.length > 1 && !agentB) setAgentB(agentNodes[1].label);
+  }, [agentNodes.length]);
+
+  const nowIso = new Date().toISOString();
+  const mockSessionId = "sess-" + Math.random().toString(36).slice(2, 10);
+  const mockClaimsHash = "a3f9b2c1d4e5..." + Math.random().toString(36).slice(2, 6);
+
+  const walkSteps = [
+    {
+      title: "Agent A Asserts Identity",
+      desc: "agt-orchestrator presents its UIS v1.1 identity token to the ZTIX exchange endpoint",
+      content: () => h("div", { className: "ztix-card" },
+        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Protocol"), h("div", { className: "mono", style: { fontSize: 12 } }, "spiffe")),
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Issuer"), h("div", { className: "mono", style: { fontSize: 12 } }, "https://auth.acme.io")),
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Attestation ID"), h("div", { className: "mono", style: { fontSize: 12, color: "#a5b4fc" } }, "att-orch-001")),
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Claims Hash"), h("div", { className: "mono", style: { fontSize: 12, color: "var(--muted)" } }, mockClaimsHash)),
+        )
+      ),
+    },
+    {
+      title: "ZTIX Verifies Binding",
+      desc: "Exchange verifies DPoP binding and attestation chain",
+      content: () => h("div", { className: "ztix-card" },
+        [
+          { label: "dpop_bound", pass: true },
+          { label: "attestation_id present", pass: true },
+          { label: "supply_chain_hash", pass: false },
+          { label: "issuer trusted", pass: true },
+        ].map(({ label, pass }) =>
+          h("div", { key: label, className: `ztix-check ${pass ? "ztix-check-pass" : "ztix-check-fail"}` },
+            h("span", null, pass ? "\u2713" : "\u2717"),
+            h("span", { className: "mono", style: { fontSize: 12, marginLeft: 8 } }, label),
+            !pass && h("span", { style: { fontSize: 11, color: "var(--muted)", marginLeft: 8 } }, "(not bound)"),
+          )
+        )
+      ),
+    },
+    {
+      title: "Risk Score Evaluated",
+      desc: "Runtime risk engine scores the presenting identity",
+      content: () => h("div", { className: "ztix-card" },
+        h("div", { className: "risk-gauge", style: { marginBottom: 10 } },
+          h("div", { style: { fontSize: 12, color: "var(--muted)", minWidth: 80 } }, "Risk Score"),
+          h("div", { className: "gauge-track" }, h("div", { className: "gauge-fill", style: { width: "22%", background: "var(--green)" } })),
+          h("div", { style: { fontSize: 13, fontWeight: 700, color: "var(--green)" } }, "22"),
+          h(Badge, { sev: "low" }),
+        ),
+        h("div", { style: { fontSize: 11, color: "var(--muted)", marginTop: 8 } }, "Indicators: none detected \u2014 clean identity posture"),
+      ),
+    },
+    {
+      title: "ZTIX Token Issued",
+      desc: "Exchange issues a short-lived ZTIX token bound to the verified identity",
+      content: () => h("div", { className: "ztix-token-card" },
+        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "ZTIX ID"), h("div", { className: "mono", style: { fontSize: 12, color: "var(--accent)" } }, "ztix-a3f1b2c9")),
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Bound To"), h("div", { className: "mono", style: { fontSize: 12 } }, "agt-orchestrator")),
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Issued At"), h("div", { className: "mono", style: { fontSize: 12 } }, ts(nowIso))),
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Expires In"), h("div", { className: "mono", style: { fontSize: 12, color: "var(--yellow)" } }, "300s")),
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Scope"), h("div", { className: "mono", style: { fontSize: 12 } }, "read:data, execute:tools")),
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Trust Level"), h("div", { style: { color: "var(--green)", fontWeight: 700 } }, "verified")),
+        )
+      ),
+    },
+    {
+      title: "Agent B Accepts",
+      desc: "agt-analyst accepts the ZTIX token and establishes the trust channel",
+      content: () => h("div", { className: "ztix-card" },
+        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Accepted By"), h("div", { className: "mono", style: { fontSize: 12 } }, "agt-analyst")),
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Verified At"), h("div", { className: "mono", style: { fontSize: 12 } }, ts(nowIso))),
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Session ID"), h("div", { className: "mono", style: { fontSize: 12, color: "var(--accent)" } }, mockSessionId)),
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Channel"), h("div", { style: { color: "var(--green)", fontWeight: 700 } }, "encrypted")),
+        )
+      ),
+    },
+  ];
+
+  useEffect(() => {
+    if (playing && visibleStep < walkSteps.length) {
+      playRef.current = setTimeout(() => setVisibleStep(v => v + 1), 1500);
+    } else if (visibleStep >= walkSteps.length) {
+      setPlaying(false);
+    }
+    return () => clearTimeout(playRef.current);
+  }, [playing, visibleStep]);
+
+  const replay = () => { setVisibleStep(0); setTimeout(() => setVisibleStep(1), 50); };
+  const togglePlay = () => {
+    if (!playing && visibleStep === 0) setVisibleStep(1);
+    setPlaying(p => !p);
+  };
+
+  const runSimulate = async () => {
+    if (!agentA || !agentB) return;
+    setSimLoading(true); setSimResult(null); setSimVisStep(0);
+    try {
+      const r = await fetch(`${API_BASE}/api/ztix/simulate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-API-Key": "demo-key" },
+        body: JSON.stringify({ agent_a: agentA, agent_b: agentB }),
+      });
+      const d = await r.json();
+      setSimResult(d);
+      let step = 1;
+      const advance = () => {
+        setSimVisStep(step);
+        step++;
+        if (step <= 5) setTimeout(advance, 700);
+      };
+      setTimeout(advance, 300);
+    } catch(e) {}
+    setSimLoading(false);
+  };
+
+  return h("div", null,
+    h("div", { className: "section-head" },
+      h("div", { className: "section-title" }, "\ud83d\udd04 ZTIX Exchange Flow"),
+      h("div", { className: "section-sub" }, "Zero-Trust Identity Exchange \u2014 how two agents establish trust and exchange identity tokens"),
+    ),
+    h("div", { style: { display: "flex", gap: 8, marginBottom: 20 } },
+      h("button", { className: `ztix-mode-btn${mode === "walkthrough" ? " active" : ""}`, onClick: () => setMode("walkthrough") }, "Walkthrough"),
+      h("button", { className: `ztix-mode-btn${mode === "live" ? " active" : ""}`, onClick: () => setMode("live") }, "Live Simulate"),
+    ),
+
+    mode === "walkthrough" && h("div", null,
+      h("div", { style: { display: "flex", gap: 10, marginBottom: 20, alignItems: "center" } },
+        h("button", {
+          onClick: togglePlay,
+          style: { background: "var(--accent)", color: "white", border: "none", padding: "8px 20px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer" },
+        }, playing ? "\u23f8 Pause" : "\u25b6 Play"),
+        visibleStep > 0 && h("button", {
+          onClick: replay,
+          style: { background: "var(--surface2)", color: "var(--text)", border: "1px solid var(--border)", padding: "8px 20px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer" },
+        }, "\ud83d\udd04 Replay"),
+        h("span", { style: { fontSize: 12, color: "var(--muted)" } },
+          visibleStep === 0 ? "Click \u25b6 Play to begin" : `Step ${Math.min(visibleStep, walkSteps.length)} of ${walkSteps.length}`),
+      ),
+      h("div", { className: "card" },
+        h("div", { className: "card-body" },
+          h("div", { className: "ztix-timeline" },
+            walkSteps.map((step, i) => {
+              const stepNum = i + 1;
+              const isVisible = visibleStep >= stepNum;
+              return h("div", { key: i, className: "ztix-step",
+                style: { opacity: isVisible ? 1 : 0, transition: `opacity .4s ease` },
+              },
+                h("div", { className: "ztix-step-line" },
+                  h("div", { className: `ztix-step-num${isVisible ? " active" : ""}` }, stepNum),
+                  i < walkSteps.length - 1 && h("div", { className: "ztix-step-connector" }),
+                ),
+                h("div", { className: "ztix-step-body" },
+                  h("div", { className: "ztix-step-title" }, step.title),
+                  h("div", { className: "ztix-step-desc" }, step.desc),
+                  isVisible && step.content(),
+                ),
+              );
+            })
+          ),
+        ),
+      ),
+    ),
+
+    mode === "live" && h("div", null,
+      h("div", { className: "card", style: { marginBottom: 20 } },
+        h("div", { className: "card-head" }, h("div", { className: "card-title" }, "Configure Exchange")),
+        h("div", { className: "card-body", style: { display: "flex", gap: 16, alignItems: "flex-end", flexWrap: "wrap" } },
+          h("div", null,
+            h("div", { style: { fontSize: 11, color: "var(--muted)", marginBottom: 6, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px" } }, "Agent A (Presenter)"),
+            h("select", {
+              value: agentA, onChange: e => setAgentA(e.target.value),
+              style: { background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)", padding: "8px 12px", borderRadius: 6, fontSize: 13, outline: "none", minWidth: 200 },
+            }, agentNodes.map(n => h("option", { key: n.node_id, value: n.label }, n.label))),
+          ),
+          h("div", null,
+            h("div", { style: { fontSize: 11, color: "var(--muted)", marginBottom: 6, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px" } }, "Agent B (Acceptor)"),
+            h("select", {
+              value: agentB, onChange: e => setAgentB(e.target.value),
+              style: { background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)", padding: "8px 12px", borderRadius: 6, fontSize: 13, outline: "none", minWidth: 200 },
+            }, agentNodes.map(n => h("option", { key: n.node_id, value: n.label }, n.label))),
+          ),
+          h("button", {
+            onClick: runSimulate, disabled: simLoading || !agentA || !agentB,
+            style: { background: "var(--accent)", color: "white", border: "none", padding: "9px 22px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: simLoading ? "not-allowed" : "pointer", opacity: simLoading ? .7 : 1 },
+          }, simLoading ? "Simulating\u2026" : "\u25b6 Simulate Exchange"),
+        ),
+      ),
+      simResult && h("div", { className: "card" },
+        h("div", { className: "card-head" },
+          h("div", { className: "card-title" }, "Exchange Result"),
+          h("span", { className: "chip", style: { color: "var(--green)" } }, "\u2713 Exchange complete"),
+        ),
+        h("div", { className: "card-body" },
+          h("div", { className: "ztix-timeline" },
+            [
+              {
+                title: "Agent A Asserts Identity",
+                desc: `${agentA} presents its UIS v1.1 identity token`,
+                content: () => {
+                  const id = (simResult.event || {}).identity || {};
+                  const auth = (simResult.event || {}).auth || {};
+                  return h("div", { className: "ztix-card" },
+                    h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+                      h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Subject"), h("div", { className: "mono", style: { fontSize: 12 } }, id.subject || "\u2014")),
+                      h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Protocol"), h("div", { className: "mono", style: { fontSize: 12 } }, auth.protocol || "\u2014")),
+                    ),
+                  );
+                },
+              },
+              {
+                title: "ZTIX Verifies Binding",
+                desc: "Exchange checks DPoP binding and attestation",
+                content: () => {
+                  const binding = (simResult.event || {}).binding || {};
+                  return h("div", { className: "ztix-card" },
+                    Object.entries(binding).map(([k, v]) =>
+                      h("div", { key: k, className: `ztix-check ${v ? "ztix-check-pass" : "ztix-check-fail"}` },
+                        h("span", null, v ? "\u2713" : "\u2717"),
+                        h("span", { className: "mono", style: { fontSize: 12, marginLeft: 8 } }, k),
+                        v && h("span", { style: { fontSize: 11, color: "var(--muted)", marginLeft: 8 } }, String(v).slice(0, 30)),
+                      )
+                    ),
+                  );
+                },
+              },
+              {
+                title: "Risk Score Evaluated",
+                desc: "Runtime risk engine scores the presenting identity",
+                content: () => {
+                  const t = (simResult.event || {}).threat || {};
+                  return h("div", { className: "ztix-card" },
+                    h("div", { className: "risk-gauge" },
+                      h("div", { style: { fontSize: 12, color: "var(--muted)", minWidth: 80 } }, "Risk Score"),
+                      h("div", { className: "gauge-track" }, h("div", { className: "gauge-fill", style: {
+                        width: (t.risk_score || 0) + "%",
+                        background: (t.risk_score || 0) >= 70 ? "var(--red)" : (t.risk_score || 0) >= 40 ? "var(--yellow)" : "var(--green)",
+                      } })),
+                      h("div", { style: { fontSize: 13, fontWeight: 700 } }, t.risk_score ?? "\u2014"),
+                      h(Badge, { sev: t.risk_tier || "low" }),
+                    ),
+                  );
+                },
+              },
+              {
+                title: "ZTIX Token Issued",
+                desc: "Exchange issues a bound short-lived ZTIX token",
+                content: () => {
+                  const tok = simResult.ztix_token || {};
+                  return h("div", { className: "ztix-token-card" },
+                    h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+                      h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "ZTIX ID"), h("div", { className: "mono", style: { fontSize: 12, color: "var(--accent)" } }, tok.ztix_id || "\u2014")),
+                      h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Bound To"), h("div", { className: "mono", style: { fontSize: 12 } }, tok.bound_to || "\u2014")),
+                      h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Expires In"), h("div", { className: "mono", style: { fontSize: 12, color: "var(--yellow)" } }, tok.expires_in ? tok.expires_in + "s" : "\u2014")),
+                      h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Trust Level"), h("div", { style: { color: "var(--green)", fontWeight: 700 } }, tok.trust_level || "\u2014")),
+                    ),
+                  );
+                },
+              },
+              {
+                title: "Agent B Accepts",
+                desc: `${agentB} verifies the ZTIX token and opens the trust channel`,
+                content: () => {
+                  const d = simResult.graph_delta || {};
+                  return h("div", { className: "ztix-card" },
+                    h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+                      h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Accepted By"), h("div", { className: "mono", style: { fontSize: 12 } }, agentB)),
+                      h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Channel"), h("div", { style: { color: "var(--green)", fontWeight: 700 } }, "encrypted")),
+                      h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Graph Nodes"), h("div", { className: "mono", style: { fontSize: 12 } }, `${d.nodes_before} \u2192 ${d.nodes_after}`)),
+                      h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Graph Edges"), h("div", { className: "mono", style: { fontSize: 12 } }, `${d.edges_before} \u2192 ${d.edges_after}`)),
+                    ),
+                  );
+                },
+              },
+            ].map((step, i) => {
+              const stepNum = i + 1;
+              const isVisible = simVisStep >= stepNum;
+              return h("div", { key: i, className: "ztix-step",
+                style: { opacity: isVisible ? 1 : 0, transition: `opacity .4s ease` },
+              },
+                h("div", { className: "ztix-step-line" },
+                  h("div", { className: `ztix-step-num${isVisible ? " active" : ""}` }, stepNum),
+                  i < 4 && h("div", { className: "ztix-step-connector" }),
+                ),
+                h("div", { className: "ztix-step-body" },
+                  h("div", { className: "ztix-step-title" }, step.title),
+                  h("div", { className: "ztix-step-desc" }, step.desc),
+                  isVisible && step.content(),
+                ),
+              );
+            })
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 // ── App shell ─────────────────────────────────────────────────────────────────
 function App() {
   const [page, setPage] = useState("overview");
@@ -932,12 +1554,16 @@ function App() {
       { id:"intent",     label:"Intent Detection", icon:"🎯" },
       { id:"graph",      label:"Trust Graph",      icon:"🕸" },
     ]},
+    { section: "Identity", items: [
+      { id:"identity",   label:"Identity Card",    icon:"🪪" },
+      { id:"ztix",       label:"ZTIX Exchange",     icon:"🔄" },
+    ]},
     { section: "System", items: [
       { id:"system",     label:"System Health",    icon:"⚙" },
     ]},
   ];
 
-  const pageMap = { overview: OverviewPage, blast: BlastRadiusPage, intent: IntentPage, graph: TrustGraphPage, system: SystemPage };
+  const pageMap = { overview: OverviewPage, blast: BlastRadiusPage, intent: IntentPage, graph: TrustGraphPage, identity: IdentityCardPage, ztix: ZTIXExchangePage, system: SystemPage };
   const Page = pageMap[page] || OverviewPage;
   const currentLabel = navItems.flatMap(g=>g.items).find(n=>n.id===page)?.label || "Overview";
 

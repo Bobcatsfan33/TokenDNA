@@ -33,6 +33,7 @@ POST /api/mcp/verify               verify MCP server integrity/capabilities
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import logging
 import os
@@ -2878,3 +2879,86 @@ async def api_intent_delete_playbook(
             detail="Playbook not found, not owned by this tenant, or is a built-in",
         )
     return {"deleted": True, "playbook_id": playbook_id}
+
+
+# ── ZTIX Exchange endpoints ───────────────────────────────────────────────────
+
+@app.post("/api/ztix/simulate")
+async def api_ztix_simulate(
+    body: dict,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    POST /api/ztix/simulate
+
+    Simulate a Zero-Trust Identity Exchange between two agents.
+    Normalizes a UIS event for agent_a and returns a mock ZTIX token
+    plus graph delta.
+
+    Request: { "agent_a": "agt-orchestrator", "agent_b": "agt-analyst" }
+    """
+    agent_a = str(body.get("agent_a") or "").strip()
+    agent_b = str(body.get("agent_b") or "").strip()
+    if not agent_a or not agent_b:
+        raise HTTPException(status_code=400, detail="'agent_a' and 'agent_b' are required")
+
+    # Graph snapshot before
+    graph_before = trust_graph.get_graph_data(tenant_id=tenant.tenant_id, limit=500)
+    nodes_before = len(graph_before.get("nodes", []))
+    edges_before = len(graph_before.get("edges", []))
+
+    # Derive RFC-style subject from agent label
+    if agent_a.startswith("agt-"):
+        subject = "agent-" + agent_a[4:] + "@acme.svc"
+    else:
+        subject = agent_a + "@acme.svc"
+
+    uis_event = normalize_from_protocol(
+        protocol="spiffe",
+        tenant_id=tenant.tenant_id,
+        tenant_name=tenant.tenant_name,
+        subject=subject,
+        claims={
+            "sub": subject,
+            "iss": "https://auth.acme.io",
+            "agent_id": agent_a,
+            "attestation_id": f"att-{agent_a.replace('agt-', '')}-001",
+        },
+        request_context={
+            "request_id": str(uuid.uuid4()),
+            "ip": "10.0.0.1",
+            "user_agent": "ztix-exchange/1.0",
+        },
+        risk_context={
+            "risk_score": 22,
+            "risk_tier": "allow",
+            "indicators": [],
+        },
+    )
+    uis_store.insert_event(tenant_id=tenant.tenant_id, event=uis_event)
+
+    # Graph snapshot after
+    graph_after = trust_graph.get_graph_data(tenant_id=tenant.tenant_id, limit=500)
+    nodes_after = len(graph_after.get("nodes", []))
+    edges_after = len(graph_after.get("edges", []))
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    ztix_token = {
+        "ztix_id": f"ztix-{str(uuid.uuid4())[:8]}",
+        "bound_to": agent_a,
+        "issued_at": now.isoformat(),
+        "expires_in": 300,
+        "scope": ["read:data", "execute:tools"],
+        "trust_level": "verified",
+    }
+
+    return {
+        "event": uis_event,
+        "ztix_token": ztix_token,
+        "graph_delta": {
+            "nodes_before": nodes_before,
+            "nodes_after": nodes_after,
+            "edges_before": edges_before,
+            "edges_after": edges_after,
+        },
+    }
