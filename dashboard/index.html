@@ -228,11 +228,11 @@ function OverviewPage() {
   const [gstats]  = useApi("/api/graph/stats",    { node_count:0, edge_count:0, anomaly_count:0, node_types:{}, edge_types:{} }, 10000);
   const [matches] = useApi("/api/intent/matches?limit=3", { matches:[], count:0 }, 10000);
   const [anom]    = useApi("/api/graph/anomalies?limit=5", { anomalies:[] }, 10000);
-  const [events]  = useApi("/api/uis/events?limit=5", { items:[] }, 10000);
+  const [events]  = useApi("/api/uis/events?limit=8", { events:[] }, 8000);
 
   const anoms = anom.anomalies || [];
   const mtchs = matches.matches || [];
-  const evts  = events.items   || [];
+  const evts  = events.events  || [];
 
   return h("div", null,
     h("div", { className: "section-head" },
@@ -324,21 +324,34 @@ function OverviewPage() {
         h("div", { className: "table-wrap" },
           h("table", null,
             h("thead", null, h("tr", null,
-              h("th", null, "Timestamp"), h("th", null, "Subject"), h("th", null, "Category"),
-              h("th", null, "MITRE"), h("th", null, "Risk"), h("th", null, "Confidence"),
+              h("th", null, "Timestamp"), h("th", null, "Subject"), h("th", null, "Protocol"),
+              h("th", null, "Category"), h("th", null, "Risk"), h("th", null, "Score"),
             )),
             h("tbody", null, evts.length === 0
               ? h("tr", null, h("td", { colSpan: 6, style: { textAlign:"center", padding:"32px", color:"var(--muted)" } }, "No events yet — run demo_seed.py"))
               : evts.map((ev, i) => {
-                  const n = ev.uis_narrative || {};
-                  const t = ev.threat || {};
+                  const n  = ev.uis_narrative || ev.narrative || {};
+                  const t  = ev.threat || {};
+                  const id = ev.identity || {};
+                  // derive category from available signals
+                  const cat = n.category ||
+                    (t.lateral_movement ? "lateral_movement" :
+                     (t.indicators||[]).some(x=>x.includes("scope")) ? "privilege_escalation" :
+                     n.pivot === "impossible_travel" ? "auth_anomaly" :
+                     t.risk_tier === "critical" || t.risk_tier === "high" ? "auth_anomaly" : "normal");
+                  const mitre = n.mitre_technique || (n.mitre||{}).technique_id || "—";
+                  const conf  = typeof n.confidence === "number" ? n.confidence
+                               : n.confidence === "HIGH" ? 0.85
+                               : n.confidence === "MEDIUM" ? 0.6
+                               : n.confidence === "LOW" ? 0.35 : null;
+                  const proto = (ev.auth||{}).protocol || "—";
                   return h("tr", { key: i },
-                    h("td", { className: "mono text-muted" }, ts(ev.event_timestamp)),
-                    h("td", null, (ev.identity||{}).subject || "—"),
-                    h("td", null, n.category || "—"),
-                    h("td", { className: "mono" }, n.mitre_technique || "—"),
+                    h("td", { className: "mono text-muted", style:{whiteSpace:"nowrap"} }, ts(ev.event_timestamp)),
+                    h("td", { style:{maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"} }, id.subject || "—"),
+                    h("td", { className:"mono", style:{fontSize:11} }, proto),
+                    h("td", null, cat),
                     h("td", null, h(Badge, { sev: t.risk_tier || "low" })),
-                    h("td", null, n.confidence ? h(ConfBar, { v: n.confidence }) : "—"),
+                    h("td", { className:"mono", style:{fontSize:11} }, t.risk_score != null ? t.risk_score : "—"),
                   );
                 })
             ),
