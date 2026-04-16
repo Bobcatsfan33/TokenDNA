@@ -125,9 +125,9 @@ def normalize_event(
             "impossible_travel": impossible_travel,
             "lateral_movement": lateral_movement,
             "indicators": (
-                ["scope_escalation_detected"] if risk_tier == "high" else []
+                ["scope_escalation_detected"] if (risk_tier == "high" and not impossible_travel) else []
             ) + (
-                ["supply_chain_integrity_check_failed"] if risk_score > 80 else []
+                ["supply_chain_integrity_check_failed"] if (risk_score > 80 and lateral_movement) else []
             ),
         },
     }, dry_run=dry_run)
@@ -148,14 +148,14 @@ def run_demo(dry_run: bool = False) -> None:
         ("agent-api-gateway@acme.svc",   "agt-gateway",      "https://auth.acme.io", "att-gw-001"),
     ]
     for subj, aid, iss, att in agents:
-        for _ in range(3):  # 3 baseline events each = stable observation count
+        for _ in range(5):  # 5 baseline events each = meets MIN_STABLE_OBSERVATIONS threshold
             r = normalize_event(
                 subject=subj, agent_id=aid, entity_type="machine",
                 issuer=iss, protocol="spiffe", auth_method="mtls",
                 risk_score=8, risk_tier="low",
                 attestation_id=att, dry_run=dry_run,
             )
-    print(f"  ✓ Seeded {len(agents)*3} baseline events across {len(agents)} agents")
+    print(f"  ✓ Seeded {len(agents)*5} baseline events across {len(agents)} agents")
 
     # ── Stage 2: Credential probe ──────────────────────────────────────────────
     _print_section("STAGE 2 — Credential Probe (attacker testing stolen tokens)")

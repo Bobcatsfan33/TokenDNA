@@ -427,6 +427,10 @@ def _derive_category(event: dict[str, Any]) -> str:
     # impossible_travel, context_switch, reconnaissance → auth_anomaly
     if pivot in ("impossible_travel", "context_switch", "reconnaissance", "persistence"):
         return "auth_anomaly"
+    # Check session block (populated by normalize_from_protocol)
+    session = event.get("session") or {}
+    if session.get("impossible_travel"):
+        return "auth_anomaly"
     # Fallback to risk signal
     if threat.get("lateral_movement"):
         return "lateral_movement"
