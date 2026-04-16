@@ -190,6 +190,45 @@ def insert_event(tenant_id: str, event: dict[str, Any]) -> None:
         intent_correlation.correlate_event(tenant_id, event)
     except Exception:  # noqa: BLE001
         pass  # correlation never blocks event persistence
+    # Background agent DNA refresh every 10 observations (non-fatal)
+    try:
+        _maybe_refresh_agent_dna(tenant_id, event)
+    except Exception:  # noqa: BLE001
+        pass  # DNA refresh never blocks event persistence
+
+
+def _maybe_refresh_agent_dna(tenant_id: str, event: dict[str, Any]) -> None:
+    """Trigger a background agent DNA refresh if observation count is a multiple of 10."""
+    identity = event.get("identity", {})
+    agent_id = identity.get("agent_id")
+    if not agent_id:
+        return
+    # Check observation count from trust graph nodes table
+    try:
+        conn = _get_conn()
+        try:
+            row = conn.execute(
+                "SELECT observation_count FROM tg_nodes WHERE tenant_id=? AND label=?",
+                (tenant_id, agent_id),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        return
+    if row is None:
+        return
+    obs = row["observation_count"] if isinstance(row, sqlite3.Row) else row[0]
+    if obs % 10 != 0:
+        return
+
+    def _bg_refresh() -> None:
+        try:
+            from modules.identity import agent_dna  # noqa: PLC0415
+            agent_dna.refresh_agent_dna(tenant_id=tenant_id, agent_id=agent_id)
+        except Exception:  # noqa: BLE001
+            pass
+
+    threading.Thread(target=_bg_refresh, daemon=True).start()
 
 
 def _pg_insert_event(tenant_id: str, event: dict[str, Any]) -> None:
@@ -505,3 +544,31 @@ def _pg_list_events_paginated(
         "has_more": has_more,
         "page_size": normalized_limit,
     }
+
+
+def list_events_by_agent_id(
+    tenant_id: str,
+    agent_id: str,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """Return up to *limit* events for the given *agent_id* (matches identity.agent_id).
+
+    Falls back gracefully if the database is not yet initialised.
+    """
+    normalized_limit = min(max(int(limit), 1), 200)
+    try:
+        with _cursor() as cur:
+            rows = cur.execute(
+                """
+                SELECT event_json
+                FROM uis_events
+                WHERE tenant_id = ?
+                  AND json_extract(event_json, '$.identity.agent_id') = ?
+                ORDER BY event_timestamp DESC
+                LIMIT ?
+                """,
+                (tenant_id, agent_id, normalized_limit),
+            ).fetchall()
+    except Exception:  # noqa: BLE001
+        return []
+    return [json.loads(row["event_json"]) for row in rows]

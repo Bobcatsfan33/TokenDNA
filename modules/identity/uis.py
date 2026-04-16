@@ -174,7 +174,7 @@ def normalize_identity_event(data: UISNormalizerInput) -> dict[str, Any]:
         "supply_chain_hash": claims.get("supply_chain_hash"),
     }
 
-    return {
+    event: dict[str, Any] = {
         "uis_version": UIS_VERSION,
         "event_id": context.get("event_id") or _stable_hash([data.tenant_id, data.subject, time.time_ns()])[:32],
         "event_timestamp": _iso_now(),
@@ -187,6 +187,23 @@ def normalize_identity_event(data: UISNormalizerInput) -> dict[str, Any]:
         "threat": threat,
         "binding": binding,
     }
+
+    # ── Agent behavioral DNA (non-fatal) ──────────────────────────────────────
+    agent_id = identity.get("agent_id")
+    if agent_id:
+        try:
+            from modules.identity import agent_dna as _agent_dna  # noqa: PLC0415
+            baseline = _agent_dna.get_agent_dna(data.tenant_id, agent_id)
+            if baseline:
+                deviation_score = _agent_dna.compute_deviation_score(baseline, event)
+                event["behavior"]["pattern_deviation_score"] = deviation_score
+                event["behavior"]["dna_fingerprint"] = baseline.get("fingerprint_hash")
+                if deviation_score > 0.6:
+                    event["behavior"]["velocity_anomaly"] = True
+        except Exception:  # noqa: BLE001
+            pass  # DNA computation must never break the normalize flow
+
+    return event
 
 
 def normalize_from_protocol(

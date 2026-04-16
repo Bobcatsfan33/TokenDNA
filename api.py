@@ -563,6 +563,49 @@ async def api_get_agent_attestation(
     return {"tenant_id": tenant.tenant_id, "attestation": row}
 
 
+@app.get("/api/agent/dna/{agent_id}")
+async def api_get_agent_dna(
+    agent_id: str,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Return the stored behavioral DNA for *agent_id*.
+
+    Response fields:
+    - ``dna``: the DNA dict, or null if not yet computed
+    - ``fresh``: True if ``computed_at`` is within the last hour
+    """
+    from modules.identity import agent_dna as _agent_dna  # noqa: PLC0415
+    from modules.identity.uis_store import init_db as _uis_init  # noqa: PLC0415
+    _uis_init()
+    _agent_dna.build_agent_dna_store()
+
+    dna = _agent_dna.get_agent_dna(tenant_id=tenant.tenant_id, agent_id=agent_id)
+    fresh = False
+    if dna:
+        try:
+            computed_at = datetime.datetime.fromisoformat(dna["computed_at"])
+            age = datetime.datetime.now(datetime.timezone.utc) - computed_at
+            fresh = age.total_seconds() < 3600
+        except Exception:  # noqa: BLE001
+            pass
+    return {"tenant_id": tenant.tenant_id, "agent_id": agent_id, "dna": dna, "fresh": fresh}
+
+
+@app.post("/api/agent/dna/{agent_id}/refresh")
+async def api_refresh_agent_dna(
+    agent_id: str,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Synchronously recompute behavioral DNA for *agent_id* and return it."""
+    from modules.identity import agent_dna as _agent_dna  # noqa: PLC0415
+    from modules.identity.uis_store import init_db as _uis_init  # noqa: PLC0415
+    _uis_init()
+    _agent_dna.build_agent_dna_store()
+
+    dna = _agent_dna.refresh_agent_dna(tenant_id=tenant.tenant_id, agent_id=agent_id)
+    return {"tenant_id": tenant.tenant_id, "agent_id": agent_id, "dna": dna}
+
+
 @app.post("/api/agent/certificates/verify")
 async def api_verify_agent_certificate(
     body: dict,
