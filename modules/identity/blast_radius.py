@@ -228,48 +228,56 @@ def _bfs_reachability(
     with _lock:
         conn = _get_conn()
         try:
-            # BFS using SQLite recursive CTE — follows all edge types
-            rows = conn.execute(
-                f"""
-                WITH RECURSIVE reach(node_id, hop, edge_path) AS (
-                    SELECT ?, 0, ''
-                    UNION ALL
-                    SELECT e.dst_node,
-                           reach.hop + 1,
-                           reach.edge_path || ',' || e.edge_type
-                    FROM tg_edges e
-                    JOIN reach ON e.src_node = reach.node_id
-                    WHERE e.tenant_id = ?
-                      AND reach.hop < ?
-                      AND (',' || reach.edge_path || ',') NOT LIKE
-                          ('%,' || e.dst_node || ',%')
-                )
-                SELECT n.node_id, n.node_type, n.label,
-                       r.hop, r.edge_path
-                FROM reach r
-                JOIN tg_nodes n ON n.node_id = r.node_id AND n.tenant_id = ?
-                WHERE r.node_id != ?
-                ORDER BY r.hop
-                """,
-                (start_node_id, tenant_id, max_hops, tenant_id, start_node_id),
+            # Bidirectional BFS in Python: compromise propagates BOTH along
+            # outgoing edges (agent trusts X) AND reverse edges (other agents
+            # that share the same issuer/verifier as the compromised agent).
+            # Pre-load all edges for the tenant for efficiency.
+            all_edges = conn.execute(
+                "SELECT src_node, dst_node, edge_type FROM tg_edges WHERE tenant_id=?",
+                (tenant_id,),
             ).fetchall()
+            # Build adjacency: forward and reverse
+            fwd: dict[str, list[tuple[str, str]]] = {}  # src -> [(dst, etype)]
+            rev: dict[str, list[tuple[str, str]]] = {}  # dst -> [(src, etype)]
+            for e in all_edges:
+                fwd.setdefault(e["src_node"], []).append((e["dst_node"], e["edge_type"]))
+                rev.setdefault(e["dst_node"], []).append((e["src_node"], e["edge_type"]))
+            # Load node metadata
+            node_rows = conn.execute(
+                "SELECT node_id, node_type, label FROM tg_nodes WHERE tenant_id=?",
+                (tenant_id,),
+            ).fetchall()
+            node_meta: dict[str, dict] = {r["node_id"]: dict(r) for r in node_rows}
 
-            seen: set[str] = set()
-            result: list[ReachableNode] = []
-            for row in rows:
-                nid = row["node_id"]
-                if nid in seen:
+            # BFS
+            from collections import deque
+            queue: deque = deque()
+            queue.append((start_node_id, 0, []))
+            visited: dict[str, int] = {start_node_id: 0}  # node_id -> first hop seen
+            result_map: dict[str, ReachableNode] = {}
+
+            while queue:
+                cur_id, hop, path_edges = queue.popleft()
+                if hop >= max_hops:
                     continue
-                seen.add(nid)
-                edge_path = [e for e in row["edge_path"].split(",") if e]
-                result.append(ReachableNode(
-                    node_id=nid,
-                    node_type=row["node_type"],
-                    label=row["label"],
-                    hop_distance=row["hop"],
-                    path_edge_types=edge_path,
-                    impact_contribution=NODE_TYPE_IMPACT.get(row["node_type"], 5),
-                ))
+                neighbors = list(fwd.get(cur_id, [])) + list(rev.get(cur_id, []))
+                for (nbr_id, etype) in neighbors:
+                    if nbr_id not in visited:
+                        visited[nbr_id] = hop + 1
+                        new_path = path_edges + [etype]
+                        if nbr_id in node_meta:
+                            m = node_meta[nbr_id]
+                            result_map[nbr_id] = ReachableNode(
+                                node_id=nbr_id,
+                                node_type=m["node_type"],
+                                label=m["label"],
+                                hop_distance=hop + 1,
+                                path_edge_types=new_path,
+                                impact_contribution=NODE_TYPE_IMPACT.get(m["node_type"], 5),
+                            )
+                        queue.append((nbr_id, hop + 1, new_path))
+
+            result = sorted(result_map.values(), key=lambda n: n.hop_distance)
             return result
         except sqlite3.OperationalError:
             return []
