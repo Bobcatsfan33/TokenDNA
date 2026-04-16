@@ -184,6 +184,12 @@ def insert_event(tenant_id: str, event: dict[str, Any]) -> None:
             trust_graph.store_anomaly(anomaly)
     except Exception:  # noqa: BLE001
         pass  # graph ingestion never blocks event persistence
+    # Run intent correlation against active playbooks (non-fatal)
+    try:
+        from modules.identity import intent_correlation  # noqa: PLC0415
+        intent_correlation.correlate_event(tenant_id, event)
+    except Exception:  # noqa: BLE001
+        pass  # correlation never blocks event persistence
 
 
 def _pg_insert_event(tenant_id: str, event: dict[str, Any]) -> None:
