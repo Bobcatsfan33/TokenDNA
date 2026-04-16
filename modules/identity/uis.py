@@ -29,6 +29,39 @@ from typing import Any
 UIS_VERSION = "1.0"
 SUPPORTED_PROTOCOLS = {"oidc", "saml", "oauth2_opaque", "spiffe", "custom"}
 
+# Required field sets and their required fields (mirrors uis_protocol.UIS_FIELD_SETS).
+# Defined here to avoid circular imports (uis_protocol imports from uis).
+_REQUIRED_FIELD_SETS: dict[str, list[str]] = {
+    "identity": ["subject", "tenant_id", "entity_type"],
+    "auth": ["protocol", "method", "mfa_asserted"],
+    "token": ["issuer", "type", "claims_hash"],
+    "session": ["request_id", "ip", "country", "asn"],
+    "behavior": ["dna_fingerprint", "pattern_deviation_score", "velocity_anomaly"],
+    "lifecycle": ["state", "provisioned_at", "revoked_at", "dormant"],
+    "threat": ["risk_score", "risk_tier", "indicators"],
+    "binding": ["dpop_jkt", "attestation_id"],
+}
+
+
+def validate_uis_event(event: dict) -> list[str]:
+    """Validate a UIS event dict.  Returns a (possibly empty) list of error strings.
+
+    Does NOT raise — callers decide what to do with the errors.
+    """
+    errors: list[str] = []
+    for field_set, required_fields in _REQUIRED_FIELD_SETS.items():
+        if field_set not in event:
+            errors.append(f"missing field set: {field_set!r}")
+            continue
+        section = event[field_set]
+        if not isinstance(section, dict):
+            errors.append(f"field set {field_set!r} is not an object")
+            continue
+        for field in required_fields:
+            if field not in section:
+                errors.append(f"missing required field: {field_set}.{field}")
+    return errors
+
 
 def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -100,7 +133,7 @@ def normalize_identity_event(data: UISNormalizerInput) -> dict[str, Any]:
     }
 
     session = {
-        "id": context.get("session_id"),
+        "id": context.get("session_id") or claims.get("session_id"),
         "request_id": context.get("request_id"),
         "ip": context.get("ip"),
         "country": context.get("country"),
@@ -131,8 +164,10 @@ def normalize_identity_event(data: UISNormalizerInput) -> dict[str, Any]:
         "lateral_movement": bool(risk.get("lateral_movement", False)),
     }
 
+    dpop_jkt = claims.get("dpop_jkt")
     binding = {
-        "dpop_jkt": claims.get("dpop_jkt"),
+        "dpop_jkt": dpop_jkt,
+        "dpop_bound": dpop_jkt is not None,
         "mtls_subject": claims.get("mtls_subject"),
         "spiffe_id": claims.get("spiffe_id"),
         "attestation_id": claims.get("attestation_id"),

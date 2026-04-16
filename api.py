@@ -64,7 +64,7 @@ from modules.identity.cache_redis import (
 )
 from modules.identity.scoring import RiskTier
 from modules.identity.token_dna import generate_dna, migrate_dna
-from modules.identity.uis import normalize_from_protocol
+from modules.identity.uis import normalize_from_protocol, validate_uis_event
 from modules.identity.uis_protocol import get_uis_spec, normalize_with_adapter
 from modules.identity.attestation import create_attestation_record
 from modules.identity.mcp_attestation import verify_mcp_server
@@ -415,6 +415,7 @@ async def api_evaluate_product_feature(
 async def api_uis_normalize(
     body: dict,
     request: Request,
+    response: Response,
     tenant: TenantContext = Depends(get_tenant),
 ):
     protocol = str(body.get("protocol", "custom"))
@@ -438,8 +439,18 @@ async def api_uis_normalize(
         request_context=request_context,
         risk_context=risk_context,
     )
+    validation_warnings = validate_uis_event(event)
+    if validation_warnings:
+        for warning in validation_warnings:
+            logging.getLogger(__name__).warning("UIS validation warning: %s", warning)
     uis_store.insert_event(tenant_id=tenant.tenant_id, event=event)
-    return {"tenant_id": tenant.tenant_id, "uis_event": event}
+    response.headers["X-UIS-Version"] = "1.0"
+    return {
+        "tenant_id": tenant.tenant_id,
+        "uis_version": "1.0",
+        "uis_event": event,
+        "validation_warnings": validation_warnings,
+    }
 
 
 @app.post("/api/agent/attest")
@@ -620,9 +631,15 @@ async def api_uis_schema_artifacts(
 
 @app.get("/api/schema/uis.json")
 async def api_schema_uis_json(
+    response: Response,
     _tenant: TenantContext = Depends(get_tenant),
 ):
-    return schema_registry.build_uis_schema_artifact()
+    _schema_path = Path(__file__).parent / "modules" / "identity" / "uis_schema_v1.json"
+    with _schema_path.open(encoding="utf-8") as _f:
+        _schema = json.load(_f)
+    response.headers["X-UIS-Schema-Version"] = "1.0"
+    response.headers["Content-Type"] = "application/json"
+    return _schema
 
 
 @app.get("/api/schema/attestation.json")

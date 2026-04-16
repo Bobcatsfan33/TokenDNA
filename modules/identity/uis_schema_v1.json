@@ -1,0 +1,181 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.tokendna.dev/uis/v1.0/event.json",
+  "title": "UIS v1.0 Event",
+  "description": "Universal Identity Schema (UIS) v1.0 \u2014 the protocol-agnostic identity event format used by TokenDNA. Every protocol adapter (OIDC, SAML, OAuth 2.0, SPIFFE, MCP) normalises its artifacts into this common shape.",
+  "version": "1.0",
+  "type": "object",
+  "required": [
+    "uis_version",
+    "event_id",
+    "event_timestamp",
+    "identity",
+    "auth",
+    "token",
+    "session",
+    "behavior",
+    "lifecycle",
+    "threat",
+    "binding"
+  ],
+  "properties": {
+    "uis_version": {
+      "type": "string",
+      "description": "Schema version string (e.g. '1.0')",
+      "example": "1.0"
+    },
+    "event_id": {
+      "type": "string",
+      "description": "Stable unique identifier for this event (SHA-256 derived, first 32 hex chars)"
+    },
+    "event_timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp when the event was normalised"
+    },
+    "identity": {
+      "type": "object",
+      "description": "Core subject/entity attributes for human and machine identities",
+      "required": ["subject", "tenant_id", "entity_type"],
+      "properties": {
+        "subject": { "type": "string", "description": "Unique identity subject identifier (sub claim or equivalent)" },
+        "tenant_id": { "type": "string", "description": "Tenant/organisation identifier" },
+        "tenant_name": { "type": "string", "description": "Human-readable tenant name" },
+        "entity_type": {
+          "type": "string",
+          "enum": ["human", "machine"],
+          "description": "Whether the identity represents a human or a machine/agent"
+        },
+        "display_name": { "type": "string", "description": "Human-readable display name" },
+        "machine_classification": {
+          "type": "string",
+          "description": "Sub-type when entity_type=machine (e.g. agent, workload, service, user)"
+        },
+        "agent_id": { "type": ["string", "null"], "description": "Stable agent ID for AI/machine agents" }
+      },
+      "additionalProperties": true
+    },
+    "auth": {
+      "type": "object",
+      "description": "Authentication context (method, protocol, MFA, credential strength)",
+      "required": ["protocol", "method", "mfa_asserted"],
+      "properties": {
+        "protocol": {
+          "type": "string",
+          "enum": ["oidc", "saml", "oauth2_opaque", "spiffe", "mcp", "custom"],
+          "description": "Normalised protocol used for authentication"
+        },
+        "method": {
+          "type": "string",
+          "description": "Auth method string (e.g. password, certificate, smartcard, kerberos, unknown)"
+        },
+        "mfa_asserted": {
+          "type": "boolean",
+          "description": "Whether multi-factor authentication was asserted"
+        },
+        "credential_strength": {
+          "type": "string",
+          "enum": ["standard", "strong"],
+          "description": "Credential strength level derived from authn context"
+        }
+      },
+      "additionalProperties": true
+    },
+    "token": {
+      "type": "object",
+      "description": "Token metadata and binding state",
+      "required": ["issuer", "type", "claims_hash"],
+      "properties": {
+        "issuer": { "type": "string", "description": "Token issuer (iss claim or equivalent)" },
+        "type": { "type": "string", "description": "Token type (bearer, dpop, x509, agent-token, etc.)" },
+        "claims_hash": { "type": "string", "description": "SHA-256 of canonical token claims for audit trail" },
+        "audience": { "description": "Token audience (string or array of strings)", "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }, { "type": "null" }] },
+        "dpop_bound": { "type": "boolean", "description": "Whether the token is DPoP-bound" },
+        "expires_at": { "type": ["integer", "null"], "description": "Token expiry as Unix epoch seconds (exp)" },
+        "issued_at": { "type": ["integer", "null"], "description": "Token issuance time as Unix epoch seconds (iat)" },
+        "rotation_history": { "type": "array", "description": "Previous token identifiers in rotation chain" },
+        "jti": { "type": ["string", "null"], "description": "JWT ID for the token" }
+      },
+      "additionalProperties": true
+    },
+    "session": {
+      "type": "object",
+      "description": "Session and network context for risk analysis",
+      "required": ["request_id", "ip", "country", "asn"],
+      "properties": {
+        "id": { "type": ["string", "null"], "description": "Session identifier" },
+        "request_id": { "type": ["string", "null"], "description": "Per-request unique identifier (UUID)" },
+        "ip": { "type": ["string", "null"], "description": "Client IP address" },
+        "country": { "type": ["string", "null"], "description": "ISO 3166-1 alpha-2 country code resolved from IP" },
+        "asn": { "type": ["string", "integer", "null"], "description": "Autonomous System Number for IP" },
+        "device_fingerprint": { "type": ["string", "null"], "description": "Device fingerprint hash" },
+        "user_agent": { "type": ["string", "null"], "description": "HTTP User-Agent header value" },
+        "impossible_travel": { "type": "boolean", "description": "Impossible travel flag from risk analysis" },
+        "graph_position": { "type": ["string", "null"], "description": "Graph node identifier in trust graph" }
+      },
+      "additionalProperties": true
+    },
+    "behavior": {
+      "type": "object",
+      "description": "Behavioural DNA and drift/anomaly context",
+      "required": ["dna_fingerprint", "pattern_deviation_score", "velocity_anomaly"],
+      "properties": {
+        "dna_fingerprint": { "type": ["string", "null"], "description": "Stable behavioural fingerprint hash for this identity" },
+        "pattern_deviation_score": { "type": "number", "minimum": 0, "maximum": 100, "description": "Deviation from baseline behaviour (0\u2013100)" },
+        "velocity_anomaly": { "type": "boolean", "description": "Whether a request velocity anomaly was detected" }
+      },
+      "additionalProperties": true
+    },
+    "lifecycle": {
+      "type": "object",
+      "description": "Identity lifecycle state transitions",
+      "required": ["state", "provisioned_at", "revoked_at", "dormant"],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": ["active", "suspended", "revoked", "pending", "dormant"],
+          "description": "Current lifecycle state of the identity"
+        },
+        "provisioned_at": { "type": ["string", "null"], "description": "ISO-8601 timestamp when the identity was provisioned" },
+        "revoked_at": { "type": ["string", "null"], "description": "ISO-8601 timestamp when the identity was revoked (null if active)" },
+        "dormant": { "type": "boolean", "description": "Whether the identity is in a dormant (inactive but not revoked) state" }
+      },
+      "additionalProperties": true
+    },
+    "threat": {
+      "type": "object",
+      "description": "Runtime threat and risk evaluation output",
+      "required": ["risk_score", "risk_tier", "indicators"],
+      "properties": {
+        "risk_score": { "type": "integer", "minimum": 0, "maximum": 100, "description": "Composite risk score (0\u2013100)" },
+        "risk_tier": {
+          "type": "string",
+          "enum": ["critical", "high", "medium", "low", "unknown"],
+          "description": "Risk tier derived from risk_score"
+        },
+        "indicators": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of threat indicator labels (e.g. tor_exit_node, impossible_travel)"
+        },
+        "lateral_movement": { "type": "boolean", "description": "Whether lateral movement was detected" }
+      },
+      "additionalProperties": true
+    },
+    "binding": {
+      "type": "object",
+      "description": "Cryptographic/token/attestation bindings",
+      "required": ["dpop_jkt", "attestation_id"],
+      "properties": {
+        "dpop_jkt": { "type": ["string", "null"], "description": "DPoP proof key thumbprint (JWK Thumbprint, RFC 9449)" },
+        "dpop_bound": { "type": "boolean", "description": "Derived: True iff dpop_jkt is present" },
+        "attestation_id": { "type": ["string", "null"], "description": "Agent attestation record identifier" },
+        "mtls_subject": { "type": ["string", "null"], "description": "mTLS client certificate subject DN" },
+        "spiffe_id": { "type": ["string", "null"], "description": "SPIFFE ID URI (spiffe://trust-domain/path)" },
+        "supply_chain_hash": { "type": ["string", "null"], "description": "Software supply chain integrity hash" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

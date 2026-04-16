@@ -72,17 +72,78 @@ ADAPTER_INPUTS = {
 }
 
 
+# SAML authn_context_class_ref → auth method string
+_SAML_AUTHN_METHOD_MAP: dict[str, str] = {
+    "PasswordProtectedTransport": "password",
+    "Password": "password",
+    "X509": "certificate",
+    "X509Certificate": "certificate",
+    "SmartCard": "smartcard",
+    "SmartCardPKI": "smartcard",
+    "Kerberos": "kerberos",
+    "InternetProtocolPassword": "password",
+    "TLSClient": "certificate",
+}
+
+_SAML_STRONG_AUTHN_CONTEXTS = frozenset({"X509", "X509Certificate", "SmartCard", "SmartCardPKI"})
+
+
+def _saml_map_authn_context(ctx: str | None) -> tuple[str, str, bool]:
+    """Return (auth_method, credential_strength, mfa_asserted) for a SAML authn context."""
+    if not ctx:
+        return "unknown", "standard", False
+
+    # MFA detection: case-insensitive substring match
+    mfa_asserted = "multifactor" in ctx.lower() or "mfa" in ctx.lower()
+
+    # Map to method string — check for substring matches so URN forms also match
+    auth_method = "unknown"
+    for key, method in _SAML_AUTHN_METHOD_MAP.items():
+        if key.lower() in ctx.lower():
+            auth_method = method
+            break
+
+    # Credential strength
+    credential_strength = "standard"
+    for strong_ctx in _SAML_STRONG_AUTHN_CONTEXTS:
+        if strong_ctx.lower() in ctx.lower():
+            credential_strength = "strong"
+            break
+
+    return auth_method, credential_strength, mfa_asserted
+
+
 def _adapt_saml(payload: dict[str, Any]) -> dict[str, Any]:
     attributes = payload.get("attributes", {}) or {}
+    authn_ctx = payload.get("authn_context_class_ref")
+    auth_method, credential_strength, mfa_asserted = _saml_map_authn_context(authn_ctx)
+
+    # Build display_name from SAML attributes (email > upn > subject)
+    display_name = (
+        attributes.get("email")
+        or attributes.get("upn")
+        or payload.get("name_id")
+    )
+    groups = attributes.get("groups", [])
+
     return {
         "sub": payload.get("name_id"),
         "iss": payload.get("issuer"),
         "aud": payload.get("audience"),
+        # session_index maps to session.id via claims.session_id fallback in uis.py
+        "session_id": payload.get("session_index"),
+        # keep jti for backward compatibility
         "jti": payload.get("session_index"),
-        "amr": [payload.get("authn_context_class_ref")] if payload.get("authn_context_class_ref") else [],
+        # amr uses the mapped method so normalize_identity_event picks it up correctly
+        "amr": [auth_method] if auth_method and auth_method != "unknown" else [],
+        "auth_method": auth_method,
+        "acr": credential_strength,
+        "mfa": mfa_asserted,
         "scope": attributes.get("scope", []),
         "roles": attributes.get("roles", []),
         "entity_type": attributes.get("entity_type", "human"),
+        "name": display_name,
+        "groups": groups,
     }
 
 
@@ -168,10 +229,35 @@ def normalize_with_adapter(
 
 
 def get_uis_spec() -> dict[str, Any]:
+    # Count total required fields across all field sets
+    field_count = sum(len(fs["required_fields"]) for fs in UIS_FIELD_SETS.values())
+
+    # Build supported_protocols list with adapter input key mappings
+    supported_protocols = [
+        {
+            "protocol": protocol,
+            "description": adapter["description"],
+            "adapter_input_keys": adapter["keys"],
+        }
+        for protocol, adapter in ADAPTER_INPUTS.items()
+    ]
+
     return {
         "version": "1.0",
+        "status": "GA",
+        "release_date": "2026-04-16",
         "field_sets": UIS_FIELD_SETS,
         "adapters": ADAPTER_INPUTS,
+        "supported_protocols": supported_protocols,
+        "field_count": field_count,
+        "schema_url": "/api/schema/uis.json",
+        "changelog": [
+            {
+                "version": "1.0",
+                "date": "2026-04-16",
+                "notes": "Initial GA release. 8 field sets, 5 protocol adapters, DPoP binding, SAML completion.",
+            }
+        ],
         "notes": [
             "UIS is protocol-agnostic and vendor-neutral.",
             "Adapters translate source protocol artifacts into normalized claims.",
