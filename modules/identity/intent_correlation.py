@@ -399,22 +399,73 @@ class IntentMatch:
 
 # ── Step matching ──────────────────────────────────────────────────────────────
 
+def _derive_category(event: dict[str, Any]) -> str:
+    """
+    Derive a UIS event category from available event fields.
+    Handles both 'uis_narrative' (enrich_event format) and 'narrative' (attach_narrative format).
+    """
+    # Check uis_narrative first (scoring pipeline format)
+    n1 = event.get("uis_narrative") or {}
+    if n1.get("category"):
+        return n1["category"]
+    # Derive from narrative pivot (attach_narrative format)
+    n2 = event.get("narrative") or {}
+    pivot = str(n2.get("pivot") or "")
+    threat = event.get("threat") or {}
+    risk_tier = str(threat.get("risk_tier") or "low")
+    indicators = threat.get("indicators") or []
+    # Map pivot → category (auth_anomaly is the catch-all for unexpected access patterns)
+    if pivot in ("lateral_movement",):
+        return "lateral_movement"
+    if pivot in ("privilege_escalation", "scope_escalation", "delegation_abuse", "mfa_bypass"):
+        return "privilege_escalation"
+    if pivot in ("credential_access", "token_replay", "identity_compromise",
+                 "supply_chain_compromise"):
+        return "credential_abuse"
+    if pivot in ("data_exfiltration",):
+        return "exfiltration"
+    # impossible_travel, context_switch, reconnaissance → auth_anomaly
+    if pivot in ("impossible_travel", "context_switch", "reconnaissance", "persistence"):
+        return "auth_anomaly"
+    # Fallback to risk signal
+    if threat.get("lateral_movement"):
+        return "lateral_movement"
+    if any("scope" in str(i).lower() for i in indicators):
+        return "privilege_escalation"
+    if risk_tier in ("high", "critical"):
+        return "auth_anomaly"
+    if any("supply_chain" in str(i).lower() or "credential" in str(i).lower() for i in indicators):
+        return "credential_abuse"
+    return "auth_anomaly"
+
+
 def _step_matches(step: dict[str, Any], event: dict[str, Any]) -> bool:
     """
     Return True if the event satisfies all conditions in the step.
-    event must contain 'uis_narrative' (from uis_narrative.enrich_event)
-    or narrative-like fields at the top level.
+    Handles both 'uis_narrative' (scoring pipeline) and 'narrative' (normalize endpoint) formats.
     """
-    narrative = event.get("uis_narrative") or {}
-    category = narrative.get("category") or ""
-    mitre_technique = narrative.get("mitre_technique") or ""
-    pivot = narrative.get("pivot") or narrative.get("precondition") or ""
-    objective = narrative.get("objective") or ""
-    confidence = float(narrative.get("confidence") or 0.0)
+    # Merge both narrative formats for field resolution
+    n1 = event.get("uis_narrative") or {}
+    n2 = event.get("narrative") or {}
+    category = _derive_category(event)
+    mitre_technique = n1.get("mitre_technique") or n2.get("mitre", {}).get("technique_id") or ""
+    pivot = n1.get("pivot") or n2.get("pivot") or n1.get("precondition") or ""
+    objective = n1.get("objective") or n2.get("objective") or ""
+    # Confidence: n1 uses float (0.0-1.0), n2 uses string HIGH/MEDIUM/LOW
+    raw_conf = n1.get("confidence") or n2.get("confidence")
+    if isinstance(raw_conf, str):
+        confidence = {"HIGH": 0.85, "MEDIUM": 0.6, "LOW": 0.35}.get(raw_conf.upper(), 0.0)
+    else:
+        confidence = float(raw_conf or 0.0)
 
     # Fallback: check threat block for risk_tier
     threat = event.get("threat") or {}
     risk_tier = str(threat.get("risk_tier") or "low")
+
+    # If no narrative confidence available, derive from risk tier
+    # (events without narrative enrichment still get a meaningful confidence)
+    if confidence == 0.0:
+        confidence = {"critical": 0.8, "high": 0.65, "medium": 0.45, "low": 0.2}.get(risk_tier, 0.2)
 
     # category match
     if step_cat := step.get("category"):
