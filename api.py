@@ -74,6 +74,7 @@ from modules.identity.trust_authority import list_key_configs
 from modules.identity.attestation_drift import build_drift_event, DriftAssessment, assess_runtime_drift
 from modules.identity import schema_registry
 from modules.identity import trust_graph
+from modules.identity import blast_radius
 from modules.identity import policy_bundles
 from modules.identity import network_intel
 from modules.identity import compliance
@@ -2686,3 +2687,57 @@ async def api_graph_stats(
     """
     stats = trust_graph.get_stats(tenant_id=tenant.tenant_id)
     return {"tenant_id": tenant.tenant_id, **stats}
+
+
+# ── Blast Radius Simulator endpoints ──────────────────────────────────────────
+
+@app.post("/api/simulate/blast_radius")
+async def api_blast_radius(
+    body: dict,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    POST /api/simulate/blast_radius
+
+    Compute the blast radius if a given agent is compromised.
+
+    Request body:
+      { "agent_label": "<agent_id or subject>", "max_hops": 6 }
+
+    Returns reachability graph, impact score (0-100), risk tier,
+    and any policy bundles that intersect the blast radius.
+    """
+    agent_label = str(body.get("agent_label") or "").strip()
+    if not agent_label:
+        raise HTTPException(status_code=400, detail="'agent_label' is required")
+    max_hops = int(body.get("max_hops") or 6)
+    max_hops = max(1, min(max_hops, 10))
+
+    result = blast_radius.simulate_blast_radius(
+        tenant_id=tenant.tenant_id,
+        agent_label=agent_label,
+        max_hops=max_hops,
+    )
+    if not result.error:
+        blast_radius.store_simulation(result)
+    return result.as_dict()
+
+
+@app.get("/api/simulate/blast_radius/history")
+async def api_blast_radius_history(
+    agent_label: str | None = None,
+    limit: int = 20,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    GET /api/simulate/blast_radius/history
+
+    Return recent blast radius simulation history for the tenant.
+    Optional ?agent_label= to filter by a specific agent.
+    """
+    history = blast_radius.list_simulations(
+        tenant_id=tenant.tenant_id,
+        agent_label=agent_label,
+        limit=min(limit, 100),
+    )
+    return {"tenant_id": tenant.tenant_id, "simulations": history, "count": len(history)}
