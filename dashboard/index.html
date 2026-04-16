@@ -558,61 +558,197 @@ function IntentPage() {
 }
 
 // ── Trust Graph ───────────────────────────────────────────────────────────────
+
+// Simple force-directed layout (no external library)
+function forceLayout(nodes, edges, width, height, iterations) {
+  // Initialise positions in a circle
+  const pos = {};
+  const cx = width / 2, cy = height / 2, r = Math.min(width, height) * 0.35;
+  nodes.forEach((n, i) => {
+    const angle = (2 * Math.PI * i) / nodes.length;
+    pos[n.node_id] = { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle), vx: 0, vy: 0 };
+  });
+  const edgeSet = edges.map(e => ({ s: e.src_node, d: e.dst_node }));
+  const k = Math.sqrt((width * height) / Math.max(nodes.length, 1));
+  for (let iter = 0; iter < iterations; iter++) {
+    const temp = 20 * (1 - iter / iterations);
+    // Repulsion
+    for (let i = 0; i < nodes.length; i++) {
+      let fx = 0, fy = 0;
+      const pi = pos[nodes[i].node_id];
+      for (let j = 0; j < nodes.length; j++) {
+        if (i === j) continue;
+        const pj = pos[nodes[j].node_id];
+        const dx = pi.x - pj.x, dy = pi.y - pj.y;
+        const d = Math.max(Math.sqrt(dx*dx + dy*dy), 0.01);
+        const f = (k * k) / d;
+        fx += (dx / d) * f; fy += (dy / d) * f;
+      }
+      pi.vx = (pi.vx + fx) * 0.5; pi.vy = (pi.vy + fy) * 0.5;
+    }
+    // Attraction
+    edgeSet.forEach(({ s, d }) => {
+      const ps = pos[s], pd = pos[d];
+      if (!ps || !pd) return;
+      const dx = pd.x - ps.x, dy = pd.y - ps.y;
+      const dist = Math.max(Math.sqrt(dx*dx + dy*dy), 0.01);
+      const f = (dist * dist) / k;
+      const fx = (dx / dist) * f, fy = (dy / dist) * f;
+      ps.vx += fx; ps.vy += fy; pd.vx -= fx; pd.vy -= fy;
+    });
+    // Apply + clamp to canvas
+    nodes.forEach(n => {
+      const p = pos[n.node_id];
+      const speed = Math.sqrt(p.vx*p.vx + p.vy*p.vy);
+      if (speed > temp) { p.vx = p.vx/speed*temp; p.vy = p.vy/speed*temp; }
+      p.x = Math.max(40, Math.min(width-40,  p.x + p.vx));
+      p.y = Math.max(30, Math.min(height-30, p.y + p.vy));
+    });
+  }
+  return pos;
+}
+
+function GraphCanvas({ graphData }) {
+  const W = 780, H = 380;
+  const typeColors = { agent:"#6366f1", issuer:"#f59e0b", verifier:"#ef4444", tool:"#10b981", workload:"#3b82f6", tenant:"#8b5cf6" };
+  const [hovered, setHovered] = useState(null);
+
+  if (!graphData || !graphData.nodes || graphData.nodes.length === 0) {
+    return h("div",{style:{textAlign:"center",padding:"60px 0",color:"var(--muted)"}},
+      h("div",{style:{fontSize:40,marginBottom:8}},"🕸"),
+      h("div",{style:{fontSize:14}},"Graph empty — run demo_seed.py to populate"),
+    );
+  }
+
+  const pos = forceLayout(graphData.nodes, graphData.edges, W, H, 120);
+
+  return h("svg", { width:"100%", viewBox:`0 0 ${W} ${H}`,
+    style:{display:"block",background:"var(--surface2)",borderRadius:8,overflow:"visible"} },
+    // Arrow marker
+    h("defs", null,
+      h("marker",{id:"arr",markerWidth:8,markerHeight:6,refX:14,refY:3,orient:"auto"},
+        h("polygon",{points:"0 0, 8 3, 0 6",fill:"#475569"})
+      ),
+    ),
+    // Edges
+    graphData.edges.map((e, i) => {
+      const ps = pos[e.src_node], pd = pos[e.dst_node];
+      if (!ps || !pd) return null;
+      const isHov = hovered === e.src_node || hovered === e.dst_node;
+      return h("line", { key:i, x1:ps.x, y1:ps.y, x2:pd.x, y2:pd.y,
+        stroke: isHov ? "#94a3b8" : "#334155",
+        strokeWidth: isHov ? 1.5 : 1,
+        markerEnd: "url(#arr)",
+        style: { transition: "stroke .2s" },
+      });
+    }),
+    // Edge labels (only on hover)
+    graphData.edges.map((e, i) => {
+      const ps = pos[e.src_node], pd = pos[e.dst_node];
+      if (!ps || !pd) return null;
+      if (hovered !== e.src_node && hovered !== e.dst_node) return null;
+      return h("text", { key:`el${i}`, x:(ps.x+pd.x)/2, y:(ps.y+pd.y)/2-4,
+        fontSize:9, fill:"#94a3b8", textAnchor:"middle", style:{pointerEvents:"none"}
+      }, e.edge_type?.replace(/_/g," "));
+    }),
+    // Nodes
+    graphData.nodes.map(n => {
+      const p = pos[n.node_id];
+      if (!p) return null;
+      const col = typeColors[n.node_type] || "#6366f1";
+      const r = n.node_type === "agent" ? 18 : 13;
+      const isHov = hovered === n.node_id;
+      const shortLabel = (n.label || "").replace(/^attest:/, "").replace(/@.*/, "").slice(0, 16);
+      return h("g", { key:n.node_id,
+        style:{cursor:"pointer"},
+        onMouseEnter: () => setHovered(n.node_id),
+        onMouseLeave: () => setHovered(null),
+      },
+        // Glow ring on hover
+        isHov && h("circle",{ cx:p.x, cy:p.y, r:r+6, fill:col, opacity:.15 }),
+        h("circle",{ cx:p.x, cy:p.y, r, fill:col, opacity: isHov ? 1 : 0.85,
+          stroke: isHov ? "white" : col, strokeWidth: isHov ? 2 : 0,
+          style:{ transition:"all .15s" }
+        }),
+        // Icon letter
+        h("text",{ x:p.x, y:p.y+1, textAnchor:"middle", dominantBaseline:"middle",
+          fontSize: r > 14 ? 10 : 8, fill:"white", fontWeight:700,
+          style:{pointerEvents:"none",userSelect:"none"}
+        }, n.node_type[0].toUpperCase()),
+        // Label below node
+        h("text",{ x:p.x, y:p.y+r+12, textAnchor:"middle",
+          fontSize:9, fill: isHov ? "var(--text)" : "var(--muted)",
+          style:{pointerEvents:"none",transition:"fill .15s"}
+        }, shortLabel),
+        // Tooltip on hover
+        isHov && h("g",{style:{pointerEvents:"none"}},
+          h("rect",{x:p.x+r+4,y:p.y-22,width:160,height:42,rx:5,fill:"#1e293b",stroke:"#334155",strokeWidth:1}),
+          h("text",{x:p.x+r+12,y:p.y-7,fontSize:10,fill:"white",fontWeight:600},n.label?.slice(0,22)+(n.label?.length>22?"…":"")),
+          h("text",{x:p.x+r+12,y:p.y+8,fontSize:9,fill:col},n.node_type, " · obs:", n.observation_count||0),
+        ),
+      );
+    }),
+    // Legend
+    Object.entries(typeColors).filter(([t]) => graphData.nodes.some(n=>n.node_type===t)).map(([t,c],i) =>
+      h("g",{key:t,transform:`translate(${10 + i * 90}, ${H-12})`},
+        h("circle",{cx:5,cy:0,r:4,fill:c,opacity:.85}),
+        h("text",{x:12,y:4,fontSize:9,fill:"var(--muted)"},t),
+      )
+    ),
+  );
+}
+
 function TrustGraphPage() {
-  const [stats]   = useApi("/api/graph/stats", { node_count:0, edge_count:0, anomaly_count:0, node_types:{}, edge_types:{} }, 10000);
-  const [anomalies] = useApi("/api/graph/anomalies?limit=20", { anomalies:[] }, 10000);
+  const [stats]     = useApi("/api/graph/stats",           { node_count:0, edge_count:0, anomaly_count:0, node_types:{} }, 8000);
+  const [anomalies] = useApi("/api/graph/anomalies?limit=20", { anomalies:[] }, 8000);
+  const [graphData] = useApi("/api/graph/data",             { nodes:[], edges:[] }, 8000);
   const [fromLabel, setFromLabel] = useState("agt-orchestrator");
-  const [toLabel,   setToLabel]   = useState("att-orch-001");
+  const [toLabel,   setToLabel]   = useState("attest:att-orch-001");
   const [pathResult, setPathResult] = useState(null);
   const [pathLoading, setPathLoading] = useState(false);
 
   const findPath = async () => {
-    setPathLoading(true);
-    setPathResult(null);
+    setPathLoading(true); setPathResult(null);
     try {
-      const r = await fetch(`${API_BASE}/api/graph/path/${encodeURIComponent(fromLabel)}?to=${encodeURIComponent(toLabel)}`, {
-        headers: { "X-API-Key": "demo-key" },
-      });
+      const r = await fetch(`${API_BASE}/api/graph/path/${encodeURIComponent(fromLabel)}?to=${encodeURIComponent(toLabel)}`,
+        { headers: { "X-API-Key": "demo-key" } });
       setPathResult(await r.json());
     } catch(e) {}
     setPathLoading(false);
   };
 
+  // Populate path finder from click on a node (future: wire through GraphCanvas)
+  const nodeOptions = (graphData.nodes || []).map(n => n.label);
   const typeColors = { agent:"#6366f1", issuer:"#f59e0b", verifier:"#ef4444", tool:"#10b981", workload:"#3b82f6", tenant:"#8b5cf6" };
-  const nodeTypes   = stats.node_types  || {};
-  const edgeTypes   = stats.edge_types  || {};
-  const totalNodes  = stats.node_count  || 0;
-  const anoms       = anomalies.anomalies || [];
+  const totalNodes = stats.node_count || 0;
+  const anoms = anomalies.anomalies || [];
 
   return h("div", null,
     h("div",{className:"section-head"},
       h("div",{className:"section-title"},"🕸 UIS Trust Graph"),
-      h("div",{className:"section-sub"},"Incremental graph of agents, tools, issuers and verifiers built from live UIS events"),
+      h("div",{className:"section-sub"},"Live graph of agents, issuers, verifiers and tools built from UIS events. Hover nodes to inspect."),
     ),
 
+    // KPI row
     h("div",{className:"three-col",style:{marginBottom:20}},
-      h("div",{className:"gstat"}, h("div",{className:"gstat-num text-blue",style:{color:"var(--accent)"}},totalNodes), h("div",{className:"gstat-label"},"Nodes")),
+      h("div",{className:"gstat"}, h("div",{className:"gstat-num",style:{color:"var(--accent)"}},totalNodes), h("div",{className:"gstat-label"},"Nodes")),
       h("div",{className:"gstat"}, h("div",{className:"gstat-num",style:{color:"var(--green)"}},stats.edge_count||0), h("div",{className:"gstat-label"},"Edges")),
       h("div",{className:"gstat"}, h("div",{className:"gstat-num",style:{color:anoms.length?"var(--red)":"var(--green)"}},stats.anomaly_count||0), h("div",{className:"gstat-label"},"Anomalies")),
     ),
 
-    h("div",{className:"two-col"},
-      // Node type breakdown
-      h("div",{className:"card"},
-        h("div",{className:"card-head"}, h("div",{className:"card-title"},"Node Types")),
-        h("div",{className:"card-body"},
-          Object.entries(nodeTypes).length === 0
-            ? h("div",{className:"empty",style:{padding:"24px"}}, h("div",{className:"empty-icon"},"🕸"), h("div",{className:"empty-msg"},"Graph empty"), h("div",{className:"empty-hint"},"Events populate the graph automatically"))
-            : Object.entries(nodeTypes).map(([type,count]) => {
-                const pct = totalNodes > 0 ? Math.round(count/totalNodes*100) : 0;
-                return h("div",{key:type,className:"type-bar"},
-                  h("div",{style:{width:70,fontSize:11,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".5px",fontWeight:600}},type),
-                  h("div",{className:"type-fill",style:{width:`${Math.max(pct,2)}%`,background:typeColors[type]||"var(--accent)",maxWidth:200}}),
-                  h("div",{className:"type-val"},count),
-                );
-              })
-        ),
+    // Graph canvas
+    h("div",{className:"card",style:{marginBottom:20}},
+      h("div",{className:"card-head"},
+        h("div",{className:"card-title"},"Live Trust Graph"),
+        h("span",{className:"chip",style:{fontSize:10}},`${totalNodes} nodes · ${stats.edge_count||0} edges`),
       ),
+      h("div",{style:{padding:"12px 16px 16px"}},
+        h(GraphCanvas, { graphData }),
+      ),
+    ),
+
+    // Bottom two-col: anomaly stream + path finder
+    h("div",{className:"two-col"},
       // Anomaly stream
       h("div",{className:"card"},
         h("div",{className:"card-head"}, h("div",{className:"card-title"},"Anomaly Stream"), h("span",{className:"chip"},`${anoms.length} detected`)),
@@ -630,47 +766,54 @@ function TrustGraphPage() {
               ))
         ),
       ),
-    ),
 
-    // Path finder
-    h("div",{className:"card"},
-      h("div",{className:"card-head"}, h("div",{className:"card-title"},"🔍 Trust Path Finder")),
-      h("div",{className:"card-body"},
-        h("div",{style:{display:"flex",gap:12,alignItems:"flex-end",flexWrap:"wrap",marginBottom:16}},
-          h("div",null,
-            h("div",{style:{fontSize:11,color:"var(--muted)",marginBottom:6,fontWeight:600,textTransform:"uppercase",letterSpacing:".7px"}},"From (label)"),
-            h("input",{value:fromLabel,onChange:e=>setFromLabel(e.target.value),placeholder:"e.g. agt-orchestrator",
-              style:{background:"var(--surface2)",border:"1px solid var(--border)",color:"var(--text)",padding:"8px 12px",borderRadius:6,fontSize:13,width:240,outline:"none"}}),
-          ),
-          h("div",{style:{fontSize:18,color:"var(--muted)",marginBottom:8}},"→"),
-          h("div",null,
-            h("div",{style:{fontSize:11,color:"var(--muted)",marginBottom:6,fontWeight:600,textTransform:"uppercase",letterSpacing:".7px"}},"To (label)"),
-            h("input",{value:toLabel,onChange:e=>setToLabel(e.target.value),placeholder:"e.g. att-orch-001",
-              style:{background:"var(--surface2)",border:"1px solid var(--border)",color:"var(--text)",padding:"8px 12px",borderRadius:6,fontSize:13,width:240,outline:"none"}}),
+      // Path finder
+      h("div",{className:"card"},
+        h("div",{className:"card-head"}, h("div",{className:"card-title"},"🔍 Trust Path Finder")),
+        h("div",{className:"card-body"},
+          h("div",{style:{marginBottom:10,fontSize:11,color:"var(--muted)"}},
+            "Node labels: agents (e.g. agt-orchestrator), issuers (https://…), verifiers (attest:att-…)"),
+          h("div",{style:{display:"flex",gap:8,flexDirection:"column",marginBottom:12}},
+            h("div",null,
+              h("div",{style:{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:".7px"}},"From"),
+              h("select",{value:fromLabel,onChange:e=>setFromLabel(e.target.value),
+                style:{background:"var(--surface2)",border:"1px solid var(--border)",color:"var(--text)",padding:"7px 10px",borderRadius:6,fontSize:12,width:"100%",outline:"none"}},
+                nodeOptions.map(l => h("option",{key:l,value:l},l))
+              ),
+            ),
+            h("div",null,
+              h("div",{style:{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:".7px"}},"To"),
+              h("select",{value:toLabel,onChange:e=>setToLabel(e.target.value),
+                style:{background:"var(--surface2)",border:"1px solid var(--border)",color:"var(--text)",padding:"7px 10px",borderRadius:6,fontSize:12,width:"100%",outline:"none"}},
+                nodeOptions.map(l => h("option",{key:l,value:l},l))
+              ),
+            ),
           ),
           h("button",{onClick:findPath,disabled:pathLoading,
-            style:{background:"var(--accent)",color:"white",border:"none",padding:"9px 22px",borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer"}},
+            style:{background:"var(--accent)",color:"white",border:"none",padding:"8px 20px",borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",width:"100%"}},
             pathLoading ? "Finding…" : "Find Path"),
-        ),
-        pathResult && h("div",null,
-          pathResult.found
-            ? h("div",null,
-                h("div",{style:{fontSize:12,color:"var(--green)",marginBottom:10}},`✓ Path found — ${pathResult.length} hop${pathResult.length===1?"":"s"}`),
-                h("div",{style:{display:"flex",alignItems:"center",flexWrap:"wrap",gap:6}},
-                  (pathResult.path||[]).map((node,i) => h("div",{key:i,style:{display:"flex",alignItems:"center",gap:6}},
-                    h("div",{style:{background:"var(--surface3)",border:"1px solid var(--border)",borderRadius:6,padding:"6px 10px",fontSize:12}},
-                      h("div",{className:`node-type nt-${node.node_type}`,style:{marginBottom:3}},node.node_type),
-                      h("div",{style:{fontFamily:"monospace"}},node.label?.slice(0,24)+(node.label?.length>24?"…":"")),
-                    ),
-                    i < pathResult.path.length-1 && h("div",{style:{color:"var(--muted)",fontSize:18}},"→"),
-                  ))
+          pathResult && h("div",{style:{marginTop:14}},
+            pathResult.found
+              ? h("div",null,
+                  h("div",{style:{fontSize:12,color:"var(--green)",marginBottom:10}},`✓ Path found — ${pathResult.length} hop${pathResult.length===1?"":"s"}`),
+                  h("div",{style:{display:"flex",alignItems:"center",flexWrap:"wrap",gap:6}},
+                    (pathResult.path||[]).map((node,i) => h("div",{key:i,style:{display:"flex",alignItems:"center",gap:6}},
+                      h("div",{style:{background:"var(--surface3)",border:"1px solid var(--border)",borderRadius:6,padding:"5px 9px",fontSize:11}},
+                        h("div",{style:{color:typeColors[node.node_type]||"var(--accent)",fontSize:9,fontWeight:700,textTransform:"uppercase",marginBottom:2}},node.node_type),
+                        h("div",{style:{fontFamily:"monospace",fontSize:11}},node.label?.slice(0,20)+(node.label?.length>20?"…":"")),
+                      ),
+                      i < pathResult.path.length-1 && h("div",{style:{color:"var(--muted)",fontSize:16}},"→"),
+                    ))
+                  )
+                )
+              : h("div",{style:{fontSize:12,color:"var(--muted)",marginTop:8}},
+                  pathResult.error === "one_or_both_nodes_not_found"
+                    ? "⚠ Node not found in graph."
+                    : pathResult.found === false
+                    ? "No path found between these nodes."
+                    : "Select nodes and click Find Path."
                 ),
-              )
-            : h("div",{style:{fontSize:12,color:"var(--muted)"}},
-                pathResult.error === "one_or_both_nodes_not_found"
-                  ? "⚠ One or both nodes not found in graph. Run demo_seed.py first."
-                  : "No path found between these nodes.",
-              ),
+          ),
         ),
       ),
     ),

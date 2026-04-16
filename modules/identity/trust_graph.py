@@ -873,3 +873,41 @@ def get_stats(tenant_id: str) -> dict[str, Any]:
             }
         finally:
             conn.close()
+
+
+def get_graph_data(tenant_id: str, limit: int = 200) -> dict[str, Any]:
+    """
+    Return all nodes and edges for the tenant as plain dicts,
+    suitable for graph visualization.
+    """
+    with _lock:
+        conn = _get_conn()
+        try:
+            nodes = conn.execute(
+                """
+                SELECT node_id, node_type, label, observation_count, last_seen
+                FROM tg_nodes WHERE tenant_id=?
+                ORDER BY node_type, label
+                LIMIT ?
+                """,
+                (tenant_id, limit),
+            ).fetchall()
+            edges = conn.execute(
+                """
+                SELECT e.src_node, e.dst_node, e.edge_type, e.weight,
+                       s.label AS src_label, s.node_type AS src_type,
+                       d.label AS dst_label, d.node_type AS dst_type
+                FROM tg_edges e
+                JOIN tg_nodes s ON s.node_id = e.src_node AND s.tenant_id = e.tenant_id
+                JOIN tg_nodes d ON d.node_id = e.dst_node AND d.tenant_id = e.tenant_id
+                WHERE e.tenant_id=?
+                LIMIT ?
+                """,
+                (tenant_id, limit * 4),
+            ).fetchall()
+            return {
+                "nodes": [dict(r) for r in nodes],
+                "edges": [dict(r) for r in edges],
+            }
+        finally:
+            conn.close()

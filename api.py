@@ -2691,6 +2691,20 @@ async def api_graph_stats(
     return {"tenant_id": tenant.tenant_id, **stats}
 
 
+@app.get("/api/graph/data")
+async def api_graph_data(
+    limit: int = 200,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    GET /api/graph/data
+
+    Return all nodes and edges for graph visualization.
+    """
+    data = trust_graph.get_graph_data(tenant_id=tenant.tenant_id, limit=limit)
+    return {"tenant_id": tenant.tenant_id, **data}
+
+
 # ── Blast Radius Simulator endpoints ──────────────────────────────────────────
 
 @app.post("/api/simulate/blast_radius")

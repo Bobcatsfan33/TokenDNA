@@ -12,7 +12,7 @@
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
-PORT=8000
+PORT=8088
 DB_PATH="/tmp/tokendna-demo.db"
 SEED=true
 DRY_RUN=false
