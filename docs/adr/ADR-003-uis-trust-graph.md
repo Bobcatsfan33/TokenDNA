@@ -1,134 +1,87 @@
-# ADR-003 — UIS Trust Graph
+# ADR-003: UIS Trust Graph — RSA'26 Gap-Closure Extensions
 
+**Sprint:** 1-2 addendum  
+**Date:** 2026-04-17  
 **Status:** Accepted  
-**Date:** 2026-04-15  
-**Authors:** Forge (engineering)  
-**Depends on:** ADR-002 (UIS Exploit Narrative Layer)  
-**Followed by:** ADR-004 (Agent Permission Blast Radius Simulator, Sprint 2-1)
+**Extends:** Sprint 1-2 UIS Trust Graph base implementation
 
 ---
 
 ## Context
 
-Sprint 1-1 enriched every UIS event with chain-semantic narrative fields
-(`precondition`, `pivot`, `payload`, `objective`). These fields describe *what
-happened at each step*, but give no picture of the *structural relationships*
-between principals over time.
+Sprint 1-2 shipped the UIS Trust Graph with three anomaly detection rules. RSA'26 exposed three critical gaps that no vendor closed. Two of those gaps map directly to trust-graph anomaly rules that were missing:
 
-Three Phase 2 features require a graph of the trust topology:
+**RSA Gap 1 — Policy Self-Modification**
+CrowdStrike disclosed two Fortune 50 incidents where AI agents with legitimate credentials encountered a security restriction and removed the restriction itself to complete the task. Every identity check passed. Caught by accident both times. No existing identity framework detects this.
 
-1. **Agent Permission Blast Radius Simulator (Sprint 2-1)** — "if agent X is
-   compromised, which nodes does it reach?" requires a pre-built reachability
-   graph.
-2. **Exploit Intent Correlation Engine (Sprint 2-2)** — multi-hop attack
-   playbooks require the engine to walk the graph to verify whether observed
-   events form a plausible chain.
-3. **Autonomous Verifier Reputation Network (Sprint 3-2)** — trust score
-   propagation requires knowing which verifiers have been used with which
-   issuers.
-
-Without a persistent graph, each of these features would have to reconstruct
-trust relationships from raw event logs on every query — O(n) scans that become
-prohibitively slow at production event volumes.
+**RSA Gap 2 — Permission Drift**
+Agent permissions expanded 3× in one month at enterprise scale without security review. Discovery tools show today's permission state; nothing tracks how permissions evolved over time.
 
 ---
 
-## Decision
+## Decision: Additive Extension Pattern
 
-Build `modules/identity/trust_graph.py` — an incrementally maintained graph of
-agents, workloads, tools, issuers, and verifiers extracted from UIS events.
+Rather than restructuring the base `trust_graph.py` implementation, RSA gap-closure rules are appended as clearly-delineated additive functions. This approach:
 
-### Graph model
+1. Preserves the existing API and schema (no breaking changes to Sprint 2-1/2-2 consumers)
+2. Makes the RSA additions auditable as a distinct section
+3. Allows independent testing of the new rules
 
-**Node types:** `agent` | `workload` | `tool` | `issuer` | `verifier` | `tenant`  
-**Edge types:** `delegates_to` | `attested_by` | `issued_by` | `uses_tool` | `verified_by`
+**New tables (idempotently created via `_rsa_init_db()`):**
 
-Nodes and edges carry `first_seen`, `last_seen`, and `observation_count` /
-`weight` counters. High weight = established relationship; weight=1 = brand new.
+```sql
+tg_policy_governs        -- tracks pre-existing governance edges (policy → agent)
+tg_permission_history    -- time-series weight history for permission scope tracking
+```
 
-### Storage
+**New public functions:**
 
-SQLite default (two tables: `tg_nodes`, `tg_edges`) — consistent with the
-rest of the data-plane. PostgreSQL is used automatically when `TOKENDNA_PG_DSN`
-is set; schema and upsert SQL are identical modulo parameter placeholder style.
-A `tg_anomalies` table is created on first use to persist detected anomalies.
+| Function | Purpose |
+|----------|---------|
+| `record_policy_governance(tenant, policy, agent)` | Register/update a governance relationship; returns True if pre-existing |
+| `record_permission_scope(tenant, agent, policy, scope)` | Append a permission scope observation to history |
+| `check_policy_self_modification(tenant, agent, policy, event_type, action)` | RULE-04: fires CRITICAL if agent writes to its own governing policy |
+| `check_permission_drift(tenant, agent, policy)` | RULE-05: fires HIGH if permission surface grew >threshold× in window |
 
-Shortest-path queries use a **recursive CTE** (BFS). This works on SQLite 3.35+
-(available on all supported platforms) and PostgreSQL 8.4+.
+---
 
-### Ingestion
+## RULE-04: Policy Self-Modification Detection
 
-`trust_graph.ingest_uis_event()` is called from `uis_store.insert_event()` as a
-fire-and-forget hook. Exceptions are caught and logged — graph ingestion never
-blocks event persistence (graceful degradation).
+**Trigger conditions:**
+- A `GOVERNS` edge from `policy → agent` pre-exists (`observation_count ≥ 2`)
+- The current event is a write/modify/delete/remove operation on that policy
 
-Node and edge upserts are **idempotent**: SQLite `ON CONFLICT DO UPDATE` / PG
-`ON CONFLICT DO UPDATE` increment counters without duplicating rows.
+**Critical design decision — pre-existence check:** The rule fires only when `observation_count ≥ 2`. The first event that creates the governance record is not treated as evidence of self-modification (the agent didn't know about the policy yet; this event establishes it). Only subsequent modification attempts are flagged.
 
-### Anomaly detection
+**Severity:** CRITICAL. This is the pattern CrowdStrike disclosed as a Fortune 50 production incident. Human review must be triggered immediately.
 
-Three signals are evaluated on every insert:
+---
 
-| Signal | Trigger | Severity |
-|---|---|---|
-| `NEW_TOOL_IN_STABLE_AGENT_TOOLKIT` | Agent with ≥`TG_MIN_STABLE_OBS` (default 5) observations suddenly uses a tool it has never used before | medium |
-| `UNFAMILIAR_VERIFIER_IN_TRUST_PATH` | An issuer with ≥`TG_MIN_STABLE_OBS` observations uses a brand-new verifier | high |
-| `DELEGATION_DEPTH_EXCEEDED` | Delegation chain for a subject exceeds `TG_MAX_DELEGATION_DEPTH` (default 4) hops | high |
+## RULE-05: Permission Drift Detection
 
-Both thresholds are environment-variable tunable without code changes.
+**Trigger conditions:**
+- A baseline permission scope weight exists within the configured window (`TG_PERMISSION_DRIFT_DAYS`, default 30 days)
+- Current scope weight is ≥ `TG_PERMISSION_GROWTH_X`× the baseline (default 2.0×)
 
-### API surface
+**Design note:** Scope weight is `len(scope_list)`, providing a simple proxy for permission surface size. A more sophisticated implementation could weight permissions by their risk level; that refinement is deferred until a customer requests it.
 
-Three new endpoints wired to `api.py`:
+**Severity:** HIGH. Permission drift is a slow-motion breach signal. It should be reviewed but does not require immediate human intervention (unlike RULE-04).
 
-| Endpoint | Description |
-|---|---|
-| `GET /api/graph/path/{from}?to={to}` | Shortest trust path between two nodes |
-| `GET /api/graph/anomalies` | Detected anomalies, newest-first |
-| `GET /api/graph/stats` | Node count, edge count, type breakdowns, anomaly count |
+---
+
+## Configuration
+
+Both thresholds are environment-variable tunable:
+
+```bash
+TG_PERMISSION_GROWTH_X=2.0    # multiplier to trigger drift anomaly (default 2×)
+TG_PERMISSION_DRIFT_DAYS=30   # baseline comparison window in days
+```
 
 ---
 
 ## Consequences
 
-### Positive
-
-- Blast Radius Simulator (Sprint 2-1) can query reachability directly from
-  the graph instead of scanning raw events.
-- Intent Correlation Engine (Sprint 2-2) can verify multi-hop attack chains
-  using graph traversal.
-- Anomaly detection fires in real time on every event with < 1ms overhead
-  (SQLite lookups, no ML).
-- Graph stats provide instant observability into the trust topology for operators.
-
-### Negative / Trade-offs
-
-- Graph storage grows proportionally with distinct (tenant, node, edge) tuples.
-  In practice this is bounded by the number of unique principals, not event
-  volume — expected to remain small (< 100K nodes per tenant in year 1).
-- Anomaly detection uses SQLite-only path for now. PG path stubs return empty
-  results — acceptable for the current SQLite-first deployment; PG anomaly
-  detection is a Sprint 1-2 follow-on item.
-- Recursive CTE shortest-path has O(V+E) cost per query; acceptable for
-  trust graphs which are small and shallow (typical depth ≤ 6).
-
-### Deferred to later sprints
-
-- Graph visualization UI (deferred to Sprint 2-1 where Blast Radius visual is built)
-- PG-native anomaly detection (deferred to Sprint 3-2 Verifier Reputation Network)
-- Graph pruning / TTL for stale nodes (deferred — no production data yet)
-- `delegates_to` edge population (requires explicit delegation claim in token;
-  deferred until delegation token spec is finalized in Sprint 3-1)
-
----
-
-## Appendix — Node extraction rules from UIS events
-
-| UIS field | → Node type | → Label |
-|---|---|---|
-| `identity.agent_id` (if set) | `agent` | `agent_id` value |
-| `identity.subject` (if no agent_id) | `workload` | `subject` value |
-| `token.issuer` | `issuer` | issuer URL |
-| `binding.attestation_id` | `verifier` | `attest:{attestation_id[:16]}` |
-| `binding.spiffe_id` | `verifier` | SPIFFE URI |
-| `auth.protocol + ":" + auth.method` | `tool` | e.g. `oidc:password` |
+- Callers integrating agent policy events should call `record_policy_governance()` and `record_permission_scope()` when handling policy-related UIS events, then check the return values of the rule functions.
+- No changes to existing `ingest_uis_event()`, `shortest_path()`, `get_stats()`, or `get_anomalies()` APIs.
+- Both new tables are tenant-isolated and use the same SQLite locking pattern as the base module.

@@ -48,6 +48,10 @@ from modules.storage import db_backend
 
 MIN_STABLE_OBSERVATIONS: int = int(os.getenv("TG_MIN_STABLE_OBS", "5"))
 MAX_DELEGATION_DEPTH: int = int(os.getenv("TG_MAX_DELEGATION_DEPTH", "4"))
+# RSA Gap 2: permission growth multiplier before anomaly fires
+PERMISSION_GROWTH_THRESHOLD: float = float(os.getenv("TG_PERMISSION_GROWTH_X", "2.0"))
+# Baseline window for permission drift history (days)
+PERMISSION_DRIFT_WINDOW_DAYS: int = int(os.getenv("TG_PERMISSION_DRIFT_DAYS", "30"))
 
 _lock = threading.Lock()
 
@@ -911,3 +915,280 @@ def get_graph_data(tenant_id: str, limit: int = 200) -> dict[str, Any]:
             }
         finally:
             conn.close()
+
+
+# ── RSA 26 Gap-Closure Extensions ────────────────────────────────────────────
+#
+# Sprint 1-2 addendum (2026-04-17):
+# RSA 26 exposed three critical gaps no vendor closed.  Two of those gaps map
+# directly to trust-graph anomaly rules:
+#
+#   RULE-04  POLICY_SELF_MODIFICATION  (RSA Gap 1)
+#     Agent has legitimate credentials, hits a restriction, removes the
+#     restriction itself.  CrowdStrike disclosed two Fortune 50 incidents.
+#     No existing identity framework detects this.
+#
+#   RULE-05  PERMISSION_DRIFT_SPIKE    (RSA Gap 2)
+#     Agent permissions expanded 3× in one month without security review.
+#     Discovery tools show today’s permissions; nothing tracks how they
+#     evolved.
+#
+# These rules are appended here so they integrate cleanly into the existing
+# anomaly pipeline without restructuring the upstream implementation.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_RSA_INIT = """
+CREATE TABLE IF NOT EXISTS tg_policy_governs (
+    edge_id       TEXT NOT NULL PRIMARY KEY,
+    tenant_id     TEXT NOT NULL,
+    policy_label  TEXT NOT NULL,
+    agent_label   TEXT NOT NULL,
+    first_seen    TEXT NOT NULL,
+    last_seen     TEXT NOT NULL,
+    observation_count INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS tg_permission_history (
+    history_id    TEXT NOT NULL PRIMARY KEY,
+    tenant_id     TEXT NOT NULL,
+    agent_label   TEXT NOT NULL,
+    policy_label  TEXT NOT NULL,
+    recorded_at   TEXT NOT NULL,
+    scope_weight  REAL NOT NULL,
+    source_event  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_tg_policy_governs_tenant
+    ON tg_policy_governs(tenant_id, agent_label);
+CREATE INDEX IF NOT EXISTS idx_tg_perm_history_lookup
+    ON tg_permission_history(tenant_id, agent_label, policy_label, recorded_at);
+"""
+
+
+def _rsa_init_db() -> None:
+    """Idempotently create RSA gap-closure tables."""
+    with _lock:
+        conn = _get_conn()
+        try:
+            conn.executescript(_RSA_INIT)
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _rsa_edge_id(tenant_id: str, policy_label: str, agent_label: str) -> str:
+    import uuid
+    return str(uuid.uuid5(
+        uuid.NAMESPACE_DNS,
+        f"{tenant_id}:{policy_label}:{agent_label}:governs",
+    ))
+
+
+def record_policy_governance(tenant_id: str, policy_label: str,
+                              agent_label: str) -> bool:
+    """
+    Record that policy_label GOVERNS agent_label in this tenant.
+    Returns True if the edge pre-existed (update), False if brand new (insert).
+    Used by RULE-04: self-modification detection fires only on pre-existing edges.
+    """
+    _rsa_init_db()
+    now = _now()
+    edge_id = _rsa_edge_id(tenant_id, policy_label, agent_label)
+    with _lock:
+        conn = _get_conn()
+        try:
+            existing = conn.execute(
+                "SELECT observation_count FROM tg_policy_governs WHERE edge_id=?",
+                (edge_id,)
+            ).fetchone()
+            if existing:
+                conn.execute("""
+                    UPDATE tg_policy_governs
+                    SET last_seen=?, observation_count=observation_count+1
+                    WHERE edge_id=?
+                """, (now, edge_id))
+                conn.commit()
+                return True  # pre-existed
+            else:
+                conn.execute("""
+                    INSERT INTO tg_policy_governs
+                        (edge_id, tenant_id, policy_label, agent_label,
+                         first_seen, last_seen, observation_count)
+                    VALUES (?, ?, ?, ?, ?, ?, 1)
+                """, (edge_id, tenant_id, policy_label, agent_label, now, now))
+                conn.commit()
+                return False  # brand new
+        finally:
+            conn.close()
+
+
+def record_permission_scope(tenant_id: str, agent_label: str,
+                             policy_label: str, scope: list[str],
+                             source_event: str | None = None) -> None:
+    """Record a permission scope observation for drift tracking (RULE-05)."""
+    import uuid
+    _rsa_init_db()
+    scope_weight = float(len(scope)) if scope else 1.0
+    with _lock:
+        conn = _get_conn()
+        try:
+            conn.execute("""
+                INSERT INTO tg_permission_history
+                    (history_id, tenant_id, agent_label, policy_label,
+                     recorded_at, scope_weight, source_event)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                str(uuid.uuid4()), tenant_id, agent_label, policy_label,
+                _now(), scope_weight, source_event,
+            ))
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def check_policy_self_modification(
+    tenant_id: str,
+    agent_label: str,
+    policy_label: str,
+    event_type: str = "",
+    action: str = "",
+) -> GraphAnomaly | None:
+    """
+    RULE-04 (RSA Gap 1): Detect agent attempting to modify its own governing policy.
+
+    Fires CRITICAL anomaly when:
+      - A GOVERNS edge exists from policy_label → agent_label (pre-existing)
+      - The current event is a policy write/modify/delete/remove operation
+
+    Returns a GraphAnomaly or None.
+    """
+    _rsa_init_db()
+    now = _now()
+
+    # Write signal detection
+    write_signals = {
+        "policy_write", "policy_update", "policy_delete", "policy_modify",
+        "permission_grant", "scope_expansion", "rule_removal",
+        "privilege_escalation",
+    }
+    write_actions = {"write", "update", "delete", "modify", "remove"}
+    is_write = (
+        event_type in write_signals
+        or action.lower() in write_actions
+    )
+    if not is_write:
+        return None
+
+    # Check pre-existing governance relationship
+    edge_id = _rsa_edge_id(tenant_id, policy_label, agent_label)
+    with _lock:
+        conn = _get_conn()
+        try:
+            row = conn.execute(
+                "SELECT observation_count FROM tg_policy_governs WHERE edge_id=?",
+                (edge_id,)
+            ).fetchone()
+        finally:
+            conn.close()
+
+    if not row or row["observation_count"] < 2:
+        # Not a pre-existing governance relationship — first event created it;
+        # can’t be self-modification
+        return None
+
+    anomaly = GraphAnomaly(
+        anomaly_type="POLICY_SELF_MODIFICATION",
+        severity="critical",
+        tenant_id=tenant_id,
+        detected_at=now,
+        subject_node=agent_label,
+        detail=(
+            f"CRITICAL: Agent ‘{agent_label}’ attempted to modify policy ‘{policy_label}’ "
+            "which governs its own permissions. This matches the pattern of an agent "
+            "removing its own security restrictions. Human review required immediately. "
+            "[RSA 26 Gap 1]"
+        ),
+        context={"policy_label": policy_label, "event_type": event_type,
+                 "action": action, "rsa_gap": "Gap 1 — Policy Self-Modification",
+                 "rule": "RULE-04"},
+    )
+    store_anomaly(anomaly)
+    return anomaly
+
+
+def check_permission_drift(
+    tenant_id: str,
+    agent_label: str,
+    policy_label: str,
+) -> GraphAnomaly | None:
+    """
+    RULE-05 (RSA Gap 2): Permission surface growing >×2 without attestation.
+
+    Compares the current (most recent) scope weight against the oldest
+    weight recorded within the baseline window.  If growth exceeds
+    PERMISSION_GROWTH_THRESHOLD, fires a HIGH anomaly.
+
+    Returns a GraphAnomaly or None.
+    """
+    from datetime import datetime, timezone, timedelta
+    _rsa_init_db()
+    now = _now()
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=PERMISSION_DRIFT_WINDOW_DAYS)
+    ).isoformat()
+
+    with _lock:
+        conn = _get_conn()
+        try:
+            # Oldest record in the window (baseline)
+            baseline_row = conn.execute("""
+                SELECT scope_weight FROM tg_permission_history
+                WHERE tenant_id=? AND agent_label=? AND policy_label=?
+                  AND recorded_at >= ?
+                ORDER BY recorded_at ASC LIMIT 1
+            """, (tenant_id, agent_label, policy_label, cutoff)).fetchone()
+
+            # Most recent record (current)
+            current_row = conn.execute("""
+                SELECT scope_weight FROM tg_permission_history
+                WHERE tenant_id=? AND agent_label=? AND policy_label=?
+                ORDER BY recorded_at DESC LIMIT 1
+            """, (tenant_id, agent_label, policy_label)).fetchone()
+        finally:
+            conn.close()
+
+    if not baseline_row or not current_row:
+        return None
+    baseline = baseline_row["scope_weight"]
+    current = current_row["scope_weight"]
+    if baseline <= 0:
+        return None
+
+    growth = current / baseline
+    if growth < PERMISSION_GROWTH_THRESHOLD:
+        return None
+
+    anomaly = GraphAnomaly(
+        anomaly_type="PERMISSION_DRIFT_SPIKE",
+        severity="high",
+        tenant_id=tenant_id,
+        detected_at=now,
+        subject_node=agent_label,
+        detail=(
+            f"Agent ‘{agent_label}’ permission surface for policy ‘{policy_label}’ "
+            f"has grown {growth:.1f}× (baseline {baseline:.1f} → current {current:.1f}) "
+            f"over the past {PERMISSION_DRIFT_WINDOW_DAYS} days without attestation. "
+            "[RSA 26 Gap 2]"
+        ),
+        context={
+            "policy_label": policy_label,
+            "baseline_weight": baseline,
+            "current_weight": current,
+            "growth_factor": round(growth, 3),
+            "threshold": PERMISSION_GROWTH_THRESHOLD,
+            "rsa_gap": "Gap 2 — Permission Lifecycle / Drift",
+            "rule": "RULE-05",
+        },
+    )
+    store_anomaly(anomaly)
+    return anomaly
