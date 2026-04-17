@@ -77,6 +77,7 @@ from modules.identity import schema_registry
 from modules.identity import trust_graph
 from modules.identity import blast_radius
 from modules.identity import policy_guard
+from modules.identity import permission_drift
 from modules.identity import intent_correlation
 from modules.identity import policy_bundles
 from modules.identity import network_intel
@@ -222,6 +223,7 @@ async def _startup_checks() -> None:
     trust_graph.init_db()
     intent_correlation.init_db()
     policy_guard.init_db()
+    permission_drift.init_db()
     ct_log.init_db()
     network_intel.init_db()
     compliance.init_db()
@@ -3241,3 +3243,220 @@ async def api_policy_guard_stats(
     """Summary statistics for PolicyGuard violations in the current tenant."""
     policy_guard.init_db()
     return policy_guard.violation_stats(tenant.tenant_id)
+
+
+# ── Permission Drift Tracker (Sprint 5-2) ─────────────────────────────────
+
+@app.post("/api/drift/record")
+async def api_drift_record(
+    body: dict,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Record a permission scope observation for an agent.
+    Triggers drift detection as a side effect; may create a DriftAlert.
+
+    Body fields:
+      agent_id          str   required
+      policy_id         str   required
+      scope             list  required  list of permission strings
+      source_event      str   optional  UIS event ID
+      has_attestation   bool  optional  default false
+      changed_by        str   optional  actor that made the change
+    """
+    permission_drift.init_db()
+    agent_id = str(body.get("agent_id", "")).strip()
+    policy_id = str(body.get("policy_id", "")).strip()
+    scope = body.get("scope", [])
+    if not agent_id or not policy_id:
+        raise HTTPException(status_code=400,
+                            detail="agent_id and policy_id are required")
+    obs = permission_drift.record_observation(
+        tenant_id=tenant.tenant_id,
+        agent_id=agent_id,
+        policy_id=policy_id,
+        scope=scope,
+        source_event=body.get("source_event"),
+        has_attestation=bool(body.get("has_attestation", False)),
+        changed_by=body.get("changed_by"),
+        metadata=body.get("metadata", {}),
+    )
+    return {
+        "observation_id": obs.observation_id,
+        "agent_id": obs.agent_id,
+        "policy_id": obs.policy_id,
+        "scope_weight": obs.scope_weight,
+        "recorded_at": obs.recorded_at,
+        "has_attestation": obs.has_attestation,
+    }
+
+
+@app.get("/api/drift/alerts")
+async def api_drift_alerts(
+    status: Optional[str] = "open",
+    agent_id: Optional[str] = None,
+    limit: int = 50,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    List permission drift alerts for the current tenant.
+    Default: open alerts (agents whose permissions grew >2× without attestation).
+    Ordered by growth factor descending — worst offenders first.
+    """
+    permission_drift.init_db()
+    alerts = permission_drift.list_alerts(
+        tenant_id=tenant.tenant_id,
+        status=status,
+        agent_id=agent_id,
+        limit=min(limit, 200),
+    )
+    return {
+        "alerts": [
+            {
+                "drift_id": a.drift_id,
+                "agent_id": a.agent_id,
+                "policy_id": a.policy_id,
+                "baseline_weight": a.baseline_weight,
+                "current_weight": a.current_weight,
+                "growth_factor": a.growth_factor,
+                "baseline_date": a.baseline_date,
+                "detected_at": a.detected_at,
+                "status": a.status,
+                "unattested_changes": a.unattested_changes,
+                "observations_in_window": a.observations_in_window,
+            }
+            for a in alerts
+        ],
+        "count": len(alerts),
+        "tenant_id": tenant.tenant_id,
+    }
+
+
+@app.get("/api/drift/report/{agent_id}")
+async def api_drift_report(
+    agent_id: str,
+    policy_id: str,
+    days: int = 30,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Full permission history timeline for one agent on one policy.
+    Returns every recorded scope observation in the window, baseline→current
+    delta, and growth factor.
+    """
+    permission_drift.init_db()
+    if not policy_id:
+        raise HTTPException(status_code=400, detail="policy_id query param required")
+    report = permission_drift.agent_drift_report(
+        tenant_id=tenant.tenant_id,
+        agent_id=agent_id,
+        policy_id=policy_id,
+        days=min(days, 365),
+    )
+    return {
+        "agent_id": report.agent_id,
+        "policy_id": report.policy_id,
+        "baseline_weight": report.baseline_weight,
+        "current_weight": report.current_weight,
+        "growth_factor": report.growth_factor,
+        "open_alerts": report.open_alerts,
+        "unattested_changes": report.unattested_changes,
+        "observation_count": len(report.observations),
+        "observations": [
+            {
+                "observation_id": o.observation_id,
+                "scope": o.scope,
+                "scope_weight": o.scope_weight,
+                "recorded_at": o.recorded_at,
+                "has_attestation": o.has_attestation,
+                "changed_by": o.changed_by,
+            }
+            for o in report.observations
+        ],
+        "report_generated_at": report.report_generated_at,
+    }
+
+
+@app.post("/api/drift/approve/{drift_id}")
+async def api_drift_approve(
+    drift_id: str,
+    body: dict,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """
+    Human operator approves a drift event
+    (accepts the permission growth as intentional).
+
+    Body fields:
+      approved_by  str  required  operator identity
+      note         str  optional  justification
+    """
+    permission_drift.init_db()
+    approved_by = str(body.get("approved_by", "")).strip()
+    if not approved_by:
+        raise HTTPException(status_code=400, detail="approved_by is required")
+    alert = permission_drift.approve_drift(
+        drift_id=drift_id,
+        tenant_id=tenant.tenant_id,
+        approved_by=approved_by,
+        note=str(body.get("note", "")),
+    )
+    if not alert:
+        raise HTTPException(
+            status_code=404,
+            detail="Drift alert not found or not in open status",
+        )
+    return {
+        "drift_id": alert.drift_id,
+        "status": alert.status,
+        "approved_by": alert.approved_by,
+        "approved_at": alert.approved_at,
+        "approval_note": alert.approval_note,
+    }
+
+
+@app.get("/api/drift/summary")
+async def api_drift_summary(
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Tenant-level drift summary: agents tracked, agents with open alerts,
+    total open alerts, highest growth factor.
+    """
+    permission_drift.init_db()
+    summary = permission_drift.drift_summary(tenant.tenant_id)
+    return {
+        "tenant_id": summary.tenant_id,
+        "agents_tracked": summary.agents_tracked,
+        "agents_with_open_alerts": summary.agents_with_open_alerts,
+        "total_open_alerts": summary.total_open_alerts,
+        "total_approved": summary.total_approved,
+        "highest_growth_factor": summary.highest_growth_factor,
+        "highest_growth_agent": summary.highest_growth_agent,
+        "computed_at": summary.computed_at,
+    }
+
+
+@app.get("/api/drift/blast-comparison/{agent_id}")
+async def api_drift_blast_comparison(
+    agent_id: str,
+    policy_id: str,
+    baseline_days: int = 30,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Blast radius comparison: current permission surface vs. baseline.
+    Returns growth_factor and a qualitative blast_radius_growth_estimate
+    (low/medium/high/critical).
+    This is the killer demo visual: 'your agent\'s blast radius increased
+    2.4× this month.'
+    """
+    permission_drift.init_db()
+    if not policy_id:
+        raise HTTPException(status_code=400, detail="policy_id query param required")
+    return permission_drift.blast_radius_comparison(
+        tenant_id=tenant.tenant_id,
+        agent_id=agent_id,
+        policy_id=policy_id,
+        baseline_days=min(baseline_days, 365),
+    )
