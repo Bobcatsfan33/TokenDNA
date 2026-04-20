@@ -42,7 +42,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 
@@ -80,6 +80,7 @@ from modules.identity import policy_guard
 from modules.identity import permission_drift
 from modules.identity import intent_correlation
 from modules.identity import policy_bundles
+from modules.identity import agent_lifecycle
 from modules.identity import network_intel
 from modules.identity import compliance
 from modules.identity import attestation_store
@@ -224,6 +225,7 @@ async def _startup_checks() -> None:
     intent_correlation.init_db()
     policy_guard.init_db()
     permission_drift.init_db()
+    agent_lifecycle.init_db()
     ct_log.init_db()
     network_intel.init_db()
     compliance.init_db()
@@ -3460,3 +3462,187 @@ async def api_drift_blast_comparison(
         policy_id=policy_id,
         baseline_days=min(baseline_days, 365),
     )
+
+
+# ── Sprint 5-3: Ghost Agent Offboarding Enforcement ───────────────────────────
+
+@app.post("/api/agents/register")
+async def api_register_agent(
+    body: dict = Body(...),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Register a new agent in the lifecycle inventory."""
+    agent_lifecycle.init_db()
+    agent_id = str(body.get("agent_id", "")).strip() or None
+    display_name = str(body.get("display_name", "")).strip()
+    if not display_name:
+        raise HTTPException(status_code=400, detail="'display_name' is required")
+    try:
+        agent = agent_lifecycle.register_agent(
+            tenant_id=tenant.tenant_id,
+            agent_id=agent_id,
+            display_name=display_name,
+            platform=str(body.get("platform", "unknown")),
+            owner=body.get("owner"),
+            credential_ids=list(body.get("credential_ids", [])),
+            last_token_id=body.get("last_token_id"),
+            metadata=body.get("metadata", {}),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return agent
+
+
+@app.post("/api/agents/decommission/{agent_id}")
+async def api_decommission_agent(
+    agent_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Decommission an agent (terminal).  Automatically revokes credentials and
+    converts the agent's token to a deception-mesh honeypot.
+    """
+    agent_lifecycle.init_db()
+    try:
+        result = agent_lifecycle.decommission_agent(
+            tenant_id=tenant.tenant_id,
+            agent_id=agent_id,
+            actor=body.get("actor"),
+            reason=body.get("reason"),
+            revoke_credentials=bool(body.get("revoke_credentials", True)),
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return result
+
+
+@app.post("/api/agents/suspend/{agent_id}")
+async def api_suspend_agent(
+    agent_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Suspend an active agent (reversible)."""
+    agent_lifecycle.init_db()
+    try:
+        return agent_lifecycle.suspend_agent(
+            tenant_id=tenant.tenant_id,
+            agent_id=agent_id,
+            actor=body.get("actor"),
+            reason=body.get("reason"),
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/agents/reactivate/{agent_id}")
+async def api_reactivate_agent(
+    agent_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Reactivate a suspended agent."""
+    agent_lifecycle.init_db()
+    try:
+        return agent_lifecycle.reactivate_agent(
+            tenant_id=tenant.tenant_id,
+            agent_id=agent_id,
+            actor=body.get("actor"),
+            reason=body.get("reason"),
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/agents/heartbeat/{agent_id}")
+async def api_agent_heartbeat(
+    agent_id: str,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Record agent activity (updates last_seen_at)."""
+    agent_lifecycle.init_db()
+    try:
+        return agent_lifecycle.record_heartbeat(
+            tenant_id=tenant.tenant_id,
+            agent_id=agent_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/agents/inventory")
+async def api_agent_inventory(
+    status: str | None = None,
+    limit: int = 200,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Return full agent inventory for the tenant."""
+    agent_lifecycle.init_db()
+    try:
+        return {"agents": agent_lifecycle.list_inventory(
+            tenant_id=tenant.tenant_id,
+            status=status,
+            limit=limit,
+        )}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/agents/orphans")
+async def api_agent_orphans(
+    orphan_days: int = 30,
+    limit: int = 200,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Return agents with no activity in >orphan_days days."""
+    agent_lifecycle.init_db()
+    orphans = agent_lifecycle.list_orphans(
+        tenant_id=tenant.tenant_id,
+        orphan_days=max(orphan_days, 1),
+        limit=limit,
+    )
+    return {"orphans": orphans, "count": len(orphans), "orphan_threshold_days": orphan_days}
+
+
+@app.get("/api/agents/{agent_id}/events")
+async def api_agent_events(
+    agent_id: str,
+    limit: int = 100,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Return lifecycle event log for a specific agent."""
+    agent_lifecycle.init_db()
+    try:
+        events = agent_lifecycle.get_lifecycle_events(
+            tenant_id=tenant.tenant_id,
+            agent_id=agent_id,
+            limit=limit,
+        )
+        return {"agent_id": agent_id, "events": events}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/agents/{agent_id}")
+async def api_get_agent(
+    agent_id: str,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Return a single agent record."""
+    agent_lifecycle.init_db()
+    try:
+        return agent_lifecycle.get_agent(
+            tenant_id=tenant.tenant_id,
+            agent_id=agent_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
