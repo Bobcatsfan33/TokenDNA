@@ -81,6 +81,7 @@ from modules.identity import permission_drift
 from modules.identity import intent_correlation
 from modules.identity import policy_bundles
 from modules.identity import agent_lifecycle
+from modules.identity import mcp_inspector
 from modules.identity import network_intel
 from modules.identity import compliance
 from modules.identity import attestation_store
@@ -226,6 +227,7 @@ async def _startup_checks() -> None:
     policy_guard.init_db()
     permission_drift.init_db()
     agent_lifecycle.init_db()
+    mcp_inspector.init_db()
     ct_log.init_db()
     network_intel.init_db()
     compliance.init_db()
@@ -3646,3 +3648,135 @@ async def api_get_agent(
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# ── Sprint 5-4: MCP Intent-Aware Inspection ───────────────────────────────────
+
+@app.post("/api/mcp/inspect")
+async def api_mcp_inspect(
+    body: dict = Body(...),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Inspect a pending MCP tool call before execution.
+
+    Returns: allowed (bool), risk_score, recommendation (allow/flag/block),
+    violations list, and any matching chain attack patterns.
+    """
+    mcp_inspector.init_db()
+    tool_name = str(body.get("tool_name", "")).strip()
+    if not tool_name:
+        raise HTTPException(status_code=400, detail="'tool_name' is required")
+    session_id = str(body.get("session_id", "")).strip()
+    if not session_id:
+        raise HTTPException(status_code=400, detail="'session_id' is required")
+    return mcp_inspector.inspect_call(
+        tenant_id=tenant.tenant_id,
+        session_id=session_id,
+        tool_name=tool_name,
+        params=dict(body.get("params", {})),
+        agent_id=body.get("agent_id"),
+        declared_intent=body.get("declared_intent"),
+    )
+
+
+@app.post("/api/mcp/tools/register")
+async def api_mcp_register_tool(
+    body: dict = Body(...),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Register or update a tool intent profile."""
+    mcp_inspector.init_db()
+    tool_name = str(body.get("tool_name", "")).strip()
+    if not tool_name:
+        raise HTTPException(status_code=400, detail="'tool_name' is required")
+    access_mode = str(body.get("access_mode", "")).strip()
+    if not access_mode:
+        raise HTTPException(status_code=400, detail="'access_mode' is required")
+    try:
+        return mcp_inspector.register_tool(
+            tenant_id=tenant.tenant_id,
+            tool_name=tool_name,
+            access_mode=access_mode,
+            description=str(body.get("description", "")),
+            allowed_params=list(body.get("allowed_params", [])),
+            forbidden_params=list(body.get("forbidden_params", [])),
+            param_constraints=dict(body.get("param_constraints", {})),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/mcp/tools")
+async def api_mcp_list_tools(
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """List all tool intent profiles available to this tenant."""
+    mcp_inspector.init_db()
+    return {"tools": mcp_inspector.list_tools(tenant_id=tenant.tenant_id)}
+
+
+@app.get("/api/mcp/tools/{tool_name}")
+async def api_mcp_get_tool(
+    tool_name: str,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Return a single tool intent profile."""
+    mcp_inspector.init_db()
+    profile = mcp_inspector.get_tool(tenant_id=tenant.tenant_id, tool_name=tool_name)
+    if not profile:
+        raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found")
+    return profile
+
+
+@app.get("/api/mcp/violations")
+async def api_mcp_violations(
+    resolved: bool | None = None,
+    limit: int = 200,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Return MCP violations for this tenant."""
+    mcp_inspector.init_db()
+    violations = mcp_inspector.list_violations(
+        tenant_id=tenant.tenant_id,
+        resolved=resolved,
+        limit=limit,
+    )
+    return {"violations": violations, "count": len(violations)}
+
+
+@app.post("/api/mcp/violations/{violation_id}/resolve")
+async def api_mcp_resolve_violation(
+    violation_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Mark a violation as resolved."""
+    mcp_inspector.init_db()
+    resolved_by = str(body.get("resolved_by", "")).strip()
+    if not resolved_by:
+        raise HTTPException(status_code=400, detail="'resolved_by' is required")
+    try:
+        return mcp_inspector.resolve_violation(
+            tenant_id=tenant.tenant_id,
+            violation_id=violation_id,
+            resolved_by=resolved_by,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/mcp/chain/{session_id}")
+async def api_mcp_chain(
+    session_id: str,
+    limit: int = 200,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Return the full tool-call chain for a session."""
+    mcp_inspector.init_db()
+    chain = mcp_inspector.get_chain(
+        tenant_id=tenant.tenant_id,
+        session_id=session_id,
+        limit=limit,
+    )
+    return {"session_id": session_id, "chain": chain, "count": len(chain)}
