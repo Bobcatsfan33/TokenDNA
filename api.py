@@ -82,6 +82,7 @@ from modules.identity import intent_correlation
 from modules.identity import policy_bundles
 from modules.identity import agent_lifecycle
 from modules.identity import mcp_inspector
+from modules.identity import cert_dashboard
 from modules.identity import network_intel
 from modules.identity import compliance
 from modules.identity import attestation_store
@@ -228,6 +229,7 @@ async def _startup_checks() -> None:
     permission_drift.init_db()
     agent_lifecycle.init_db()
     mcp_inspector.init_db()
+    cert_dashboard.init_db()
     ct_log.init_db()
     network_intel.init_db()
     compliance.init_db()
@@ -3780,3 +3782,161 @@ async def api_mcp_chain(
         limit=limit,
     )
     return {"session_id": session_id, "chain": chain, "count": len(chain)}
+
+
+# ── Sprint 6-1: Agent Attestation Certificate Lifecycle Dashboard ─────────────
+
+@app.get("/api/certs/fleet")
+async def api_certs_fleet(
+    status: str | None = None,
+    limit: int = 500,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Full certificate fleet view for the tenant.
+    Returns all certs with health labels, days_until_expiry, and summary stats.
+    """
+    cert_dashboard.init_db()
+    return cert_dashboard.fleet_view(
+        tenant_id=tenant.tenant_id,
+        status=status,
+        limit=limit,
+    )
+
+
+@app.get("/api/certs/fleet/summary")
+async def api_certs_fleet_summary(
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Quick-summary stats for the operator dashboard header widget."""
+    cert_dashboard.init_db()
+    return cert_dashboard.fleet_summary(tenant_id=tenant.tenant_id)
+
+
+@app.get("/api/certs/expiring")
+async def api_certs_expiring(
+    within_days: int = 30,
+    limit: int = 200,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Certs expiring within `within_days` days (default 30).
+    Automatically creates/refreshes expiry alert records.
+    """
+    cert_dashboard.init_db()
+    certs = cert_dashboard.get_expiring(
+        tenant_id=tenant.tenant_id,
+        within_days=max(within_days, 1),
+        limit=limit,
+    )
+    return {"expiring": certs, "count": len(certs), "within_days": within_days}
+
+
+@app.post("/api/certs/expiry-alerts/{alert_id}/acknowledge")
+async def api_ack_expiry_alert(
+    alert_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Acknowledge a certificate expiry alert."""
+    cert_dashboard.init_db()
+    acknowledged_by = str(body.get("acknowledged_by", "")).strip()
+    if not acknowledged_by:
+        raise HTTPException(status_code=400, detail="'acknowledged_by' is required")
+    try:
+        return cert_dashboard.acknowledge_expiry_alert(
+            tenant_id=tenant.tenant_id,
+            alert_id=alert_id,
+            acknowledged_by=acknowledged_by,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/certs/usage")
+async def api_record_cert_usage(
+    body: dict = Body(...),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Record a certificate usage event. Runs anomaly detection automatically.
+    Fires alerts for: revoked cert used, unexpected agent/IP.
+    """
+    cert_dashboard.init_db()
+    certificate_id = str(body.get("certificate_id", "")).strip()
+    if not certificate_id:
+        raise HTTPException(status_code=400, detail="'certificate_id' is required")
+    result = cert_dashboard.record_usage(
+        tenant_id=tenant.tenant_id,
+        certificate_id=certificate_id,
+        agent_id=body.get("agent_id"),
+        source_ip=body.get("source_ip"),
+        cert_status=str(body.get("cert_status", "active")),
+        verified=bool(body.get("verified", True)),
+        metadata=dict(body.get("metadata", {})),
+    )
+    # Deception mesh bridge: revoked cert use → record as decoy hit
+    if body.get("cert_status") == "revoked":
+        try:
+            from modules.identity import agent_lifecycle as _al  # noqa: PLC0415
+            _al.init_db()
+            _al.record_decoy_hit(
+                tenant_id=tenant.tenant_id,
+                token_id=certificate_id,
+            )
+        except Exception:  # noqa: BLE001
+            pass  # best-effort; deception mesh is non-fatal
+    return result
+
+
+@app.get("/api/certs/anomalies")
+async def api_cert_anomalies(
+    resolved: bool | None = None,
+    limit: int = 200,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Return certificate usage anomalies for this tenant."""
+    cert_dashboard.init_db()
+    anomalies = cert_dashboard.list_anomalies(
+        tenant_id=tenant.tenant_id,
+        resolved=resolved,
+        limit=limit,
+    )
+    return {"anomalies": anomalies, "count": len(anomalies)}
+
+
+@app.post("/api/certs/anomalies/{anomaly_id}/resolve")
+async def api_resolve_cert_anomaly(
+    anomaly_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Resolve a certificate anomaly."""
+    cert_dashboard.init_db()
+    resolved_by = str(body.get("resolved_by", "")).strip()
+    if not resolved_by:
+        raise HTTPException(status_code=400, detail="'resolved_by' is required")
+    try:
+        return cert_dashboard.resolve_anomaly(
+            tenant_id=tenant.tenant_id,
+            anomaly_id=anomaly_id,
+            resolved_by=resolved_by,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/certs/{cert_id}/history")
+async def api_cert_history(
+    cert_id: str,
+    limit: int = 200,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Full usage history for a single certificate."""
+    cert_dashboard.init_db()
+    history = cert_dashboard.get_cert_history(
+        tenant_id=tenant.tenant_id,
+        certificate_id=cert_id,
+        limit=limit,
+    )
+    return {"certificate_id": cert_id, "history": history, "count": len(history)}
