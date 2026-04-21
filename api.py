@@ -83,6 +83,7 @@ from modules.identity import policy_bundles
 from modules.identity import agent_lifecycle
 from modules.identity import mcp_inspector
 from modules.identity import cert_dashboard
+from modules.identity import policy_advisor
 from modules.identity import network_intel
 from modules.identity import compliance
 from modules.identity import attestation_store
@@ -230,6 +231,7 @@ async def _startup_checks() -> None:
     agent_lifecycle.init_db()
     mcp_inspector.init_db()
     cert_dashboard.init_db()
+    policy_advisor.init_db()
     ct_log.init_db()
     network_intel.init_db()
     compliance.init_db()
@@ -3940,3 +3942,244 @@ async def api_cert_history(
         limit=limit,
     )
     return {"certificate_id": cert_id, "history": history, "count": len(history)}
+
+
+# ==========================================================================
+# Policy Advisor — Adaptive Policy Suggestion Engine (Sprint 6-2)
+# ==========================================================================
+
+
+@app.post("/api/policy/suggestions/analyze")
+async def api_policy_suggestions_analyze(
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Run gap analysis over the lookback window and generate policy suggestions.
+
+    Analyzes policy_guard violations and denied decisions, clusters failure
+    patterns, and produces candidate policy amendments for operator review.
+
+    Body params (all optional):
+      lookback_hours: int  — analysis window (default 24)
+      min_confidence: float — minimum confidence threshold (default 0.0)
+      source_types: list[str] — limit to specific sources
+    """
+    policy_advisor.init_db()
+    lookback_hours = int(body.get("lookback_hours", 24))
+    min_confidence = float(body.get("min_confidence", 0.0))
+    source_types = body.get("source_types") or None
+    if source_types is not None and not isinstance(source_types, list):
+        raise HTTPException(status_code=400, detail="'source_types' must be a list")
+    return policy_advisor.analyze_and_generate(
+        tenant_id=tenant.tenant_id,
+        lookback_hours=max(1, min(lookback_hours, 8760)),
+        min_confidence=min_confidence,
+        source_types=source_types,
+    )
+
+
+@app.get("/api/policy/suggestions")
+async def api_list_policy_suggestions(
+    status: str | None = None,
+    amendment_type: str | None = None,
+    min_confidence: float = 0.0,
+    limit: int = 50,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    List policy suggestions for this tenant.
+
+    Query params:
+      status: pending | approved | rejected | applied | superseded
+      amendment_type: tighten_scope | add_restriction | revoke_permission |
+                      add_monitoring | rate_limit | require_approval
+      min_confidence: float (0.0-1.0)
+      limit: int (max 200)
+    """
+    policy_advisor.init_db()
+    suggestions = policy_advisor.list_suggestions(
+        tenant_id=tenant.tenant_id,
+        status=status,
+        amendment_type=amendment_type,
+        min_confidence=min_confidence,
+        limit=min(limit, 200),
+    )
+    return {
+        "suggestions": [
+            {
+                "suggestion_id": s.suggestion_id,
+                "source_type": s.source_type.value,
+                "gap_description": s.gap_description,
+                "amendment_type": s.amendment_type.value,
+                "amendment": s.amendment,
+                "confidence": s.confidence,
+                "status": s.status.value,
+                "evidence_count": len(s.evidence_ids),
+                "evidence_ids": s.evidence_ids,
+                "created_at": s.created_at,
+                "reviewed_at": s.reviewed_at,
+                "reviewed_by": s.reviewed_by,
+                "review_note": s.review_note,
+                "regression_tested": s.regression_tested,
+                "regression_passed": s.regression_passed,
+            }
+            for s in suggestions
+        ],
+        "count": len(suggestions),
+    }
+
+
+@app.get("/api/policy/suggestions/stats")
+async def api_policy_suggestion_stats(
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Summary statistics for this tenant's policy suggestions."""
+    policy_advisor.init_db()
+    return policy_advisor.suggestion_stats(tenant_id=tenant.tenant_id)
+
+
+@app.get("/api/policy/suggestions/{suggestion_id}")
+async def api_get_policy_suggestion(
+    suggestion_id: str,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Get a single policy suggestion by ID."""
+    policy_advisor.init_db()
+    s = policy_advisor.get_suggestion(
+        suggestion_id=suggestion_id,
+        tenant_id=tenant.tenant_id,
+    )
+    if not s:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+    return {
+        "suggestion_id": s.suggestion_id,
+        "tenant_id": s.tenant_id,
+        "source_type": s.source_type.value,
+        "gap_description": s.gap_description,
+        "amendment_type": s.amendment_type.value,
+        "amendment": s.amendment,
+        "confidence": s.confidence,
+        "status": s.status.value,
+        "evidence_ids": s.evidence_ids,
+        "created_at": s.created_at,
+        "reviewed_at": s.reviewed_at,
+        "reviewed_by": s.reviewed_by,
+        "review_note": s.review_note,
+        "regression_tested": s.regression_tested,
+        "regression_passed": s.regression_passed,
+        "regression_result": s.regression_result,
+        "metadata": s.metadata,
+    }
+
+
+@app.post("/api/policy/suggestions/{suggestion_id}/approve")
+async def api_approve_policy_suggestion(
+    suggestion_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Operator approves a pending policy suggestion.
+
+    Runs regression gate by default; set run_regression=false to skip.
+    On regression failure, the suggestion remains pending with failure details attached.
+
+    Body params:
+      approved_by: str (required)
+      note: str (optional)
+      run_regression: bool (default true)
+    """
+    policy_advisor.init_db()
+    approved_by = str(body.get("approved_by", "")).strip()
+    if not approved_by:
+        raise HTTPException(status_code=400, detail="'approved_by' is required")
+    note = str(body.get("note", ""))
+    run_regression = bool(body.get("run_regression", True))
+    s = policy_advisor.approve_suggestion(
+        suggestion_id=suggestion_id,
+        tenant_id=tenant.tenant_id,
+        approved_by=approved_by,
+        note=note,
+        run_regression=run_regression,
+    )
+    if not s:
+        raise HTTPException(
+            status_code=404,
+            detail="Suggestion not found or not in 'pending' status",
+        )
+    return {
+        "suggestion_id": s.suggestion_id,
+        "status": s.status.value,
+        "regression_tested": s.regression_tested,
+        "regression_passed": s.regression_passed,
+        "regression_result": s.regression_result,
+        "reviewed_by": s.reviewed_by,
+        "reviewed_at": s.reviewed_at,
+        "review_note": s.review_note,
+    }
+
+
+@app.post("/api/policy/suggestions/{suggestion_id}/reject")
+async def api_reject_policy_suggestion(
+    suggestion_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Operator rejects a pending policy suggestion.
+
+    Body params:
+      rejected_by: str (required)
+      note: str (optional)
+    """
+    policy_advisor.init_db()
+    rejected_by = str(body.get("rejected_by", "")).strip()
+    if not rejected_by:
+        raise HTTPException(status_code=400, detail="'rejected_by' is required")
+    note = str(body.get("note", ""))
+    s = policy_advisor.reject_suggestion(
+        suggestion_id=suggestion_id,
+        tenant_id=tenant.tenant_id,
+        rejected_by=rejected_by,
+        note=note,
+    )
+    if not s:
+        raise HTTPException(
+            status_code=404,
+            detail="Suggestion not found or not in 'pending' status",
+        )
+    return {
+        "suggestion_id": s.suggestion_id,
+        "status": s.status.value,
+        "rejected_by": s.reviewed_by,
+        "reviewed_at": s.reviewed_at,
+        "review_note": s.review_note,
+    }
+
+
+@app.post("/api/policy/suggestions/auto-tighten")
+async def api_policy_auto_tighten(
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Bounded auto-tightening: automatically approve high-confidence suggestions
+    within operator-defined confidence interval.
+
+    Body params:
+      confidence_threshold: float (default 0.85)
+      max_amendments_per_run: int (default 5, max 20)
+    """
+    policy_advisor.init_db()
+    confidence_threshold = float(body.get("confidence_threshold", 0.85))
+    max_amendments = min(int(body.get("max_amendments_per_run", 5)), 20)
+    if not (0.0 <= confidence_threshold <= 1.0):
+        raise HTTPException(
+            status_code=400, detail="'confidence_threshold' must be between 0.0 and 1.0"
+        )
+    return policy_advisor.bounded_auto_tighten(
+        tenant_id=tenant.tenant_id,
+        confidence_threshold=confidence_threshold,
+        max_amendments_per_run=max_amendments,
+    )
