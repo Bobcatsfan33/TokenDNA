@@ -232,6 +232,10 @@ async def _startup_checks() -> None:
     mcp_inspector.init_db()
     cert_dashboard.init_db()
     policy_advisor.init_db()
+    from modules.identity import passport as _passport_init  # noqa: PLC0415
+    from modules.identity import verifier_reputation as _reputation_init  # noqa: PLC0415
+    _passport_init.init_passport_db()
+    _reputation_init.init_reputation_db()
     ct_log.init_db()
     network_intel.init_db()
     compliance.init_db()
@@ -4183,3 +4187,410 @@ async def api_policy_auto_tighten(
         confidence_threshold=confidence_threshold,
         max_amendments_per_run=max_amendments,
     )
+
+
+# ==========================================================================
+# Agent Identity Passport (Sprint 3-1) — restored 2026-04-21
+# ==========================================================================
+
+from modules.identity import passport as passport_module
+
+
+@app.post("/api/passport/request")
+async def api_passport_request(
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Submit a passport issuance request.
+    Creates the passport in PENDING state; operator must approve.
+    """
+    agent_id = str(body.get("agent_id", "")).strip()
+    owner_org = str(body.get("owner_org", "")).strip()
+    display_name = str(body.get("display_name", "")).strip()
+    agent_dna_fingerprint = str(body.get("agent_dna_fingerprint", "")).strip()
+    permissions = body.get("permissions") or []
+    resource_patterns = body.get("resource_patterns") or []
+    requested_by = str(body.get("requested_by", "api")).strip()
+
+    if not all([agent_id, owner_org, display_name, agent_dna_fingerprint]):
+        raise HTTPException(
+            status_code=400,
+            detail="agent_id, owner_org, display_name, agent_dna_fingerprint are required",
+        )
+    if not permissions:
+        raise HTTPException(status_code=400, detail="permissions list is required")
+
+    try:
+        p = passport_module.request_passport(
+            tenant_id=tenant.tenant_id,
+            agent_id=agent_id,
+            owner_org=owner_org,
+            display_name=display_name,
+            agent_dna_fingerprint=agent_dna_fingerprint,
+            permissions=permissions,
+            resource_patterns=resource_patterns,
+            requested_by=requested_by,
+            model_fingerprint=body.get("model_fingerprint"),
+            delegation_depth=int(body.get("delegation_depth", 0)),
+            custom_claims=body.get("custom_claims"),
+            validity_days=body.get("validity_days"),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return {"passport": p.to_dict()}
+
+
+@app.post("/api/passport/{passport_id}/approve")
+async def api_passport_approve(
+    passport_id: str,
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """Approve a PENDING passport (ADMIN role required)."""
+    try:
+        p = passport_module.approve_passport(passport_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"passport": p.to_dict()}
+
+
+@app.post("/api/passport/{passport_id}/issue")
+async def api_passport_issue(
+    passport_id: str,
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """Issue (sign) an APPROVED passport (ADMIN role required)."""
+    try:
+        p = passport_module.issue_passport(passport_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"passport": p.to_dict()}
+
+
+@app.post("/api/passport/{passport_id}/revoke")
+async def api_passport_revoke(
+    passport_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """Revoke an ISSUED or APPROVED passport (ADMIN role required)."""
+    reason = str(body.get("reason", "operator_revoked")).strip()
+    try:
+        p = passport_module.revoke_passport(passport_id, reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"passport": p.to_dict()}
+
+
+@app.post("/api/passport/verify")
+async def api_passport_verify(body: dict = Body(default={})):
+    """
+    Verify a passport bundle. Open endpoint — no auth required.
+    Third-party integrators call this to validate a passport presented by an agent.
+    """
+    result = passport_module.verify_passport(body)
+    status_code = 200 if result["valid"] else 401
+    from fastapi.responses import JSONResponse  # noqa: PLC0415
+    return JSONResponse(content=result, status_code=status_code)
+
+
+@app.get("/api/passport/{passport_id}")
+async def api_passport_get(
+    passport_id: str,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Retrieve a passport by ID."""
+    p = passport_module.get_passport(passport_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="Passport not found")
+    return {"passport": p.to_dict()}
+
+
+@app.get("/api/passport/{passport_id}/status")
+async def api_passport_status_check(passport_id: str):
+    """
+    Revocation check endpoint (public). Returns minimal status.
+    Used as the revocation_url target in issued passports.
+    """
+    p = passport_module.get_passport(passport_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="Passport not found")
+    return {
+        "passport_id": passport_id,
+        "status": p.status.value,
+        "revoked_at": p.revoked_at,
+        "revocation_reason": p.revocation_reason,
+        "not_after": p.not_after,
+    }
+
+
+@app.get("/api/passports")
+async def api_passports_list(
+    agent_id: str | None = None,
+    status: str | None = None,
+    limit: int = 50,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """List passports for this tenant (ANALYST+ required)."""
+    passports = passport_module.list_passports(
+        tenant_id=tenant.tenant_id,
+        agent_id=agent_id,
+        status=status,
+        limit=min(limit, 200),
+    )
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(passports),
+        "passports": [p.to_dict() for p in passports],
+    }
+
+
+@app.post("/api/passport/{passport_id}/evidence")
+async def api_passport_submit_evidence(
+    passport_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Attach an evidence bundle to a pending passport."""
+    evidence_type = str(body.get("evidence_type", "manual")).strip()
+    evidence_ref = str(body.get("evidence_ref", "")).strip()
+    if not evidence_ref:
+        raise HTTPException(status_code=400, detail="evidence_ref is required")
+    submitted_by = str(body.get("submitted_by", "api")).strip()
+
+    try:
+        ev = passport_module.submit_evidence(
+            passport_id=passport_id,
+            tenant_id=tenant.tenant_id,
+            submitted_by=submitted_by,
+            evidence_type=evidence_type,
+            evidence_ref=evidence_ref,
+            notes=body.get("notes"),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return {"evidence": ev.__dict__}
+
+
+@app.get("/api/passport/{passport_id}/evidence")
+async def api_passport_list_evidence(
+    passport_id: str,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """List evidence bundles for a passport (ANALYST+ required)."""
+    evidence = passport_module.list_evidence(passport_id)
+    return {
+        "passport_id": passport_id,
+        "count": len(evidence),
+        "evidence": [e.__dict__ for e in evidence],
+    }
+
+
+@app.get("/api/passport/integrations/playbooks")
+async def api_passport_playbooks_list():
+    """List available cross-vendor integration playbooks."""
+    return {"playbooks": passport_module.list_integration_playbooks()}
+
+
+@app.get("/api/passport/integrations/playbook/{vendor}")
+async def api_passport_playbook_detail(vendor: str):
+    """Return detailed integration playbook for a specific vendor."""
+    try:
+        playbook = passport_module.get_integration_playbook(vendor)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"playbook": playbook}
+
+
+# ==========================================================================
+# Verifier Reputation Network (Sprint 3-2) — restored 2026-04-21
+# ==========================================================================
+
+from modules.identity import verifier_reputation as reputation_module
+
+
+@app.post("/api/verifier/{verifier_id}/challenge")
+async def api_issue_challenge(
+    verifier_id: str,
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """
+    Issue a cryptographic challenge to a verifier.
+    ADMIN role required. The challenge nonce is returned for delivery.
+    """
+    try:
+        challenge = reputation_module.issue_challenge(
+            verifier_id=verifier_id,
+            tenant_id=tenant.tenant_id,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {"challenge": challenge.to_dict()}
+
+
+@app.post("/api/verifier/challenge/{challenge_id}/respond")
+async def api_resolve_challenge(
+    challenge_id: str,
+    body: dict = Body(default={}),
+):
+    """Submit a verifier's response to a challenge. Open endpoint."""
+    submitted = str(body.get("response", "")).strip()
+    if not submitted:
+        raise HTTPException(status_code=400, detail="'response' field is required")
+    try:
+        challenge = reputation_module.resolve_challenge(challenge_id, submitted)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "challenge_id": challenge.challenge_id,
+        "outcome": challenge.outcome.value,
+        "response_ms": challenge.response_ms,
+    }
+
+
+@app.get("/api/verifier/{verifier_id}/reputation")
+async def api_verifier_reputation(
+    verifier_id: str,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Get current reputation score for a verifier."""
+    rep = reputation_module.get_reputation(
+        verifier_id=verifier_id,
+        tenant_id=tenant.tenant_id,
+    )
+    history = reputation_module.get_challenge_history(
+        verifier_id=verifier_id,
+        tenant_id=tenant.tenant_id,
+        limit=20,
+    )
+    return {
+        "reputation": rep.to_dict(),
+        "recent_challenges": history,
+    }
+
+
+@app.get("/api/verifier/reputation/leaderboard")
+async def api_reputation_leaderboard(
+    limit: int = 20,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """Reputation leaderboard: verifiers ranked by effective reputation score."""
+    board = reputation_module.get_leaderboard(
+        tenant_id=tenant.tenant_id,
+        limit=min(limit, 100),
+    )
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(board),
+        "leaderboard": board,
+    }
+
+
+@app.get("/api/verifier/reputation/anomalies")
+async def api_reputation_anomalies(
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """Return verifiers with anomalous reputation signals."""
+    anomalies = reputation_module.get_reputation_anomalies(
+        tenant_id=tenant.tenant_id,
+    )
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(anomalies),
+        "anomalies": anomalies,
+    }
+
+
+@app.post("/api/verifier/reputation/quorum")
+async def api_reputation_quorum(
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Evaluate a reputation-weighted quorum from a set of verifier attestations.
+    Supersedes /api/federation/quorum with live reputation scores.
+    """
+    attestations = body.get("attestations") or []
+    if not isinstance(attestations, list):
+        raise HTTPException(status_code=400, detail="'attestations' must be a list")
+    min_weight = float(body.get("min_weight", 0.6))
+    min_verifiers = int(body.get("min_verifiers", 1))
+    min_reputation = float(body.get("min_reputation", 0.3))
+
+    verdict = reputation_module.evaluate_reputation_weighted_quorum(
+        attestations=attestations,
+        tenant_id=tenant.tenant_id,
+        min_weight=min_weight,
+        min_verifiers=min_verifiers,
+        min_reputation=min_reputation,
+    )
+    return {
+        "quorum": {
+            "met": verdict.met,
+            "effective_action": verdict.effective_action,
+            "confidence": verdict.confidence,
+            "total_reputation_weight": verdict.total_reputation_weight,
+            "passing_weight": verdict.passing_weight,
+            "required_weight": verdict.required_weight,
+            "participating_verifiers": verdict.participating_verifiers,
+            "verdicts": verdict.verdicts,
+        }
+    }
+
+
+@app.post("/api/verifier/reputation/expire-challenges")
+async def api_expire_pending_challenges(
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """Expire all pending challenges past their timeout window."""
+    count = reputation_module.expire_pending_challenges(tenant_id=tenant.tenant_id)
+    return {"expired": count}
+
+
+@app.post("/api/verifier/reputation/sync-scores")
+async def api_sync_static_scores(
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """Push current reputation scores back to trust_federation_verifiers.trust_score."""
+    count = reputation_module.sync_static_scores(tenant_id=tenant.tenant_id)
+    return {"synced": count}
+
+
+@app.get("/api/verifier/{verifier_id}/challenges")
+async def api_verifier_challenge_history(
+    verifier_id: str,
+    limit: int = 50,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """Full challenge history for a specific verifier."""
+    history = reputation_module.get_challenge_history(
+        verifier_id=verifier_id,
+        tenant_id=tenant.tenant_id,
+        limit=min(limit, 200),
+    )
+    return {
+        "verifier_id": verifier_id,
+        "count": len(history),
+        "challenges": history,
+    }
+
+
+@app.get("/api/verifier/reputation/due-for-challenge")
+async def api_due_for_challenge(
+    max_age_hours: int = 24,
+    limit: int = 50,
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """Return verifiers that haven't been challenged recently."""
+    verifier_ids = reputation_module.get_verifiers_due_for_challenge(
+        tenant_id=tenant.tenant_id,
+        max_age_hours=max_age_hours,
+        limit=min(limit, 200),
+    )
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(verifier_ids),
+        "verifier_ids": verifier_ids,
+    }
