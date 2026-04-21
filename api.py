@@ -234,8 +234,10 @@ async def _startup_checks() -> None:
     policy_advisor.init_db()
     from modules.identity import passport as _passport_init  # noqa: PLC0415
     from modules.identity import verifier_reputation as _reputation_init  # noqa: PLC0415
+    from modules.identity import proof_of_control as _poc_init  # noqa: PLC0415
     _passport_init.init_passport_db()
     _reputation_init.init_reputation_db()
+    _poc_init.init_db()
     ct_log.init_db()
     network_intel.init_db()
     compliance.init_db()
@@ -4443,6 +4445,17 @@ async def api_resolve_challenge(
         challenge = reputation_module.resolve_challenge(challenge_id, submitted)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    # If verifier proved key control, record it in the proof-of-control registry
+    if challenge.outcome.value == "correct":
+        try:
+            from modules.identity import proof_of_control as _poc  # noqa: PLC0415
+            _poc.init_db()
+            _poc.record_proof(
+                verifier_id=challenge.verifier_id,
+                tenant_id=challenge.tenant_id,
+            )
+        except Exception:  # noqa: BLE001
+            pass  # proof recording is best-effort; do not fail the response
     return {
         "challenge_id": challenge.challenge_id,
         "outcome": challenge.outcome.value,
@@ -4594,3 +4607,161 @@ async def api_due_for_challenge(
         "count": len(verifier_ids),
         "verifier_ids": verifier_ids,
     }
+
+
+# ==========================================================================
+# ZTIX Continuous Proof-of-Control (Expansion #2) — Sprint 7-B
+# ==========================================================================
+
+from modules.identity import proof_of_control as poc_module
+
+
+@app.get("/api/federation/verifiers/{verifier_id}/proof-status")
+async def api_proof_status(
+    verifier_id: str,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """
+    Get the current proof-of-control status for a verifier.
+
+    Returns: proof_interval_hours, last_proof_at, next_proof_due,
+             status (current | overdue | expired | never_proved),
+             consecutive_misses.
+    """
+    poc_module.init_db()
+    record = poc_module.get_proof_status(verifier_id, tenant.tenant_id)
+    if record is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Verifier not registered in proof-of-control registry. "
+                   "POST to /proof-interval to register.",
+        )
+    return {
+        "verifier_id": record.verifier_id,
+        "tenant_id": record.tenant_id,
+        "interval_hours": record.interval_hours,
+        "last_proof_at": record.last_proof_at,
+        "next_proof_due": record.next_proof_due,
+        "status": record.status.value,
+        "consecutive_misses": record.consecutive_misses,
+        "updated_at": record.updated_at,
+    }
+
+
+@app.post("/api/federation/verifiers/{verifier_id}/proof-interval")
+async def api_set_proof_interval(
+    verifier_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """
+    Register or update the proof-of-control interval for a verifier.
+    Creates the entry if it doesn't exist (idempotent).
+
+    Body:
+      interval_hours: int (1–168, default 24)
+    """
+    poc_module.init_db()
+    interval_hours = int(body.get("interval_hours", poc_module._DEFAULT_INTERVAL_HOURS))
+    record = poc_module.set_proof_interval(
+        verifier_id=verifier_id,
+        tenant_id=tenant.tenant_id,
+        interval_hours=interval_hours,
+    )
+    return {
+        "verifier_id": record.verifier_id,
+        "interval_hours": record.interval_hours,
+        "status": record.status.value,
+        "next_proof_due": record.next_proof_due,
+    }
+
+
+@app.post("/api/federation/verifiers/proof-sweep")
+async def api_proof_sweep(
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """
+    Run the proof-of-control sweep for this tenant.
+
+    Demotes verifiers past their proof interval to 'unverified' in
+    trust_federation and updates proof status. Optionally issues new
+    challenges to OVERDUE verifiers.
+
+    Body:
+      auto_issue_challenges: bool (default true)
+    """
+    poc_module.init_db()
+    auto_issue = bool(body.get("auto_issue_challenges", True))
+    result = poc_module.sweep_expired_proofs(
+        tenant_id=tenant.tenant_id,
+        auto_issue_challenges=auto_issue,
+    )
+    return {
+        "swept_at": result.swept_at,
+        "total_checked": result.total_checked,
+        "newly_overdue": result.newly_overdue,
+        "newly_expired": result.newly_expired,
+        "demoted_in_federation": result.demoted_in_federation,
+        "demoted_ids": result.demoted_ids,
+        "promoted_ids": result.promoted_ids,
+        "challenges_issued": result.challenges_issued,
+    }
+
+
+@app.post("/api/federation/verifiers/proof-renew-all")
+async def api_proof_renew_all(
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """
+    Batch-issue proof-of-control challenges to all OVERDUE and NEVER_PROVED
+    verifiers. Does not demote — use proof-sweep for demotion.
+    """
+    poc_module.init_db()
+    result = poc_module.renew_all_overdue(tenant_id=tenant.tenant_id)
+    return result
+
+
+@app.get("/api/federation/verifiers/proof-registry")
+async def api_proof_registry(
+    status: str | None = None,
+    limit: int = 100,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """
+    List all registered verifiers and their proof-of-control status.
+
+    Query params:
+      status: current | overdue | expired | never_proved (optional filter)
+      limit: max results (default 100, max 500)
+    """
+    poc_module.init_db()
+    records = poc_module.list_proof_registry(
+        tenant_id=tenant.tenant_id,
+        status=status,
+        limit=min(limit, 500),
+    )
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(records),
+        "registry": [
+            {
+                "verifier_id": r.verifier_id,
+                "interval_hours": r.interval_hours,
+                "last_proof_at": r.last_proof_at,
+                "next_proof_due": r.next_proof_due,
+                "status": r.status.value,
+                "consecutive_misses": r.consecutive_misses,
+            }
+            for r in records
+        ],
+    }
+
+
+@app.get("/api/federation/verifiers/proof-stats")
+async def api_proof_stats(
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """Summary statistics for proof-of-control status across all verifiers."""
+    poc_module.init_db()
+    return poc_module.proof_stats(tenant_id=tenant.tenant_id)
