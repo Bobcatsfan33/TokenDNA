@@ -183,6 +183,54 @@ def adapt_params(params: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
+# Adapted cursor — auto-applies adapt_sql() on every execute() call
+# ---------------------------------------------------------------------------
+
+
+class AdaptedCursor:
+    """
+    Thin wrapper around a DB-API 2.0 cursor that automatically runs
+    ``adapt_sql()`` on every SQL string passed to ``execute()`` or
+    ``executemany()``.  This lets callers write SQLite-style ``?``
+    placeholders without caring which backend is active.
+
+    Usage::
+
+        with _cursor() as cur:           # cur is an AdaptedCursor
+            cur.execute("SELECT * FROM t WHERE id = ?", (tid,))
+            rows = cur.fetchall()
+    """
+
+    def __init__(self, cursor: Any) -> None:
+        self._cur = cursor
+
+    def execute(self, sql: str, params: Any = ()) -> "AdaptedCursor":
+        self._cur.execute(adapt_sql(sql), params)
+        return self
+
+    def executemany(self, sql: str, seq: Any) -> "AdaptedCursor":
+        self._cur.executemany(adapt_sql(sql), seq)
+        return self
+
+    def fetchone(self) -> Any:
+        return self._cur.fetchone()
+
+    def fetchall(self) -> list[Any]:
+        return self._cur.fetchall()
+
+    @property
+    def lastrowid(self) -> Any:
+        return self._cur.lastrowid
+
+    @property
+    def rowcount(self) -> int:
+        return self._cur.rowcount
+
+    def __iter__(self) -> Any:
+        return iter(self._cur)
+
+
+# ---------------------------------------------------------------------------
 # SQLite row factory shim  (matches sqlite3.Row dict-style access)
 # ---------------------------------------------------------------------------
 
@@ -255,6 +303,9 @@ def _sqlite_conn_ctx(
     isolation = None if autocommit else ""
     conn = sqlite3.connect(db_path, check_same_thread=False, isolation_level=isolation)
     conn.row_factory = sqlite3.Row
+    # Enable WAL mode for concurrent readers + FK enforcement (idempotent)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
     try:
         yield conn
         if not autocommit:

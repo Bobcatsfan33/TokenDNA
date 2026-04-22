@@ -51,7 +51,6 @@ import hmac
 import json
 import math
 import os
-import sqlite3
 import threading
 import uuid
 from contextlib import contextmanager
@@ -59,6 +58,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from enum import Enum
 from typing import Any
+
+from modules.storage.pg_connection import AdaptedCursor, get_db_conn
 
 
 # ---------------------------------------------------------------------------
@@ -190,35 +191,19 @@ class QuorumVerdict:
 # ---------------------------------------------------------------------------
 
 
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_REPUTATION_DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
 @contextmanager
 def _cursor():
-    with _lock:
-        conn = _get_conn()
-        try:
-            cur = conn.cursor()
-            yield cur
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+    """Yield an AdaptedCursor backed by the configured DB backend."""
+    with get_db_conn(db_path=_REPUTATION_DB_PATH) as conn:
+        yield AdaptedCursor(conn.cursor())
 
 
 def init_reputation_db() -> None:
-    """Create reputation tables (idempotent)."""
-    db_dir = os.path.dirname(_REPUTATION_DB_PATH)
-    if db_dir:
-        os.makedirs(db_dir, exist_ok=True)
+    """Create reputation tables (idempotent).
 
+    Directory creation and PRAGMA configuration are handled by
+    ``get_db_conn()``; no manual setup required here.
+    """
     with _cursor() as cur:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS reputation_challenges (
@@ -706,7 +691,7 @@ def get_reputation(verifier_id: str, tenant_id: str) -> ReputationScore:
     )
 
 
-def _row_to_reputation(row: sqlite3.Row) -> ReputationScore:
+def _row_to_reputation(row: Any) -> ReputationScore:
     total = int(row["total_challenges"])
     correct = int(row["correct"])
     incorrect = int(row["incorrect"])

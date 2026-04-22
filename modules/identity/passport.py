@@ -30,7 +30,6 @@ import hashlib
 import hmac
 import json
 import os
-import sqlite3
 import threading
 import time
 import uuid
@@ -39,6 +38,8 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone, timedelta
 from enum import Enum
 from typing import Any
+
+from modules.storage.pg_connection import AdaptedCursor, get_db_conn
 
 
 # ---------------------------------------------------------------------------
@@ -229,35 +230,19 @@ def _unsigned_payload(passport: Passport) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_PASSPORT_DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
 @contextmanager
 def _cursor():
-    with _lock:
-        conn = _get_conn()
-        try:
-            cur = conn.cursor()
-            yield cur
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+    """Yield an AdaptedCursor backed by the configured DB backend."""
+    with get_db_conn(db_path=_PASSPORT_DB_PATH) as conn:
+        yield AdaptedCursor(conn.cursor())
 
 
 def init_passport_db() -> None:
-    """Create passport and evidence tables (idempotent)."""
-    db_dir = os.path.dirname(_PASSPORT_DB_PATH)
-    if db_dir:
-        os.makedirs(db_dir, exist_ok=True)
+    """Create passport and evidence tables (idempotent).
 
+    Directory creation and PRAGMA configuration are handled by
+    ``get_db_conn()``; no manual setup required here.
+    """
     with _cursor() as cur:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS passports (
@@ -317,7 +302,7 @@ def init_passport_db() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _row_to_passport(row: sqlite3.Row) -> Passport:
+def _row_to_passport(row: Any) -> Passport:
     subject = PassportSubject(
         agent_id=row["agent_id"],
         owner_org=row["owner_org"],
@@ -356,7 +341,7 @@ def _row_to_passport(row: sqlite3.Row) -> Passport:
     )
 
 
-def _row_to_evidence(row: sqlite3.Row) -> EvidenceBundle:
+def _row_to_evidence(row: Any) -> EvidenceBundle:
     return EvidenceBundle(
         evidence_id=row["evidence_id"],
         passport_id=row["passport_id"],
