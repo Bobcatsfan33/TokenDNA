@@ -47,7 +47,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 
 from auth import verify_token
-from config import DEV_MODE, OIDC_ISSUER, RATE_LIMIT_PER_MINUTE
+from config import DEV_MODE, OIDC_ISSUER, RATE_LIMIT_PER_MINUTE, RATE_LIMIT_OPEN_PER_MINUTE
 from modules.identity import async_pipeline, geo_intel, ml_model, scoring, session_graph, threat_intel
 from modules.identity.alerts import handle_block, handle_revoke, handle_step_up
 from modules.identity.cache_redis import (
@@ -272,6 +272,29 @@ async def check_rate_limit(
         raise HTTPException(
             status_code=429,
             detail=f"Rate limit exceeded ({RATE_LIMIT_PER_MINUTE} req/min)",
+            headers={"Retry-After": "60"},
+        )
+
+
+async def check_rate_limit_open(request: Request) -> None:
+    """
+    Rate-limit dependency for open (unauthenticated) endpoints.
+
+    Limits by IP address only, using a global (cross-tenant) namespace.
+    Defaults to RATE_LIMIT_OPEN_PER_MINUTE (30 req/min) — stricter than
+    the authenticated limit because there is no tenant billing accountability.
+
+    Callers that abuse open endpoints (e.g. scanning /api/passport/verify or
+    brute-forcing challenge responses) are throttled at the edge before any
+    database work is done.
+    """
+    ip = request.client.host if request.client else "unknown"
+    key = f"open_rate:{ip}"
+    count = increment_rate(key, window_seconds=60, tenant_id="_open_")
+    if count > RATE_LIMIT_OPEN_PER_MINUTE:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded ({RATE_LIMIT_OPEN_PER_MINUTE} req/min on open endpoint)",
             headers={"Retry-After": "60"},
         )
 
@@ -4285,11 +4308,15 @@ async def api_passport_revoke(
     return {"passport": p.to_dict()}
 
 
-@app.post("/api/passport/verify")
-async def api_passport_verify(body: dict = Body(default={})):
+@app.post("/api/passport/verify", dependencies=[Depends(check_rate_limit_open)])
+async def api_passport_verify(
+    request: Request,
+    body: dict = Body(default={}),
+):
     """
     Verify a passport bundle. Open endpoint — no auth required.
     Third-party integrators call this to validate a passport presented by an agent.
+    Rate-limited by IP (RATE_LIMIT_OPEN_PER_MINUTE, default 30/min).
     """
     result = passport_module.verify_passport(body)
     status_code = 200 if result["valid"] else 401
@@ -4309,11 +4336,15 @@ async def api_passport_get(
     return {"passport": p.to_dict()}
 
 
-@app.get("/api/passport/{passport_id}/status")
-async def api_passport_status_check(passport_id: str):
+@app.get("/api/passport/{passport_id}/status", dependencies=[Depends(check_rate_limit_open)])
+async def api_passport_status_check(
+    passport_id: str,
+    request: Request,
+):
     """
     Revocation check endpoint (public). Returns minimal status.
     Used as the revocation_url target in issued passports.
+    Rate-limited by IP (RATE_LIMIT_OPEN_PER_MINUTE, default 30/min).
     """
     p = passport_module.get_passport(passport_id)
     if p is None:
@@ -4432,12 +4463,13 @@ async def api_issue_challenge(
     return {"challenge": challenge.to_dict()}
 
 
-@app.post("/api/verifier/challenge/{challenge_id}/respond")
+@app.post("/api/verifier/challenge/{challenge_id}/respond", dependencies=[Depends(check_rate_limit_open)])
 async def api_resolve_challenge(
     challenge_id: str,
+    request: Request,
     body: dict = Body(default={}),
 ):
-    """Submit a verifier's response to a challenge. Open endpoint."""
+    """Submit a verifier's response to a challenge. Open endpoint. Rate-limited by IP."""
     submitted = str(body.get("response", "")).strip()
     if not submitted:
         raise HTTPException(status_code=400, detail="'response' field is required")

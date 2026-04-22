@@ -75,6 +75,8 @@ TOKEN_REVOKE_SECRET: str = os.getenv("TOKEN_REVOKE_SECRET", "")
 # ── Rate Limiting ─────────────────────────────────────────────────────────────
 RATE_LIMIT_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
 RATE_LIMIT_BURST: int = int(os.getenv("RATE_LIMIT_BURST", "10"))
+# Stricter limit for open (unauthenticated) endpoints — no tenant context
+RATE_LIMIT_OPEN_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_OPEN_PER_MINUTE", "30"))
 # ── Production Safety Guard ────────────────────────────────────────────────────
 # IL6 / FedRAMP: DEV_MODE must NEVER be active in production.
 # This block terminates the process immediately if DEV_MODE is set
