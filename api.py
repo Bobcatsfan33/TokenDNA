@@ -83,6 +83,7 @@ from modules.identity import policy_bundles
 from modules.identity import agent_lifecycle
 from modules.identity import mcp_inspector
 from modules.identity import mcp_gateway
+from modules.identity import agent_discovery
 from modules.identity import cert_dashboard
 from modules.identity import policy_advisor
 from modules.identity import network_intel
@@ -232,6 +233,7 @@ async def _startup_checks() -> None:
     agent_lifecycle.init_db()
     mcp_inspector.init_db()
     mcp_gateway.init_db()
+    agent_discovery.init_db()
     cert_dashboard.init_db()
     policy_advisor.init_db()
     from modules.identity import passport as _passport_init  # noqa: PLC0415
@@ -4998,5 +5000,220 @@ async def api_gw_ack_anomaly(
     acknowledged_by = str(body.get("acknowledged_by") or tenant.tenant_id)
     try:
         return mcp_gateway.acknowledge_anomaly_alert(tenant.tenant_id, alert_id, acknowledged_by)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# ── Phase 5-2: Agent Discovery & Inventory ────────────────────────────────────
+
+
+@app.post("/api/discovery/agents/register")
+async def api_discovery_register(
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """Register an agent in the inventory."""
+    agent_discovery.init_db()
+    name = str(body.get("name") or "")
+    provider = str(body.get("provider") or "")
+    if not name or not provider:
+        raise HTTPException(status_code=422, detail="name and provider are required")
+    try:
+        return agent_discovery.register_agent(
+            tenant_id=tenant.tenant_id,
+            name=name,
+            provider=provider,
+            model=str(body.get("model") or ""),
+            endpoint_url=str(body.get("endpoint_url") or ""),
+            tools=body.get("tools") or [],
+            permissions=body.get("permissions") or {},
+            owner_id=str(body.get("owner_id") or ""),
+            external_id=str(body.get("external_id") or ""),
+            metadata=body.get("metadata") or {},
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/discovery/agents")
+async def api_discovery_census(
+    status: str | None = None,
+    provider: str | None = None,
+    discovery_method: str | None = None,
+    owner_id: str | None = None,
+    limit: int = 100,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """Agent census — full inventory for this tenant."""
+    agent_discovery.init_db()
+    agents = agent_discovery.list_agents(
+        tenant.tenant_id,
+        status=status,
+        provider=provider,
+        discovery_method=discovery_method,
+        owner_id=owner_id,
+        limit=min(limit, 500),
+    )
+    summary = agent_discovery.census_summary(tenant.tenant_id)
+    return {"summary": summary, "agents": agents}
+
+
+@app.get("/api/discovery/agents/summary")
+async def api_discovery_summary(
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """High-level census summary only."""
+    agent_discovery.init_db()
+    return agent_discovery.census_summary(tenant.tenant_id)
+
+
+@app.get("/api/discovery/agents/{agent_id}")
+async def api_discovery_get_agent(
+    agent_id: str,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """Single agent detail."""
+    agent_discovery.init_db()
+    try:
+        return agent_discovery.get_agent(agent_id, tenant.tenant_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.patch("/api/discovery/agents/{agent_id}")
+async def api_discovery_update_agent(
+    agent_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """Update mutable agent fields."""
+    agent_discovery.init_db()
+    try:
+        return agent_discovery.update_agent(
+            agent_id,
+            tenant.tenant_id,
+            name=body.get("name"),
+            model=body.get("model"),
+            endpoint_url=body.get("endpoint_url"),
+            tools=body.get("tools"),
+            permissions=body.get("permissions"),
+            owner_id=body.get("owner_id"),
+            metadata=body.get("metadata"),
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/discovery/agents/{agent_id}/activity")
+async def api_discovery_record_activity(
+    agent_id: str,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """Record agent activity (heartbeat); auto-transitions provisioned → active."""
+    agent_discovery.init_db()
+    agent_discovery.record_activity(agent_id, tenant.tenant_id)
+    try:
+        return agent_discovery.get_agent(agent_id, tenant.tenant_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/discovery/agents/{agent_id}/lifecycle")
+async def api_discovery_lifecycle_transition(
+    agent_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """Transition agent lifecycle state."""
+    agent_discovery.init_db()
+    to_status = str(body.get("to_status") or "")
+    actor_id = str(body.get("actor_id") or "")
+    if not to_status or not actor_id:
+        raise HTTPException(status_code=422, detail="to_status and actor_id are required")
+    try:
+        return agent_discovery.transition_lifecycle(
+            agent_id,
+            tenant.tenant_id,
+            to_status,
+            actor_id,
+            reason=str(body.get("reason") or ""),
+            approved_by=body.get("approved_by"),
+        )
+    except (KeyError, ValueError) as exc:
+        status_code = 404 if isinstance(exc, KeyError) else 422
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+
+
+@app.get("/api/discovery/agents/{agent_id}/lifecycle")
+async def api_discovery_lifecycle_history(
+    agent_id: str,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """Lifecycle event history for an agent."""
+    agent_discovery.init_db()
+    return {"history": agent_discovery.get_lifecycle_history(agent_id, tenant.tenant_id)}
+
+
+@app.post("/api/discovery/scan")
+async def api_discovery_scan(
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """Trigger a provider scan."""
+    agent_discovery.init_db()
+    provider = str(body.get("provider") or "")
+    if not provider:
+        raise HTTPException(status_code=422, detail="provider is required")
+    credentials = body.get("credentials") or {}
+    try:
+        return agent_discovery.run_scan(tenant.tenant_id, provider, credentials)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/discovery/scans")
+async def api_discovery_list_scans(
+    provider: str | None = None,
+    limit: int = 50,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """List recent provider scans."""
+    agent_discovery.init_db()
+    return {"scans": agent_discovery.list_scans(tenant.tenant_id, provider=provider, limit=min(limit, 200))}
+
+
+@app.get("/api/discovery/scans/{scan_id}")
+async def api_discovery_get_scan(
+    scan_id: str,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """Single scan result."""
+    agent_discovery.init_db()
+    try:
+        return agent_discovery.get_scan(scan_id, tenant.tenant_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/discovery/shadow")
+async def api_discovery_shadow_alerts(
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """List unacknowledged shadow agent alerts."""
+    agent_discovery.init_db()
+    return {"alerts": agent_discovery.list_shadow_alerts(tenant.tenant_id)}
+
+
+@app.post("/api/discovery/shadow/{alert_id}/acknowledge")
+async def api_discovery_ack_shadow(
+    alert_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """Acknowledge a shadow agent alert."""
+    agent_discovery.init_db()
+    acknowledged_by = str(body.get("acknowledged_by") or tenant.tenant_id)
+    try:
+        return agent_discovery.acknowledge_shadow_alert(tenant.tenant_id, alert_id, acknowledged_by)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
