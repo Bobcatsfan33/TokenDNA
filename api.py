@@ -86,6 +86,7 @@ from modules.identity import mcp_gateway
 from modules.identity import agent_discovery
 from modules.identity import enforcement_plane
 from modules.identity import behavioral_dna
+from modules.identity import compliance_engine
 from modules.identity import cert_dashboard
 from modules.identity import policy_advisor
 from modules.identity import network_intel
@@ -238,6 +239,7 @@ async def _startup_checks() -> None:
     agent_discovery.init_db()
     enforcement_plane.init_db()
     behavioral_dna.init_db()
+    compliance_engine.init_db()
     cert_dashboard.init_db()
     policy_advisor.init_db()
     from modules.identity import passport as _passport_init  # noqa: PLC0415
@@ -5488,3 +5490,123 @@ async def api_bd_audit(
     return {"events": behavioral_dna.get_audit_trail(
         tenant.tenant_id, agent_id, limit=min(limit, 1000)
     )}
+
+
+# ── Phase 5-4: Compliance Engine ─────────────────────────────────────────────
+
+
+@app.get("/api/compliance/frameworks")
+async def api_ce_list_frameworks(
+    _tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    return {"frameworks": compliance_engine.list_frameworks()}
+
+
+@app.get("/api/compliance/frameworks/{framework_id}/controls")
+async def api_ce_framework_controls(
+    framework_id: str,
+    _tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    try:
+        return {"framework_id": framework_id, "controls": compliance_engine.get_framework_controls(framework_id)}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/compliance/agents/{agent_id}/classify")
+async def api_ce_classify(
+    agent_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    compliance_engine.init_db()
+    framework_id = str(body.get("framework_id") or "eu_ai_act")
+    factors = body.get("factors") or {}
+    try:
+        return compliance_engine.classify_agent(
+            tenant.tenant_id, agent_id, framework_id, factors,
+            classified_by=str(body.get("classified_by") or tenant.tenant_id),
+            override_risk_level=body.get("override_risk_level"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/compliance/agents/{agent_id}/classification")
+async def api_ce_get_classification(
+    agent_id: str,
+    framework_id: str = "eu_ai_act",
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    compliance_engine.init_db()
+    result = compliance_engine.get_classification(tenant.tenant_id, agent_id, framework_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="No classification found")
+    return result
+
+
+@app.post("/api/compliance/agents/{agent_id}/assess")
+async def api_ce_assess(
+    agent_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    compliance_engine.init_db()
+    framework_id = str(body.get("framework_id") or "eu_ai_act")
+    controls_present = body.get("controls_present") or {}
+    try:
+        return compliance_engine.assess_compliance(
+            tenant.tenant_id, agent_id, framework_id, controls_present,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/compliance/agents/{agent_id}/assessment")
+async def api_ce_get_assessment(
+    agent_id: str,
+    framework_id: str = "eu_ai_act",
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    compliance_engine.init_db()
+    result = compliance_engine.get_latest_assessment(tenant.tenant_id, agent_id, framework_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="No assessment found")
+    return result
+
+
+@app.get("/api/compliance/dashboard")
+async def api_ce_dashboard(
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    compliance_engine.init_db()
+    return compliance_engine.compliance_dashboard(tenant.tenant_id)
+
+
+@app.post("/api/compliance/agents/{agent_id}/enforce")
+async def api_ce_enforce(
+    agent_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    compliance_engine.init_db()
+    framework_id = str(body.get("framework_id") or "eu_ai_act")
+    try:
+        mappings = compliance_engine.create_compliance_enforcement(
+            tenant.tenant_id, agent_id, framework_id,
+        )
+        return {"agent_id": agent_id, "framework_id": framework_id, "policies_created": mappings}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/compliance/agents/{agent_id}/audit")
+async def api_ce_audit_export(
+    agent_id: str,
+    framework_id: str | None = None,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    compliance_engine.init_db()
+    return compliance_engine.generate_audit_export(
+        tenant.tenant_id, agent_id, framework_id,
+    )
