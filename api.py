@@ -84,6 +84,8 @@ from modules.identity import agent_lifecycle
 from modules.identity import mcp_inspector
 from modules.identity import mcp_gateway
 from modules.identity import agent_discovery
+from modules.identity import enforcement_plane
+from modules.identity import behavioral_dna
 from modules.identity import cert_dashboard
 from modules.identity import policy_advisor
 from modules.identity import network_intel
@@ -234,6 +236,8 @@ async def _startup_checks() -> None:
     mcp_inspector.init_db()
     mcp_gateway.init_db()
     agent_discovery.init_db()
+    enforcement_plane.init_db()
+    behavioral_dna.init_db()
     cert_dashboard.init_db()
     policy_advisor.init_db()
     from modules.identity import passport as _passport_init  # noqa: PLC0415
@@ -5217,3 +5221,270 @@ async def api_discovery_ack_shadow(
         return agent_discovery.acknowledge_shadow_alert(tenant.tenant_id, alert_id, acknowledged_by)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# ── Phase 5-3: Enforcement Plane ─────────────────────────────────────────────
+
+
+@app.post("/api/enforcement/policies")
+async def api_ep_create_policy(
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """Create an enforcement policy."""
+    enforcement_plane.init_db()
+    name = str(body.get("name") or "")
+    rules = body.get("rules") or []
+    if not name:
+        raise HTTPException(status_code=422, detail="name is required")
+    if not isinstance(rules, list):
+        raise HTTPException(status_code=422, detail="rules must be a list")
+    try:
+        return enforcement_plane.create_policy(
+            tenant_id=tenant.tenant_id,
+            name=name,
+            rules=rules,
+            mode=str(body.get("mode") or "shadow"),
+            canary_pct=float(body.get("canary_pct") or 0.0),
+            description=str(body.get("description") or ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/enforcement/policies")
+async def api_ep_list_policies(
+    status: str | None = "active",
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    enforcement_plane.init_db()
+    return {"policies": enforcement_plane.list_policies(tenant.tenant_id, status=status)}
+
+
+@app.get("/api/enforcement/policies/{policy_id}")
+async def api_ep_get_policy(
+    policy_id: str,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    enforcement_plane.init_db()
+    try:
+        return enforcement_plane.get_policy(policy_id, tenant.tenant_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.patch("/api/enforcement/policies/{policy_id}")
+async def api_ep_update_policy(
+    policy_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    enforcement_plane.init_db()
+    try:
+        return enforcement_plane.update_policy(
+            policy_id, tenant.tenant_id,
+            name=body.get("name"),
+            description=body.get("description"),
+            rules=body.get("rules"),
+            mode=body.get("mode"),
+            canary_pct=float(body["canary_pct"]) if "canary_pct" in body else None,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.delete("/api/enforcement/policies/{policy_id}")
+async def api_ep_deactivate_policy(
+    policy_id: str,
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    enforcement_plane.init_db()
+    try:
+        return enforcement_plane.deactivate_policy(policy_id, tenant.tenant_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/enforcement/evaluate")
+async def api_ep_evaluate(
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """Evaluate a pending agent action against all policies."""
+    enforcement_plane.init_db()
+    agent_id = str(body.get("agent_id") or "")
+    action_type = str(body.get("action_type") or "")
+    if not agent_id or not action_type:
+        raise HTTPException(status_code=422, detail="agent_id and action_type are required")
+    return enforcement_plane.evaluate(
+        tenant.tenant_id,
+        agent_id,
+        action_type,
+        resource=str(body.get("resource") or ""),
+        context=body.get("context") or {},
+    )
+
+
+@app.get("/api/enforcement/decisions")
+async def api_ep_decisions(
+    agent_id: str | None = None,
+    decision: str | None = None,
+    limit: int = 100,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    enforcement_plane.init_db()
+    return {"decisions": enforcement_plane.list_decisions(
+        tenant.tenant_id, agent_id=agent_id, decision=decision, limit=min(limit, 500)
+    )}
+
+
+@app.get("/api/enforcement/shadow/report")
+async def api_ep_shadow_report(
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    enforcement_plane.init_db()
+    return enforcement_plane.shadow_report(tenant.tenant_id)
+
+
+@app.post("/api/enforcement/killswitch/{agent_id}")
+async def api_ep_kill_switch_activate(
+    agent_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """Activate kill switch for an agent."""
+    enforcement_plane.init_db()
+    activated_by = str(body.get("activated_by") or "")
+    if not activated_by:
+        raise HTTPException(status_code=422, detail="activated_by is required")
+    try:
+        return enforcement_plane.activate_kill_switch(
+            tenant.tenant_id, agent_id, activated_by,
+            reason=str(body.get("reason") or ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.delete("/api/enforcement/killswitch/{agent_id}")
+async def api_ep_kill_switch_deactivate(
+    agent_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    enforcement_plane.init_db()
+    deactivated_by = str(body.get("deactivated_by") or "")
+    if not deactivated_by:
+        raise HTTPException(status_code=422, detail="deactivated_by is required")
+    try:
+        return enforcement_plane.deactivate_kill_switch(tenant.tenant_id, agent_id, deactivated_by)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/enforcement/killswitch")
+async def api_ep_kill_switches_list(
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    enforcement_plane.init_db()
+    return {"kill_switches": enforcement_plane.list_active_kill_switches(tenant.tenant_id)}
+
+
+@app.get("/api/enforcement/killswitch/{agent_id}")
+async def api_ep_kill_switch_status(
+    agent_id: str,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    enforcement_plane.init_db()
+    return enforcement_plane.get_kill_switch_status(tenant.tenant_id, agent_id)
+
+
+# ── Phase 5-3: Behavioral DNA ─────────────────────────────────────────────────
+
+
+@app.post("/api/behavioral/event")
+async def api_bd_record_event(
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """Record a behavioural event for an agent."""
+    behavioral_dna.init_db()
+    agent_id = str(body.get("agent_id") or "")
+    event_type = str(body.get("event_type") or "")
+    if not agent_id or not event_type:
+        raise HTTPException(status_code=422, detail="agent_id and event_type are required")
+    return behavioral_dna.record_event(
+        tenant.tenant_id, agent_id, event_type,
+        tool_name=str(body.get("tool_name") or ""),
+        resource=str(body.get("resource") or ""),
+        action_type=str(body.get("action_type") or ""),
+        params=body.get("params") or {},
+    )
+
+
+@app.get("/api/behavioral/baseline/{agent_id}")
+async def api_bd_baseline(
+    agent_id: str,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    behavioral_dna.init_db()
+    return behavioral_dna.get_baseline(tenant.tenant_id, agent_id)
+
+
+@app.get("/api/behavioral/drift/{agent_id}")
+async def api_bd_drift(
+    agent_id: str,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    behavioral_dna.init_db()
+    return behavioral_dna.compute_drift_score(tenant.tenant_id, agent_id)
+
+
+@app.get("/api/behavioral/alerts")
+async def api_bd_alerts(
+    agent_id: str | None = None,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    behavioral_dna.init_db()
+    return {"alerts": behavioral_dna.list_drift_alerts(tenant.tenant_id, agent_id=agent_id)}
+
+
+@app.post("/api/behavioral/alerts/{alert_id}/acknowledge")
+async def api_bd_ack_alert(
+    alert_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    behavioral_dna.init_db()
+    acknowledged_by = str(body.get("acknowledged_by") or tenant.tenant_id)
+    try:
+        return behavioral_dna.acknowledge_drift_alert(tenant.tenant_id, alert_id, acknowledged_by)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/behavioral/snapshot/{agent_id}")
+async def api_bd_snapshot(
+    agent_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    behavioral_dna.init_db()
+    return behavioral_dna.take_snapshot(
+        tenant.tenant_id, agent_id,
+        trigger=str(body.get("trigger") or "manual"),
+    )
+
+
+@app.get("/api/behavioral/audit/{agent_id}")
+async def api_bd_audit(
+    agent_id: str,
+    limit: int = 200,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    behavioral_dna.init_db()
+    return {"events": behavioral_dna.get_audit_trail(
+        tenant.tenant_id, agent_id, limit=min(limit, 1000)
+    )}
