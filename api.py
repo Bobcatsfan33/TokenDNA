@@ -82,6 +82,7 @@ from modules.identity import intent_correlation
 from modules.identity import policy_bundles
 from modules.identity import agent_lifecycle
 from modules.identity import mcp_inspector
+from modules.identity import mcp_gateway
 from modules.identity import cert_dashboard
 from modules.identity import policy_advisor
 from modules.identity import network_intel
@@ -230,6 +231,7 @@ async def _startup_checks() -> None:
     permission_drift.init_db()
     agent_lifecycle.init_db()
     mcp_inspector.init_db()
+    mcp_gateway.init_db()
     cert_dashboard.init_db()
     policy_advisor.init_db()
     from modules.identity import passport as _passport_init  # noqa: PLC0415
@@ -4797,3 +4799,204 @@ async def api_proof_stats(
     """Summary statistics for proof-of-control status across all verifiers."""
     poc_module.init_db()
     return poc_module.proof_stats(tenant_id=tenant.tenant_id)
+
+
+# ── Phase 5-1: MCP Security Gateway ──────────────────────────────────────────
+
+
+@app.post("/api/mcp/gateway/session/open")
+async def api_gw_open_session(
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """Open a gateway-managed MCP session."""
+    mcp_gateway.init_db()
+    agent_id = str(body.get("agent_id") or "")
+    server_id = str(body.get("server_id") or "")
+    if not agent_id or not server_id:
+        raise HTTPException(status_code=422, detail="agent_id and server_id are required")
+    return mcp_gateway.open_session(
+        tenant_id=tenant.tenant_id,
+        agent_id=agent_id,
+        server_id=server_id,
+        mode=str(body.get("mode") or "audit"),
+        passport_id=body.get("passport_id"),
+    )
+
+
+@app.post("/api/mcp/gateway/session/close/{session_id}")
+async def api_gw_close_session(
+    session_id: str,
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """Close an open gateway session."""
+    mcp_gateway.init_db()
+    try:
+        return mcp_gateway.close_session(session_id, tenant.tenant_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/mcp/gateway/sessions")
+async def api_gw_list_sessions(
+    status: str | None = None,
+    agent_id: str | None = None,
+    limit: int = 100,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """List gateway sessions for this tenant."""
+    mcp_gateway.init_db()
+    return {"sessions": mcp_gateway.list_sessions(tenant.tenant_id, status=status, agent_id=agent_id, limit=min(limit, 500))}
+
+
+@app.get("/api/mcp/gateway/sessions/{session_id}")
+async def api_gw_get_session(
+    session_id: str,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """Get a single gateway session."""
+    mcp_gateway.init_db()
+    try:
+        return mcp_gateway.get_session(session_id, tenant.tenant_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/mcp/gateway/enforce")
+async def api_gw_enforce(
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """Gateway enforcement point — evaluate a pending tool call."""
+    mcp_gateway.init_db()
+    session_id = str(body.get("session_id") or "")
+    tool_name = str(body.get("tool_name") or "")
+    if not session_id or not tool_name:
+        raise HTTPException(status_code=422, detail="session_id and tool_name are required")
+    params = body.get("params") or {}
+    if not isinstance(params, dict):
+        params = {}
+    try:
+        return mcp_gateway.enforce(
+            session_id,
+            tenant.tenant_id,
+            tool_name,
+            params,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/mcp/gateway/enforcements")
+async def api_gw_list_enforcements(
+    session_id: str | None = None,
+    outcome: str | None = None,
+    limit: int = 100,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """Enforcement log for this tenant."""
+    mcp_gateway.init_db()
+    return {"enforcements": mcp_gateway.list_enforcements(tenant.tenant_id, session_id=session_id, outcome=outcome, limit=min(limit, 500))}
+
+
+@app.post("/api/mcp/gateway/session/{session_id}/bind")
+async def api_gw_bind_passport(
+    session_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """Bind a TokenDNA Passport to a gateway session."""
+    mcp_gateway.init_db()
+    passport_id = str(body.get("passport_id") or "")
+    if not passport_id:
+        raise HTTPException(status_code=422, detail="passport_id is required")
+    try:
+        return mcp_gateway.bind_passport(session_id, tenant.tenant_id, passport_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/mcp/fingerprint/register")
+async def api_gw_register_manifest(
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """Register or update a server's tool manifest for fingerprinting."""
+    mcp_gateway.init_db()
+    server_id = str(body.get("server_id") or "")
+    tools = body.get("tools") or []
+    if not server_id:
+        raise HTTPException(status_code=422, detail="server_id is required")
+    if not isinstance(tools, list):
+        raise HTTPException(status_code=422, detail="tools must be a list")
+    return mcp_gateway.register_manifest(tenant.tenant_id, server_id, tools)
+
+
+@app.get("/api/mcp/fingerprint/alerts")
+async def api_gw_fp_alerts(
+    server_id: str | None = None,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """List unresolved tool manifest drift alerts."""
+    mcp_gateway.init_db()
+    return {"alerts": mcp_gateway.list_fingerprint_alerts(tenant.tenant_id, server_id=server_id)}
+
+
+@app.get("/api/mcp/fingerprint/{server_id}")
+async def api_gw_get_fingerprint(
+    server_id: str,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """Current fingerprint snapshot for a server."""
+    mcp_gateway.init_db()
+    return mcp_gateway.get_fingerprint(tenant.tenant_id, server_id)
+
+
+@app.post("/api/mcp/fingerprint/alerts/{alert_id}/resolve")
+async def api_gw_resolve_fp_alert(
+    alert_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """Resolve a tool manifest drift alert."""
+    mcp_gateway.init_db()
+    resolved_by = str(body.get("resolved_by") or tenant.tenant_id)
+    try:
+        return mcp_gateway.resolve_fingerprint_alert(tenant.tenant_id, alert_id, resolved_by)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/mcp/anomaly/baseline/{agent_id}")
+async def api_gw_anomaly_baseline(
+    agent_id: str,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """Learned tool-call baseline for an agent."""
+    mcp_gateway.init_db()
+    return {"agent_id": agent_id, "baseline": mcp_gateway.get_anomaly_baseline(tenant.tenant_id, agent_id)}
+
+
+@app.get("/api/mcp/anomaly/alerts")
+async def api_gw_anomaly_alerts(
+    agent_id: str | None = None,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """Unacknowledged anomaly alerts."""
+    mcp_gateway.init_db()
+    return {"alerts": mcp_gateway.list_anomaly_alerts(tenant.tenant_id, agent_id=agent_id)}
+
+
+@app.post("/api/mcp/anomaly/alerts/{alert_id}/acknowledge")
+async def api_gw_ack_anomaly(
+    alert_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
+):
+    """Acknowledge an anomaly alert."""
+    mcp_gateway.init_db()
+    acknowledged_by = str(body.get("acknowledged_by") or tenant.tenant_id)
+    try:
+        return mcp_gateway.acknowledge_anomaly_alert(tenant.tenant_id, alert_id, acknowledged_by)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
