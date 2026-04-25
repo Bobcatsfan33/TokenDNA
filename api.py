@@ -418,6 +418,159 @@ async def dashboard():
     return FileResponse(_DASHBOARD_PATH)
 
 
+# ── Enterprise SAML SSO (alpha) ───────────────────────────────────────────────
+
+
+@app.get("/saml/metadata", response_class=Response)
+async def saml_metadata():
+    from modules.auth.saml import generate_metadata
+    return Response(content=generate_metadata(), media_type="application/xml")
+
+
+@app.get("/saml/login")
+async def saml_login(relay_state: str | None = None):
+    from modules.auth.saml import build_authn_request, SAMLError
+    try:
+        req = build_authn_request(relay_state=relay_state)
+    except SAMLError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    return {
+        "request_id": req.request_id,
+        "redirect_url": req.redirect_url,
+        "relay_state": req.relay_state,
+    }
+
+
+@app.post("/saml/acs")
+async def saml_acs(request: Request):
+    from modules.auth.saml import parse_assertion, SAMLError
+    form = await request.form()
+    saml_response = form.get("SAMLResponse")
+    if not saml_response:
+        raise HTTPException(status_code=400, detail="SAMLResponse missing")
+    try:
+        assertion = parse_assertion(str(saml_response))
+    except SAMLError as exc:
+        raise HTTPException(status_code=401, detail=str(exc))
+    return {
+        "name_id": assertion.name_id,
+        "attributes": assertion.attributes,
+        "issuer": assertion.issuer,
+        "session_index": assertion.session_index,
+    }
+
+
+# ── SCIM 2.0 (alpha) ──────────────────────────────────────────────────────────
+
+
+def _scim_response(body: dict, status: int = 200):
+    return JSONResponse(
+        content=body,
+        status_code=status,
+        media_type="application/scim+json",
+    )
+
+
+def _scim_handle(coro):  # decorator-like wrapper
+    """Translate SCIMError into a SCIM-formatted JSON response."""
+    from functools import wraps
+    from modules.auth.scim import SCIMError
+
+    @wraps(coro)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await coro(*args, **kwargs)
+        except SCIMError as exc:
+            return _scim_response(exc.to_response(), status=exc.status)
+
+    return wrapper
+
+
+@app.get("/scim/v2/ServiceProviderConfig")
+async def scim_spc():
+    from modules.auth.scim import service_provider_config
+    return _scim_response(service_provider_config())
+
+
+@app.get("/scim/v2/ResourceTypes")
+async def scim_resource_types():
+    from modules.auth.scim import resource_types
+    return _scim_response(resource_types())
+
+
+@app.post("/scim/v2/Users")
+@_scim_handle
+async def scim_create_user(request: Request, tenant: TenantContext = Depends(get_tenant)):
+    from modules.auth.scim import create_user
+    payload = await request.json()
+    body = create_user(payload, tenant_id=tenant.tenant_id)
+    return _scim_response(body, status=201)
+
+
+@app.get("/scim/v2/Users/{user_id}")
+@_scim_handle
+async def scim_get_user(user_id: str, tenant: TenantContext = Depends(get_tenant)):
+    from modules.auth.scim import get_user
+    return _scim_response(get_user(user_id, tenant_id=tenant.tenant_id))
+
+
+@app.put("/scim/v2/Users/{user_id}")
+@_scim_handle
+async def scim_replace_user(user_id: str, request: Request, tenant: TenantContext = Depends(get_tenant)):
+    from modules.auth.scim import replace_user
+    payload = await request.json()
+    return _scim_response(replace_user(user_id, payload, tenant_id=tenant.tenant_id))
+
+
+@app.delete("/scim/v2/Users/{user_id}")
+@_scim_handle
+async def scim_delete_user(user_id: str, tenant: TenantContext = Depends(get_tenant)):
+    from modules.auth.scim import delete_user
+    delete_user(user_id, tenant_id=tenant.tenant_id)
+    return Response(status_code=204)
+
+
+@app.get("/scim/v2/Users")
+@_scim_handle
+async def scim_list_users(
+    startIndex: int = 1,
+    count: int = 100,
+    tenant: TenantContext = Depends(get_tenant),
+):
+    from modules.auth.scim import list_users
+    return _scim_response(list_users(tenant_id=tenant.tenant_id, start_index=startIndex, count=count))
+
+
+@app.post("/scim/v2/Groups")
+@_scim_handle
+async def scim_create_group(request: Request, tenant: TenantContext = Depends(get_tenant)):
+    from modules.auth.scim import create_group
+    payload = await request.json()
+    return _scim_response(create_group(payload, tenant_id=tenant.tenant_id), status=201)
+
+
+@app.get("/scim/v2/Groups/{group_id}")
+@_scim_handle
+async def scim_get_group(group_id: str, tenant: TenantContext = Depends(get_tenant)):
+    from modules.auth.scim import get_group
+    return _scim_response(get_group(group_id, tenant_id=tenant.tenant_id))
+
+
+@app.get("/scim/v2/Groups")
+@_scim_handle
+async def scim_list_groups(tenant: TenantContext = Depends(get_tenant)):
+    from modules.auth.scim import list_groups
+    return _scim_response(list_groups(tenant_id=tenant.tenant_id))
+
+
+@app.delete("/scim/v2/Groups/{group_id}")
+@_scim_handle
+async def scim_delete_group(group_id: str, tenant: TenantContext = Depends(get_tenant)):
+    from modules.auth.scim import delete_group
+    delete_group(group_id, tenant_id=tenant.tenant_id)
+    return Response(status_code=204)
+
+
 # ── Dashboard data API (tenant-scoped, real data) ────────────────────────────
 
 @app.get("/api/stats")
