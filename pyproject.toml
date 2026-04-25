@@ -1,3 +1,54 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tokendna-sdk"
+version = "0.1.0"
+description = "Identity for AI agents in one decorator. Attestation, delegation, and workflow tracking for LangChain / CrewAI / AutoGen / plain Python."
+readme = "tokendna_sdk/README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "TokenDNA" }]
+keywords = ["ai", "agents", "identity", "attestation", "security", "langchain", "crewai", "autogen", "tokendna"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "License :: OSI Approved :: Apache Software License",
+]
+# Zero runtime dependencies — the SDK uses only stdlib (urllib).
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+examples = ["langchain>=0.1.0", "langchain-core>=0.1.0"]
+
+[project.scripts]
+tokendna = "tokendna_sdk.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Bobcatsfan33/TokenDNA"
+Documentation = "https://github.com/Bobcatsfan33/TokenDNA/tree/main/tokendna_sdk"
+Repository = "https://github.com/Bobcatsfan33/TokenDNA"
+Issues = "https://github.com/Bobcatsfan33/TokenDNA/issues"
+
+[tool.setuptools]
+# Repo is a monorepo containing both the SDK and the TokenDNA backend service.
+# Only ship the SDK package; the backend service (api.py, modules/) is not
+# pip-installable.
+packages = ["tokendna_sdk"]
+
+[tool.setuptools.package-data]
+tokendna_sdk = ["py.typed"]
+
 [tool.ruff]
 target-version = "py312"
 line-length = 200
