@@ -53,7 +53,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sqlite3
+import sqlite3  # noqa: F401  retained for type-compat with legacy callers
 import threading
 import uuid
 from contextlib import contextmanager
@@ -61,6 +61,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
+
+from modules.storage.ddl_runner import run_ddl
+from modules.storage.pg_connection import AdaptedCursor, get_db_conn
 
 logger = logging.getLogger(__name__)
 
@@ -299,60 +302,50 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
 @contextmanager
 def _cursor():
+    """Yield a backend-portable AdaptedCursor.
+
+    Routes through ``modules.storage.pg_connection.get_db_conn`` so the same
+    code path works on SQLite (default) and Postgres. ``AdaptedCursor``
+    rewrites ``?`` placeholders to ``%s`` when running against psycopg.
+    """
     with _lock:
-        conn = _get_conn()
-        try:
-            cur = conn.cursor()
-            yield cur
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        with get_db_conn(db_path=_DB_PATH) as conn:
+            yield AdaptedCursor(conn.cursor())
+
+
+_DDL_STATEMENTS: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS policy_guard_violations (
+        violation_id        TEXT NOT NULL PRIMARY KEY,
+        request_id          TEXT NOT NULL,
+        actor_id            TEXT NOT NULL,
+        actor_type          TEXT NOT NULL,
+        action_type         TEXT NOT NULL,
+        target_policy_id    TEXT NOT NULL,
+        target_policy_name  TEXT NOT NULL,
+        tenant_id           TEXT NOT NULL,
+        disposition         TEXT NOT NULL,
+        rules_triggered     TEXT NOT NULL DEFAULT '[]',
+        reasons             TEXT NOT NULL DEFAULT '[]',
+        status              TEXT NOT NULL DEFAULT 'open',
+        detected_at         TEXT NOT NULL,
+        resolved_at         TEXT,
+        resolved_by         TEXT,
+        resolution_note     TEXT,
+        metadata            TEXT NOT NULL DEFAULT '{}'
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_pgv_tenant_status ON policy_guard_violations(tenant_id, status, detected_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_pgv_actor ON policy_guard_violations(actor_id, tenant_id)",
+    "CREATE INDEX IF NOT EXISTS idx_pgv_policy ON policy_guard_violations(target_policy_id, tenant_id)",
+)
 
 
 def init_db() -> None:
-    """Idempotently create PolicyGuard tables."""
-    with _cursor() as cur:
-        cur.executescript("""
-        CREATE TABLE IF NOT EXISTS policy_guard_violations (
-            violation_id        TEXT NOT NULL PRIMARY KEY,
-            request_id          TEXT NOT NULL,
-            actor_id            TEXT NOT NULL,
-            actor_type          TEXT NOT NULL,
-            action_type         TEXT NOT NULL,
-            target_policy_id    TEXT NOT NULL,
-            target_policy_name  TEXT NOT NULL,
-            tenant_id           TEXT NOT NULL,
-            disposition         TEXT NOT NULL,
-            rules_triggered     TEXT NOT NULL DEFAULT '[]',
-            reasons             TEXT NOT NULL DEFAULT '[]',
-            status              TEXT NOT NULL DEFAULT 'open',
-            detected_at         TEXT NOT NULL,
-            resolved_at         TEXT,
-            resolved_by         TEXT,
-            resolution_note     TEXT,
-            metadata            TEXT NOT NULL DEFAULT '{}'
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_pgv_tenant_status
-            ON policy_guard_violations(tenant_id, status, detected_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_pgv_actor
-            ON policy_guard_violations(actor_id, tenant_id);
-        CREATE INDEX IF NOT EXISTS idx_pgv_policy
-            ON policy_guard_violations(target_policy_id, tenant_id);
-        """)
+    """Idempotently create PolicyGuard tables on SQLite and Postgres."""
+    run_ddl(_DDL_STATEMENTS, _DB_PATH)
 
 
 # ---------------------------------------------------------------------------

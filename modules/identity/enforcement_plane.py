@@ -83,6 +83,9 @@ import re
 import sqlite3
 import threading
 import uuid
+
+from modules.storage.ddl_runner import run_ddl
+from modules.storage.pg_connection import AdaptedCursor, get_db_conn
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
@@ -106,6 +109,58 @@ _db_initialized = False
 # ── DB bootstrap ───────────────────────────────────────────────────────────────
 
 
+_DDL_STATEMENTS: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS ep_policies (
+        policy_id    TEXT PRIMARY KEY,
+        tenant_id    TEXT NOT NULL,
+        name         TEXT NOT NULL,
+        description  TEXT,
+        rules_json   TEXT NOT NULL,
+        mode         TEXT NOT NULL DEFAULT 'shadow',
+        canary_pct   REAL NOT NULL DEFAULT 0.0,
+        status       TEXT NOT NULL DEFAULT 'active',
+        created_at   TEXT NOT NULL,
+        updated_at   TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_ep_policies_tenant ON ep_policies(tenant_id, status)",
+    """
+    CREATE TABLE IF NOT EXISTS ep_decisions (
+        decision_id      TEXT PRIMARY KEY,
+        tenant_id        TEXT NOT NULL,
+        agent_id         TEXT NOT NULL,
+        policy_id        TEXT,
+        action_type      TEXT NOT NULL,
+        resource         TEXT,
+        context_json     TEXT,
+        decision         TEXT NOT NULL,
+        mode_at_time     TEXT NOT NULL,
+        shadow_would     TEXT,
+        risk_score       REAL NOT NULL DEFAULT 0.0,
+        reasons_json     TEXT,
+        kill_switched    INTEGER NOT NULL DEFAULT 0,
+        created_at       TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_ep_decisions_tenant ON ep_decisions(tenant_id, agent_id, created_at DESC)",
+    """
+    CREATE TABLE IF NOT EXISTS ep_kill_switches (
+        switch_id       TEXT PRIMARY KEY,
+        tenant_id       TEXT NOT NULL,
+        agent_id        TEXT NOT NULL,
+        activated_by    TEXT NOT NULL,
+        reason          TEXT,
+        activated_at    TEXT NOT NULL,
+        deactivated_by  TEXT,
+        deactivated_at  TEXT,
+        active          INTEGER NOT NULL DEFAULT 1
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_ep_ks_lookup ON ep_kill_switches(tenant_id, agent_id, active)",
+)
+
+
 def init_db(db_path: str = _DB_PATH) -> None:
     global _db_initialized
     if _db_initialized:
@@ -113,80 +168,15 @@ def init_db(db_path: str = _DB_PATH) -> None:
     with _lock:
         if _db_initialized:
             return
-        os.makedirs(
-            os.path.dirname(db_path) if os.path.dirname(db_path) else ".",
-            exist_ok=True,
-        )
-        with sqlite3.connect(db_path) as conn:
-            conn.executescript(
-                """
-                PRAGMA journal_mode=WAL;
-
-                -- ── Policies ──────────────────────────────────────────────
-                CREATE TABLE IF NOT EXISTS ep_policies (
-                    policy_id    TEXT PRIMARY KEY,
-                    tenant_id    TEXT NOT NULL,
-                    name         TEXT NOT NULL,
-                    description  TEXT,
-                    rules_json   TEXT NOT NULL,
-                    mode         TEXT NOT NULL DEFAULT 'shadow',
-                    canary_pct   REAL NOT NULL DEFAULT 0.0,
-                    status       TEXT NOT NULL DEFAULT 'active',
-                    created_at   TEXT NOT NULL,
-                    updated_at   TEXT NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_ep_policies_tenant
-                    ON ep_policies(tenant_id, status);
-
-                -- ── Enforcement decisions ─────────────────────────────────
-                CREATE TABLE IF NOT EXISTS ep_decisions (
-                    decision_id      TEXT PRIMARY KEY,
-                    tenant_id        TEXT NOT NULL,
-                    agent_id         TEXT NOT NULL,
-                    policy_id        TEXT,
-                    action_type      TEXT NOT NULL,
-                    resource         TEXT,
-                    context_json     TEXT,
-                    decision         TEXT NOT NULL,
-                    mode_at_time     TEXT NOT NULL,
-                    shadow_would     TEXT,
-                    risk_score       REAL NOT NULL DEFAULT 0.0,
-                    reasons_json     TEXT,
-                    kill_switched    INTEGER NOT NULL DEFAULT 0,
-                    created_at       TEXT NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_ep_decisions_tenant
-                    ON ep_decisions(tenant_id, agent_id, created_at DESC);
-
-                -- ── Kill switches ─────────────────────────────────────────
-                CREATE TABLE IF NOT EXISTS ep_kill_switches (
-                    switch_id       TEXT PRIMARY KEY,
-                    tenant_id       TEXT NOT NULL,
-                    agent_id        TEXT NOT NULL,
-                    activated_by    TEXT NOT NULL,
-                    reason          TEXT,
-                    activated_at    TEXT NOT NULL,
-                    deactivated_by  TEXT,
-                    deactivated_at  TEXT,
-                    active          INTEGER NOT NULL DEFAULT 1
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_ep_ks_lookup
-                    ON ep_kill_switches(tenant_id, agent_id, active);
-                """
-            )
+        run_ddl(_DDL_STATEMENTS, db_path)
         _db_initialized = True
 
 
 @contextmanager
 def _cursor(db_path: str = _DB_PATH):
-    with sqlite3.connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        yield conn.cursor()
-        conn.commit()
+    """Yield a backend-portable AdaptedCursor (SQLite or Postgres)."""
+    with get_db_conn(db_path=db_path) as conn:
+        yield AdaptedCursor(conn.cursor())
 
 
 # ── Policy CRUD ────────────────────────────────────────────────────────────────
