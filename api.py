@@ -747,12 +747,14 @@ async def api_schema_uis_json(
     response: Response,
     _tenant: TenantContext = Depends(get_tenant),
 ):
-    _schema_path = Path(__file__).parent / "modules" / "identity" / "uis_schema_v1.json"
-    with _schema_path.open(encoding="utf-8") as _f:
-        _schema = json.load(_f)
-    response.headers["X-UIS-Schema-Version"] = "1.0"
+    # Serve the canonical JSON Schema artifact via the validator's cache.
+    # Same source of truth that ``validate_uis_event`` uses at runtime.
+    from modules.identity.uis_validator import (  # noqa: PLC0415
+        schema_dict, schema_version,
+    )
+    response.headers["X-UIS-Schema-Version"] = schema_version()
     response.headers["Content-Type"] = "application/json"
-    return _schema
+    return schema_dict()
 
 
 @app.get("/api/schema/attestation.json")

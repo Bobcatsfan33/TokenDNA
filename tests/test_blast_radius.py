@@ -63,7 +63,7 @@ def _seed_event(tg, subject, agent_id=None, entity_type="machine",
                 auth_method="mtls", protocol="spiffe"):
     import time
     ev = {
-        "uis_version": "1.1",
+        "uis_version": "1.0",
         "event_id": f"ev-{subject}-{time.time_ns()}",
         "event_timestamp": "2026-04-15T00:00:00+00:00",
         "identity": {"entity_type": entity_type, "subject": subject,

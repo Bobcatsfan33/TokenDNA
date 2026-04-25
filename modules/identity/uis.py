@@ -14,53 +14,48 @@ UIS provides a protocol-agnostic event format with eight field sets:
 This module is intentionally lightweight and open-core friendly: adapters accept
 raw protocol artifacts and normalize them into a common event shape that the
 rest of the pipeline can consume.
+
+Schema source of truth
+----------------------
+The canonical schema lives in ``uis_schema_v1.json`` (Draft-07). Both the
+runtime validator (``uis_validator.validate``) and the human-readable spec
+endpoint derive from it — there is no hand-rolled list of required fields
+to drift out of sync.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from modules.identity.uis_validator import (
+    schema_version as _schema_version,
+    validate as _schema_validate,
+)
 
-UIS_VERSION = "1.0"
-SUPPORTED_PROTOCOLS = {"oidc", "saml", "oauth2_opaque", "spiffe", "custom"}
 
-# Required field sets and their required fields (mirrors uis_protocol.UIS_FIELD_SETS).
-# Defined here to avoid circular imports (uis_protocol imports from uis).
-_REQUIRED_FIELD_SETS: dict[str, list[str]] = {
-    "identity": ["subject", "tenant_id", "entity_type"],
-    "auth": ["protocol", "method", "mfa_asserted"],
-    "token": ["issuer", "type", "claims_hash"],
-    "session": ["request_id", "ip", "country", "asn"],
-    "behavior": ["dna_fingerprint", "pattern_deviation_score", "velocity_anomaly"],
-    "lifecycle": ["state", "provisioned_at", "revoked_at", "dormant"],
-    "threat": ["risk_score", "risk_tier", "indicators"],
-    "binding": ["dpop_jkt", "attestation_id"],
-}
+# Version pinned to the schema artifact's declared version — single source
+# of truth, no drift.
+UIS_VERSION = _schema_version()
+
+# Includes ``mcp`` because adapter inputs in uis_protocol.ADAPTER_INPUTS
+# already cover MCP claims; previously the normalizer silently downgraded
+# protocol="mcp" to "custom".
+SUPPORTED_PROTOCOLS = {"oidc", "saml", "oauth2_opaque", "spiffe", "mcp", "custom"}
 
 
 def validate_uis_event(event: dict) -> list[str]:
-    """Validate a UIS event dict.  Returns a (possibly empty) list of error strings.
+    """Validate a UIS event dict against the canonical JSON Schema.
 
-    Does NOT raise — callers decide what to do with the errors.
+    Returns a (possibly empty) list of human-readable error strings. Does
+    NOT raise — callers decide what to do with the errors. Errors include
+    type mismatches, enum violations, range violations, and missing
+    required fields — not just field-set membership.
     """
-    errors: list[str] = []
-    for field_set, required_fields in _REQUIRED_FIELD_SETS.items():
-        if field_set not in event:
-            errors.append(f"missing field set: {field_set!r}")
-            continue
-        section = event[field_set]
-        if not isinstance(section, dict):
-            errors.append(f"field set {field_set!r} is not an object")
-            continue
-        for field in required_fields:
-            if field not in section:
-                errors.append(f"missing required field: {field_set}.{field}")
-    return errors
+    return _schema_validate(event)
 
 
 def _iso_now() -> str:
@@ -174,9 +169,22 @@ def normalize_identity_event(data: UISNormalizerInput) -> dict[str, Any]:
         "supply_chain_hash": claims.get("supply_chain_hash"),
     }
 
+    # Content-addressed event_id: stable across re-normalization with the
+    # same inputs. Consumer-side dedup is meaningful only when re-running
+    # the normalizer on identical input produces the same id. The previous
+    # implementation hashed time.time_ns() and so produced a fresh id every
+    # call, defeating dedup. Caller-supplied event_id still wins.
+    event_id = context.get("event_id") or _stable_hash({
+        "tenant_id": data.tenant_id,
+        "subject": data.subject,
+        "claims": claims,
+        "request_id": context.get("request_id"),
+        "session_id": context.get("session_id"),
+    })[:32]
+
     event: dict[str, Any] = {
         "uis_version": UIS_VERSION,
-        "event_id": context.get("event_id") or _stable_hash([data.tenant_id, data.subject, time.time_ns()])[:32],
+        "event_id": event_id,
         "event_timestamp": _iso_now(),
         "identity": identity,
         "auth": auth,

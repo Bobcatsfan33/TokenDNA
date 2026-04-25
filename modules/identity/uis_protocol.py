@@ -3,6 +3,10 @@ TokenDNA -- UIS protocol specification and adapter helpers.
 
 This module keeps the UIS contract explicit and adapter-friendly so the
 open-protocol surface is easy for external developers to consume.
+
+``UIS_FIELD_SETS`` is *derived* from the canonical JSON Schema
+(``uis_schema_v1.json``) at import time, not hand-coded — eliminates the
+prior drift between this module and ``uis._REQUIRED_FIELD_SETS``.
 """
 
 from __future__ import annotations
@@ -10,42 +14,26 @@ from __future__ import annotations
 from typing import Any
 
 from modules.identity.uis import normalize_from_protocol
+from modules.identity.uis_validator import (
+    field_set_descriptions as _fs_descriptions,
+    required_field_sets as _fs_required,
+)
 
 
-UIS_FIELD_SETS = {
-    "identity": {
-        "description": "Core subject/entity attributes for human and machine identities",
-        "required_fields": ["subject", "tenant_id", "entity_type"],
-    },
-    "auth": {
-        "description": "Authentication context (method, protocol, MFA, credential strength)",
-        "required_fields": ["protocol", "method", "mfa_asserted"],
-    },
-    "token": {
-        "description": "Token metadata and binding state",
-        "required_fields": ["issuer", "type", "claims_hash"],
-    },
-    "session": {
-        "description": "Session and network context for risk analysis",
-        "required_fields": ["request_id", "ip", "country", "asn"],
-    },
-    "behavior": {
-        "description": "Behavioral DNA and drift/anomaly context",
-        "required_fields": ["dna_fingerprint", "pattern_deviation_score", "velocity_anomaly"],
-    },
-    "lifecycle": {
-        "description": "Identity lifecycle state transitions",
-        "required_fields": ["state", "provisioned_at", "revoked_at", "dormant"],
-    },
-    "threat": {
-        "description": "Runtime threat and risk evaluation output",
-        "required_fields": ["risk_score", "risk_tier", "indicators"],
-    },
-    "binding": {
-        "description": "Cryptographic/token/attestation bindings",
-        "required_fields": ["dpop_jkt", "attestation_id"],
-    },
-}
+def _build_field_sets() -> dict[str, dict[str, Any]]:
+    """Compose the documentation-friendly view from the schema artifact."""
+    descriptions = _fs_descriptions()
+    required = _fs_required()
+    return {
+        name: {
+            "description": descriptions.get(name, ""),
+            "required_fields": required.get(name, []),
+        }
+        for name in sorted(set(descriptions) | set(required))
+    }
+
+
+UIS_FIELD_SETS = _build_field_sets()
 
 
 ADAPTER_INPUTS = {
