@@ -266,6 +266,8 @@ async def _startup_checks() -> None:
     _fw_init.init_db()
     from modules.identity import delegation_receipt as _dr_init  # noqa: PLC0415
     _dr_init.init_db()
+    from modules.identity import workflow_attestation as _wf_init  # noqa: PLC0415
+    _wf_init.init_db()
 
     from modules.identity.cache_redis import is_available as redis_ok
     logger.info("Redis: %s", "connected" if redis_ok() else "UNREACHABLE")
@@ -6010,3 +6012,137 @@ async def api_flywheel_auto_sync(
     auto-subscribe is off."""
     from modules.product import threat_sharing_flywheel as fw  # noqa: PLC0415
     return fw.auto_sync_subscribed(tenant.tenant_id)
+
+
+# ── Workflow Attestation ──────────────────────────────────────────────────────
+# Multi-hop signed DAG with replay + drift detection. Gated behind
+# ent.enforcement_plane — workflow attestation is the chain-of-custody
+# layer above per-receipt delegation.
+
+@app.post("/api/workflow/register")
+async def api_workflow_register(
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    """Register a canonical workflow. Body: {name, hops[], description?,
+    created_by?}."""
+    from modules.identity import workflow_attestation as wf  # noqa: PLC0415
+    name = str(body.get("name") or "").strip()
+    hops = body.get("hops")
+    if not isinstance(hops, list):
+        raise HTTPException(status_code=400, detail="'hops' must be a list")
+    try:
+        out = wf.register_workflow(
+            tenant_id=tenant.tenant_id,
+            name=name,
+            hops=hops,
+            description=str(body.get("description") or ""),
+            created_by=body.get("created_by"),
+        )
+        return out.as_dict()
+    except wf.WorkflowError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": str(exc)},
+        ) from exc
+
+
+@app.get("/api/workflow/{workflow_id}")
+async def api_workflow_get(
+    workflow_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import workflow_attestation as wf  # noqa: PLC0415
+    out = wf.get_workflow(workflow_id, tenant_id=tenant.tenant_id)
+    if not out:
+        raise HTTPException(status_code=404, detail={"error": "not_found"})
+    return out.as_dict()
+
+
+@app.get("/api/workflow")
+async def api_workflow_list(
+    status: str = "active",
+    limit: int = 100,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import workflow_attestation as wf  # noqa: PLC0415
+    items = wf.list_workflows(
+        tenant.tenant_id,
+        status=None if status == "all" else status,
+        limit=limit,
+    )
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(items),
+        "workflows": [w.as_dict() for w in items],
+    }
+
+
+@app.post("/api/workflow/{workflow_id}/retire")
+async def api_workflow_retire(
+    workflow_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import workflow_attestation as wf  # noqa: PLC0415
+    if not wf.retire_workflow(workflow_id, tenant_id=tenant.tenant_id):
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "not_found_or_already_retired"},
+        )
+    return {"workflow_id": workflow_id, "status": "retired"}
+
+
+@app.get("/api/workflow/{workflow_id}/replay")
+async def api_workflow_replay(
+    workflow_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    """Re-derive signature, re-verify all linked delegation receipts,
+    return a per-hop verification report."""
+    from modules.identity import workflow_attestation as wf  # noqa: PLC0415
+    return wf.replay_workflow(workflow_id, tenant_id=tenant.tenant_id).as_dict()
+
+
+@app.post("/api/workflow/{workflow_id}/observe")
+async def api_workflow_observe(
+    workflow_id: str,
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    """Record an observed run. Body: {hops[]}."""
+    from modules.identity import workflow_attestation as wf  # noqa: PLC0415
+    hops = body.get("hops")
+    if not isinstance(hops, list):
+        raise HTTPException(status_code=400, detail="'hops' must be a list")
+    try:
+        return wf.record_observation(
+            workflow_id=workflow_id,
+            observed_hops=hops,
+            tenant_id=tenant.tenant_id,
+        )
+    except wf.WorkflowError as exc:
+        reason = str(exc)
+        if reason == "not_found_or_cross_tenant":
+            raise HTTPException(status_code=404, detail={"error": reason}) from exc
+        raise HTTPException(status_code=400, detail={"error": reason}) from exc
+
+
+@app.get("/api/workflow/{workflow_id}/observations")
+async def api_workflow_observations(
+    workflow_id: str,
+    drift_only: bool = False,
+    limit: int = 50,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import workflow_attestation as wf  # noqa: PLC0415
+    items = wf.get_observations(
+        workflow_id=workflow_id,
+        drift_only=drift_only,
+        limit=limit,
+        tenant_id=tenant.tenant_id,
+    )
+    return {
+        "workflow_id": workflow_id,
+        "count": len(items),
+        "observations": items,
+    }
