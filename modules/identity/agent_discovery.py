@@ -75,6 +75,9 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+
+from modules.storage.ddl_runner import run_ddl
+from modules.storage.pg_connection import AdaptedCursor, get_db_conn
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -350,6 +353,74 @@ def register_adapter(adapter: ProviderAdapter) -> None:
 # ── DB bootstrap ───────────────────────────────────────────────────────────────
 
 
+_DDL_STATEMENTS: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS da_agents (
+        agent_id          TEXT PRIMARY KEY,
+        tenant_id         TEXT NOT NULL,
+        name              TEXT NOT NULL,
+        provider          TEXT NOT NULL,
+        model             TEXT,
+        endpoint_url      TEXT,
+        tools_json        TEXT,
+        permissions_json  TEXT,
+        owner_id          TEXT,
+        external_id       TEXT,
+        status            TEXT NOT NULL DEFAULT 'provisioned',
+        discovery_method  TEXT NOT NULL DEFAULT 'registered',
+        registered_at     TEXT NOT NULL,
+        last_active_at    TEXT,
+        metadata_json     TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_da_agents_tenant ON da_agents(tenant_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_da_agents_external ON da_agents(tenant_id, provider, external_id)",
+    """
+    CREATE TABLE IF NOT EXISTS da_lifecycle_events (
+        event_id       TEXT PRIMARY KEY,
+        agent_id       TEXT NOT NULL,
+        tenant_id      TEXT NOT NULL,
+        from_status    TEXT NOT NULL,
+        to_status      TEXT NOT NULL,
+        actor_id       TEXT NOT NULL,
+        reason         TEXT,
+        approved_by    TEXT,
+        approved_at    TEXT,
+        created_at     TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_da_lifecycle_agent ON da_lifecycle_events(agent_id, created_at DESC)",
+    """
+    CREATE TABLE IF NOT EXISTS da_scan_runs (
+        scan_id        TEXT PRIMARY KEY,
+        tenant_id      TEXT NOT NULL,
+        provider       TEXT NOT NULL,
+        started_at     TEXT NOT NULL,
+        completed_at   TEXT,
+        agents_found   INTEGER NOT NULL DEFAULT 0,
+        new_agents     INTEGER NOT NULL DEFAULT 0,
+        shadow_agents  INTEGER NOT NULL DEFAULT 0,
+        run_status     TEXT NOT NULL DEFAULT 'running',
+        error_message  TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_da_scan_tenant ON da_scan_runs(tenant_id, started_at DESC)",
+    """
+    CREATE TABLE IF NOT EXISTS da_shadow_alerts (
+        alert_id          TEXT PRIMARY KEY,
+        tenant_id         TEXT NOT NULL,
+        agent_id          TEXT NOT NULL,
+        reason            TEXT NOT NULL,
+        detected_at       TEXT NOT NULL,
+        acknowledged      INTEGER NOT NULL DEFAULT 0,
+        acknowledged_by   TEXT,
+        acknowledged_at   TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_da_shadow_tenant ON da_shadow_alerts(tenant_id, acknowledged)",
+)
+
+
 def init_db(db_path: str = _DB_PATH) -> None:
     global _db_initialized
     if _db_initialized:
@@ -357,100 +428,15 @@ def init_db(db_path: str = _DB_PATH) -> None:
     with _lock:
         if _db_initialized:
             return
-        os.makedirs(
-            os.path.dirname(db_path) if os.path.dirname(db_path) else ".",
-            exist_ok=True,
-        )
-        with sqlite3.connect(db_path) as conn:
-            conn.executescript(
-                """
-                PRAGMA journal_mode=WAL;
-
-                -- ── Agent registry ────────────────────────────────────────
-                CREATE TABLE IF NOT EXISTS da_agents (
-                    agent_id          TEXT PRIMARY KEY,
-                    tenant_id         TEXT NOT NULL,
-                    name              TEXT NOT NULL,
-                    provider          TEXT NOT NULL,
-                    model             TEXT,
-                    endpoint_url      TEXT,
-                    tools_json        TEXT,
-                    permissions_json  TEXT,
-                    owner_id          TEXT,
-                    external_id       TEXT,
-                    status            TEXT NOT NULL DEFAULT 'provisioned',
-                    discovery_method  TEXT NOT NULL DEFAULT 'registered',
-                    registered_at     TEXT NOT NULL,
-                    last_active_at    TEXT,
-                    metadata_json     TEXT
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_da_agents_tenant
-                    ON da_agents(tenant_id, status);
-
-                CREATE INDEX IF NOT EXISTS idx_da_agents_external
-                    ON da_agents(tenant_id, provider, external_id);
-
-                -- ── Lifecycle event log ───────────────────────────────────
-                CREATE TABLE IF NOT EXISTS da_lifecycle_events (
-                    event_id       TEXT PRIMARY KEY,
-                    agent_id       TEXT NOT NULL,
-                    tenant_id      TEXT NOT NULL,
-                    from_status    TEXT NOT NULL,
-                    to_status      TEXT NOT NULL,
-                    actor_id       TEXT NOT NULL,
-                    reason         TEXT,
-                    approved_by    TEXT,
-                    approved_at    TEXT,
-                    created_at     TEXT NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_da_lifecycle_agent
-                    ON da_lifecycle_events(agent_id, created_at DESC);
-
-                -- ── Scan runs ─────────────────────────────────────────────
-                CREATE TABLE IF NOT EXISTS da_scan_runs (
-                    scan_id        TEXT PRIMARY KEY,
-                    tenant_id      TEXT NOT NULL,
-                    provider       TEXT NOT NULL,
-                    started_at     TEXT NOT NULL,
-                    completed_at   TEXT,
-                    agents_found   INTEGER NOT NULL DEFAULT 0,
-                    new_agents     INTEGER NOT NULL DEFAULT 0,
-                    shadow_agents  INTEGER NOT NULL DEFAULT 0,
-                    run_status     TEXT NOT NULL DEFAULT 'running',
-                    error_message  TEXT
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_da_scan_tenant
-                    ON da_scan_runs(tenant_id, started_at DESC);
-
-                -- ── Shadow agent alerts ───────────────────────────────────
-                CREATE TABLE IF NOT EXISTS da_shadow_alerts (
-                    alert_id          TEXT PRIMARY KEY,
-                    tenant_id         TEXT NOT NULL,
-                    agent_id          TEXT NOT NULL,
-                    reason            TEXT NOT NULL,
-                    detected_at       TEXT NOT NULL,
-                    acknowledged      INTEGER NOT NULL DEFAULT 0,
-                    acknowledged_by   TEXT,
-                    acknowledged_at   TEXT
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_da_shadow_tenant
-                    ON da_shadow_alerts(tenant_id, acknowledged);
-                """
-            )
+        run_ddl(_DDL_STATEMENTS, db_path)
         _db_initialized = True
 
 
 @contextmanager
 def _cursor(db_path: str = _DB_PATH):
-    with sqlite3.connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        yield conn.cursor()
-        conn.commit()
+    """Yield a backend-portable AdaptedCursor (SQLite or Postgres)."""
+    with get_db_conn(db_path=db_path) as conn:
+        yield AdaptedCursor(conn.cursor())
 
 
 # ── Agent Registration ─────────────────────────────────────────────────────────

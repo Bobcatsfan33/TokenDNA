@@ -85,7 +85,9 @@ def _parse_iso(s: str) -> datetime:
 
 def _secret() -> bytes:
     """HMAC key for receipt signatures. Override in production via env."""
-    return os.getenv(
+    from modules.security.secret_gate import secret_value
+
+    return secret_value(
         "TOKENDNA_DELEGATION_SECRET",
         "dev-delegation-secret-do-not-use-in-prod",
     ).encode("utf-8")

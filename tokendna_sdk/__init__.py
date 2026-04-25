@@ -45,7 +45,13 @@ from .config import (
 from .client import Client, OfflineBufferClient
 from .decorators import identified, tool, get_agent_metadata
 
+# Stamped at release time. Must stay in sync with the [project] version field
+# in pyproject.toml at the repository root — see docs/RELEASE.md for the
+# release procedure that updates both.
+__version__ = "0.1.0"
+
 __all__ = [
+    "__version__",
     "SdkConfig",
     "Client",
     "OfflineBufferClient",

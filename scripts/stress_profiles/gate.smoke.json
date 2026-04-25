@@ -1,0 +1,9 @@
+{
+  "max_error_pct": 1.0,
+  "max_p95_ms": {
+    "/healthz": 50,
+    "/readyz": 100,
+    "/api/uis/spec": 250,
+    "/scim/v2/ServiceProviderConfig": 100
+  }
+}

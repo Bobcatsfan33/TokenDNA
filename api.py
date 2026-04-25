@@ -210,11 +210,47 @@ app.add_middleware(
 )
 
 
+# Prometheus latency / count middleware. Records every served request,
+# falls back to a no-op when prometheus_client is not installed.
+@app.middleware("http")
+async def _metrics_middleware(request, call_next):
+    from time import perf_counter
+    from modules.observability.metrics import record_http_request
+
+    start = perf_counter()
+    status = 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        return response
+    finally:
+        # Use the matched route template when available so cardinality stays
+        # bounded; otherwise fall back to the raw path.
+        route = getattr(getattr(request, "scope", {}).get("route", None), "path", None) or request.url.path
+        record_http_request(request.method, route, status, perf_counter() - start)
+
+
 async def _startup_checks() -> None:
     if DEV_MODE:
         logger.warning("DEV_MODE=true — JWT auth disabled. Not for production.")
     if not OIDC_ISSUER and not DEV_MODE:
         logger.warning("OIDC_ISSUER not set — authenticated endpoints will 401.")
+
+    # Production HMAC secret gate — fail fast if any required secret is missing
+    # or set to a published dev default. No-op in non-prod.
+    from modules.security.secret_gate import assert_production_secrets, is_production
+    assert_production_secrets()
+    if is_production():
+        logger.info("Production secret gate passed ✓")
+
+    # Observability — opt-in via env vars; no-ops when packages missing.
+    try:
+        from modules.observability.tracing import init_tracing
+        from modules.observability.error_reporting import init_error_reporting
+        init_tracing(app)
+        init_error_reporting()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("observability init partial failure: %s", exc)
 
     # FIPS 140-2 enforcement (SC-13)
     il_env = os.getenv("ENVIRONMENT", "dev").lower()
@@ -340,6 +376,39 @@ async def health():
         "clickhouse": clickhouse_client.is_available(),
         "dev_mode":   DEV_MODE,
     }
+
+
+@app.get("/healthz")
+async def healthz():
+    """Kubernetes liveness probe — process is up and serving."""
+    return {"status": "ok"}
+
+
+@app.get("/readyz")
+async def readyz():
+    """Kubernetes readiness probe — refuse traffic if a dependency is down."""
+    from modules.identity.cache_redis import is_available as redis_ok
+    redis_state = redis_ok()
+    ch_state = clickhouse_client.is_available()
+    ready = redis_state and ch_state
+    body = {
+        "status": "ready" if ready else "degraded",
+        "redis": redis_state,
+        "clickhouse": ch_state,
+        "dev_mode": DEV_MODE,
+    }
+    if not ready:
+        return JSONResponse(status_code=503, content=body)
+    return body
+
+
+@app.get("/metrics")
+async def metrics_endpoint():
+    """Prometheus exposition endpoint."""
+    from fastapi.responses import Response
+    from modules.observability.metrics import render_metrics
+    body, content_type = render_metrics()
+    return Response(content=body, media_type=content_type)
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
