@@ -113,6 +113,11 @@ def sdk_attest_agent(**kwargs):
         kwargs["owner_org"] = kwargs.pop("tenant_name")
     return sdk_create_attestation(**kwargs)
 from modules.product import metering as feature_metering
+from modules.product.commercial_tiers import (
+    list_features as list_commercial_features,
+    require_feature,
+    tier_for_plan,
+)
 from modules.product.feature_gates import PlanTier, evaluate_feature_access, list_feature_matrix
 from modules.storage import db_backend
 from modules.identity.uis_narrative import enrich_event as uis_enrich_event
@@ -255,6 +260,10 @@ async def _startup_checks() -> None:
     decision_audit.init_db()
     trust_federation.init_db()
     feature_metering.init_db()
+    from modules.product import threat_sharing as _ts_init  # noqa: PLC0415
+    _ts_init.init_db()
+    from modules.identity import delegation_receipt as _dr_init  # noqa: PLC0415
+    _dr_init.init_db()
 
     from modules.identity.cache_redis import is_available as redis_ok
     logger.info("Redis: %s", "connected" if redis_ok() else "UNREACHABLE")
@@ -5610,3 +5619,270 @@ async def api_ce_audit_export(
     return compliance_engine.generate_audit_export(
         tenant.tenant_id, agent_id, framework_id,
     )
+
+
+# ── Commercial Tier Entitlements ──────────────────────────────────────────────
+# Ungated — community tenants need to see what they're locked out of.
+
+@app.get("/api/product/entitlements")
+async def api_product_entitlements(
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Return the commercial-tier feature matrix for the current tenant."""
+    return {
+        "tenant_id": tenant.tenant_id,
+        "tenant_tier": tier_for_plan(tenant.plan).value,
+        "features": list_commercial_features(tenant.plan),
+        "upgrade_url": "/billing/upgrade",
+    }
+
+
+# ── Threat Sharing Network ────────────────────────────────────────────────────
+# Cross-tenant threat-intel sharing built on top of intent_correlation.
+# Gated behind ent.intent_correlation since the network is an extension of
+# that feature.
+
+@app.post("/api/threat-sharing/opt-in")
+async def api_threat_sharing_opt_in(
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Opt the current tenant into the threat-sharing network."""
+    from modules.product import threat_sharing  # noqa: PLC0415
+    return threat_sharing.opt_in(tenant.tenant_id)
+
+
+@app.post("/api/threat-sharing/opt-out")
+async def api_threat_sharing_opt_out(
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Opt the current tenant out. Past propagations are retained."""
+    from modules.product import threat_sharing  # noqa: PLC0415
+    return threat_sharing.opt_out(tenant.tenant_id)
+
+
+@app.get("/api/threat-sharing/status")
+async def api_threat_sharing_status(
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Opt-in status + counters for the current tenant."""
+    from modules.product import threat_sharing  # noqa: PLC0415
+    return threat_sharing.get_status(tenant.tenant_id)
+
+
+@app.post("/api/threat-sharing/publish/{playbook_id}")
+async def api_threat_sharing_publish(
+    playbook_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Anonymize and publish one of the tenant's custom playbooks."""
+    from modules.product import threat_sharing  # noqa: PLC0415
+    try:
+        return threat_sharing.publish_playbook(tenant.tenant_id, playbook_id)
+    except ValueError as exc:
+        reason = str(exc)
+        if reason == "not_opted_in":
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "not_opted_in",
+                        "message": "Tenant must opt in to the threat-sharing network before publishing."},
+            ) from exc
+        if reason == "not_found":
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "playbook_not_found",
+                        "message": f"Playbook {playbook_id!r} not found or not owned by this tenant."},
+            ) from exc
+        if reason == "builtin_blocked":
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "builtin_not_publishable",
+                        "message": "Built-in playbooks are global; only tenant-owned custom playbooks can be published."},
+            ) from exc
+        raise
+
+
+@app.post("/api/threat-sharing/sync")
+async def api_threat_sharing_sync(
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Pull every new network playbook the tenant has not yet received."""
+    from modules.product import threat_sharing  # noqa: PLC0415
+    added = threat_sharing.sync_network_playbooks(tenant.tenant_id)
+    return {
+        "tenant_id": tenant.tenant_id,
+        "added": added,
+        "opted_in": threat_sharing.is_opted_in(tenant.tenant_id),
+    }
+
+
+@app.get("/api/threat-sharing/network")
+async def api_threat_sharing_network(
+    limit: int = 100,
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Browse the anonymized network catalog."""
+    from modules.product import threat_sharing  # noqa: PLC0415
+    playbooks = threat_sharing.list_network_playbooks(limit=limit)
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(playbooks),
+        "playbooks": playbooks,
+    }
+
+
+# ── Delegation Receipts ───────────────────────────────────────────────────────
+# Cryptographic paper trail for agent delegation chains. Gated behind
+# ent.enforcement_plane — receipts are an authorization-enforcement primitive.
+
+def _delegation_error_to_http(exc: Exception) -> HTTPException:
+    """Translate DelegationError reason codes to structured 4xx responses."""
+    code_map = {
+        "scope_must_be_list_of_strings":      400,
+        "expires_in_seconds_must_be_positive": 400,
+        "root_delegator_must_be_human":       400,
+        "parent_not_found":                   404,
+        "parent_cross_tenant":                403,
+        "parent_revoked":                     409,
+        "parent_expired":                     409,
+        "delegator_not_parent_delegatee":     403,
+        "scope_exceeds_parent":               403,
+        "not_found":                          404,
+        "cross_tenant":                       403,
+    }
+    reason = str(exc)
+    return HTTPException(
+        status_code=code_map.get(reason, 400),
+        detail={"error": reason, "message": reason.replace("_", " ")},
+    )
+
+
+@app.post("/api/delegation/receipt")
+async def api_delegation_issue(
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    """Issue a signed delegation receipt."""
+    from modules.identity import delegation_receipt  # noqa: PLC0415
+    delegator_id = str(body.get("delegator_id") or "").strip()
+    delegatee_id = str(body.get("delegatee_id") or "").strip()
+    scope = body.get("scope")
+    expires_in = body.get("expires_in_seconds")
+    parent = body.get("parent_receipt_id")
+    ceiling = body.get("ceiling")
+    if not delegator_id or not delegatee_id:
+        raise HTTPException(status_code=400,
+                            detail="'delegator_id' and 'delegatee_id' are required")
+    if not isinstance(scope, list):
+        raise HTTPException(status_code=400, detail="'scope' must be a list")
+    try:
+        expires_in = int(expires_in)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400,
+                            detail="'expires_in_seconds' must be an integer") from None
+    try:
+        receipt = delegation_receipt.issue_receipt(
+            tenant_id=tenant.tenant_id,
+            delegator_id=delegator_id,
+            delegatee_id=delegatee_id,
+            scope=scope,
+            expires_in_seconds=expires_in,
+            parent_receipt_id=parent or None,
+            ceiling=ceiling if isinstance(ceiling, dict) else None,
+        )
+        return receipt.as_dict()
+    except delegation_receipt.DelegationError as exc:
+        raise _delegation_error_to_http(exc) from exc
+
+
+@app.get("/api/delegation/receipt/{receipt_id}")
+async def api_delegation_get(
+    receipt_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import delegation_receipt  # noqa: PLC0415
+    receipt = delegation_receipt.get_receipt(receipt_id, tenant_id=tenant.tenant_id)
+    if not receipt:
+        raise HTTPException(status_code=404, detail={"error": "not_found"})
+    return receipt.as_dict()
+
+
+@app.get("/api/delegation/receipt/{receipt_id}/verify")
+async def api_delegation_verify(
+    receipt_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import delegation_receipt  # noqa: PLC0415
+    return delegation_receipt.verify_receipt(
+        receipt_id, tenant_id=tenant.tenant_id
+    ).as_dict()
+
+
+@app.get("/api/delegation/chain/{receipt_id}")
+async def api_delegation_chain(
+    receipt_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import delegation_receipt  # noqa: PLC0415
+    chain = delegation_receipt.get_chain(receipt_id, tenant_id=tenant.tenant_id)
+    if not chain:
+        raise HTTPException(status_code=404, detail={"error": "not_found"})
+    return {
+        "receipt_id": receipt_id,
+        "depth": chain[-1].depth,
+        "human_principal_id": chain[-1].human_principal_id,
+        "chain": [r.as_dict() for r in chain],
+    }
+
+
+@app.get("/api/delegation/receipts/{agent_id}")
+async def api_delegation_receipts_for_agent(
+    agent_id: str,
+    include_revoked: bool = False,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import delegation_receipt  # noqa: PLC0415
+    receipts = delegation_receipt.get_receipts_for_agent(
+        tenant_id=tenant.tenant_id,
+        agent_id=agent_id,
+        include_revoked=include_revoked,
+    )
+    return {
+        "tenant_id": tenant.tenant_id,
+        "agent_id": agent_id,
+        "count": len(receipts),
+        "receipts": [r.as_dict() for r in receipts],
+    }
+
+
+@app.post("/api/delegation/receipt/{receipt_id}/revoke")
+async def api_delegation_revoke(
+    receipt_id: str,
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import delegation_receipt  # noqa: PLC0415
+    revoked_by = str(body.get("revoked_by") or "").strip()
+    if not revoked_by:
+        raise HTTPException(status_code=400, detail="'revoked_by' is required")
+    cascade = bool(body.get("cascade", True))
+    try:
+        return delegation_receipt.revoke_receipt(
+            receipt_id=receipt_id,
+            revoked_by=revoked_by,
+            cascade=cascade,
+            tenant_id=tenant.tenant_id,
+        )
+    except delegation_receipt.DelegationError as exc:
+        raise _delegation_error_to_http(exc) from exc
+
+
+@app.get("/api/delegation/chain/{receipt_id}/report")
+async def api_delegation_chain_report(
+    receipt_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import delegation_receipt  # noqa: PLC0415
+    report = delegation_receipt.export_chain_report(receipt_id, tenant_id=tenant.tenant_id)
+    if not report.get("found"):
+        raise HTTPException(status_code=404, detail=report)
+    return report
