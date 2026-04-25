@@ -262,6 +262,8 @@ async def _startup_checks() -> None:
     feature_metering.init_db()
     from modules.product import threat_sharing as _ts_init  # noqa: PLC0415
     _ts_init.init_db()
+    from modules.product import threat_sharing_flywheel as _fw_init  # noqa: PLC0415
+    _fw_init.init_db()
     from modules.identity import delegation_receipt as _dr_init  # noqa: PLC0415
     _dr_init.init_db()
 
@@ -5886,3 +5888,125 @@ async def api_delegation_chain_report(
     if not report.get("found"):
         raise HTTPException(status_code=404, detail=report)
     return report
+
+
+# ── Threat Sharing Flywheel ───────────────────────────────────────────────────
+# Network-effect loops on top of /api/threat-sharing: hit recording, catalog
+# scoring, industry digest, auto-subscribe.
+
+@app.post("/api/threat-sharing/network/{network_playbook_id}/hit")
+async def api_flywheel_record_hit(
+    network_playbook_id: str,
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Log that a network-sourced playbook fired in this tenant."""
+    from modules.product import threat_sharing_flywheel as fw  # noqa: PLC0415
+    match_id = str(body.get("match_id") or "").strip() or None
+    hit = fw.record_network_hit(
+        tenant_id=tenant.tenant_id,
+        network_playbook_id=network_playbook_id,
+        match_id=match_id,
+    )
+    return {"recorded": hit is not None, "hit": hit}
+
+
+@app.post("/api/threat-sharing/hits/{hit_id}/confirm")
+async def api_flywheel_confirm_hit(
+    hit_id: str,
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Operator confirms a network-playbook hit was a true positive."""
+    from modules.product import threat_sharing_flywheel as fw  # noqa: PLC0415
+    confirmed_by = str(body.get("confirmed_by") or "").strip()
+    if not confirmed_by:
+        raise HTTPException(status_code=400, detail="'confirmed_by' is required")
+    ok = fw.confirm_hit(hit_id, confirmed_by)
+    if not ok:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "hit_not_found_or_already_confirmed"},
+        )
+    return {"confirmed": True, "hit_id": hit_id}
+
+
+@app.get("/api/threat-sharing/network/scored")
+async def api_flywheel_scored_catalog(
+    limit: int = 100,
+    min_confidence: float = 0.0,
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Browse the network catalog with derived confidence scores attached.
+    Sorted by confidence desc."""
+    from modules.product import threat_sharing_flywheel as fw  # noqa: PLC0415
+    items = fw.list_scored_catalog(limit=limit, min_confidence=min_confidence)
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(items),
+        "playbooks": items,
+    }
+
+
+@app.get("/api/threat-sharing/network/{network_playbook_id}/score")
+async def api_flywheel_playbook_score(
+    network_playbook_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    from modules.product import threat_sharing_flywheel as fw  # noqa: PLC0415
+    return fw.score_network_playbook(network_playbook_id).as_dict()
+
+
+@app.post("/api/threat-sharing/industry")
+async def api_flywheel_set_industry(
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Tag the tenant with an industry vertical for digest clustering."""
+    from modules.product import threat_sharing_flywheel as fw  # noqa: PLC0415
+    industry = str(body.get("industry") or "").strip()
+    try:
+        return fw.set_tenant_industry(tenant.tenant_id, industry)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": str(exc), "valid": sorted(fw.VALID_INDUSTRIES)},
+        ) from exc
+
+
+@app.get("/api/threat-sharing/industry/digest")
+async def api_flywheel_industry_digest(
+    days: int = 7,
+    limit: int = 25,
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Confirmed attacks against peers in the same industry vertical."""
+    from modules.product import threat_sharing_flywheel as fw  # noqa: PLC0415
+    return fw.get_industry_digest(tenant.tenant_id, days=days, limit=limit)
+
+
+@app.post("/api/threat-sharing/subscription")
+async def api_flywheel_set_subscription(
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Enable or disable auto-subscribe + tune the confidence threshold."""
+    from modules.product import threat_sharing_flywheel as fw  # noqa: PLC0415
+    enabled = bool(body.get("enabled"))
+    min_conf = body.get("min_confidence")
+    return fw.set_auto_subscribe(
+        tenant.tenant_id,
+        enabled=enabled,
+        min_confidence=min_conf if min_conf is not None else None,
+    )
+
+
+@app.post("/api/threat-sharing/auto-sync")
+async def api_flywheel_auto_sync(
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Honour auto-subscribe — pull every network playbook above the
+    tenant's confidence threshold. Falls through to plain sync if
+    auto-subscribe is off."""
+    from modules.product import threat_sharing_flywheel as fw  # noqa: PLC0415
+    return fw.auto_sync_subscribed(tenant.tenant_id)
