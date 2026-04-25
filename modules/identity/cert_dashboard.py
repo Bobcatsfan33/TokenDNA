@@ -49,6 +49,8 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from modules.storage.pg_connection import AdaptedCursor, get_db_conn
+
 log = logging.getLogger(__name__)
 
 _lock = threading.Lock()
@@ -70,27 +72,12 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
 @contextmanager
 def _cursor():
+    """Yield a backend-portable AdaptedCursor (SQLite or Postgres)."""
     with _lock:
-        conn = _get_conn()
-        try:
-            cur = conn.cursor()
-            yield cur
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        with get_db_conn(db_path=_db_path()) as conn:
+            yield AdaptedCursor(conn.cursor())
 
 
 # ── Schema ────────────────────────────────────────────────────────────────────
