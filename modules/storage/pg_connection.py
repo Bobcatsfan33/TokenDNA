@@ -86,6 +86,27 @@ _pg_pool: Any = None  # psycopg.pool.ConnectionPool | None
 _pg_pool_lock = threading.Lock()
 
 
+def _normalize_dsn_for_psycopg(dsn: str) -> str:
+    """
+    Strip a SQLAlchemy-style ``+driver`` suffix from a Postgres URL so it
+    parses as a libpq URI.  ``postgresql+psycopg://...`` → ``postgresql://...``.
+
+    SQLAlchemy / Alembic uses the ``dialect+driver`` scheme to pin the v3
+    psycopg driver (otherwise SQLAlchemy tries to import psycopg2).  libpq
+    does not understand the suffix and falls back to parsing the whole
+    string as ``key=value`` conninfo, which fails with
+    ``missing "=" after "..."``.  We accept the same env var everywhere
+    and normalise it here for psycopg's benefit.
+    """
+    scheme, sep, rest = dsn.partition("://")
+    if not sep:
+        return dsn
+    base, plus, _driver = scheme.partition("+")
+    if not plus or base not in {"postgresql", "postgres"}:
+        return dsn
+    return f"{base}://{rest}"
+
+
 def _get_pg_pool() -> Any:
     """Return (or initialise) the global psycopg connection pool."""
     global _pg_pool
@@ -111,7 +132,7 @@ def _get_pg_pool() -> Any:
             from psycopg_pool import ConnectionPool  # type: ignore[import]
 
             pool = ConnectionPool(
-                cfg.postgres_dsn,
+                _normalize_dsn_for_psycopg(cfg.postgres_dsn),
                 min_size=min_size,
                 max_size=max_size,
                 kwargs={"autocommit": False, "row_factory": psycopg.rows.dict_row},
