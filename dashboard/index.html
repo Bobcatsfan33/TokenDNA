@@ -236,6 +236,18 @@
   .upsell-btn { flex: 1; padding: 10px 14px; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); background: var(--surface2); color: var(--text); }
   .upsell-btn.primary { background: var(--accent); border-color: var(--accent); color: white; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
   .upsell-btn.primary:hover { background: var(--accent2); }
+
+  /* Generic page scaffold for the expansion-feature surfaces */
+  .page { padding: 24px 28px; max-width: 1280px; }
+  .page-title { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+  .page-sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  .page-section { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-top: 28px; margin-bottom: 12px; }
+  .data-table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .data-table thead { background: var(--surface2); }
+  .data-table th { text-align: left; padding: 10px 14px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); border-bottom: 1px solid var(--border); }
+  .data-table td { padding: 10px 14px; font-size: 13px; border-bottom: 1px solid var(--border); }
+  .data-table tr:last-child td { border-bottom: none; }
+  .data-table tr:hover { background: var(--surface2); }
 </style>
 </head>
 <body>
@@ -1579,6 +1591,173 @@ function ZTIXExchangePage() {
 }
 
 // ── App shell ─────────────────────────────────────────────────────────────────
+// ── Expansion-feature pages ──────────────────────────────────────────────────
+// Scaffolds for the four new operator surfaces shipped in the expansion
+// sprint. Each uses useApi against the live API and renders a bare-bones
+// list/table so operators can sanity-check that data is flowing. Visual
+// polish lives in a follow-up.
+
+function FlywheelDigestPage() {
+  const [digest] = useApi("/api/threat-sharing/industry/digest", { items: [] }, 30000);
+  const [scored] = useApi("/api/threat-sharing/network/scored?limit=20", { playbooks: [] }, 30000);
+  const items = digest?.items || [];
+  const playbooks = scored?.playbooks || [];
+  return h("div", { className:"page" },
+    h("h1", { className:"page-title" }, "Threat-Sharing Flywheel"),
+    h("div", { className:"page-sub" },
+      digest?.industry
+        ? `Industry: ${digest.industry} — confirmed attacks against peers in your vertical (${items.length})`
+        : "No industry tag set — POST /api/threat-sharing/industry to enable digest."),
+    h("table", { className:"data-table" },
+      h("thead", null, h("tr", null,
+        h("th", null, "Playbook"),
+        h("th", null, "Severity"),
+        h("th", null, "Peer tenants"),
+        h("th", null, "Confirmed"),
+        h("th", null, "Last hit"),
+      )),
+      h("tbody", null, items.map((it, i) =>
+        h("tr", { key:i },
+          h("td", null, it.playbook_name || it.network_playbook_id),
+          h("td", null, h(Badge, { sev: it.severity })),
+          h("td", null, it.peer_tenants),
+          h("td", null, it.confirmed_hits),
+          h("td", { className:"text-muted", style:{fontSize:11} }, it.last_hit_at || "—"),
+        ),
+      )),
+    ),
+    h("h2", { className:"page-section" }, "Top scored network playbooks"),
+    h("table", { className:"data-table" },
+      h("thead", null, h("tr", null,
+        h("th", null, "Playbook"),
+        h("th", null, "Confidence"),
+        h("th", null, "Confirmed"),
+        h("th", null, "Tenants"),
+      )),
+      h("tbody", null, playbooks.map((pb, i) =>
+        h("tr", { key:i },
+          h("td", null, pb.name || pb.network_playbook_id),
+          h("td", null, h(ConfBar, { v: pb.score?.confidence || 0 })),
+          h("td", null, pb.score?.confirmed_hits || 0),
+          h("td", null, pb.score?.distinct_tenants || 0),
+        ),
+      )),
+    ),
+  );
+}
+
+function CompliancePosturePage() {
+  const [statements] = useApi("/api/compliance/posture/statements", { statements: [] }, 30000);
+  const items = statements?.statements || [];
+  return h("div", { className:"page" },
+    h("h1", { className:"page-title" }, "Compliance Posture"),
+    h("div", { className:"page-sub" },
+      "Signed evidence packs per framework. Generate via POST /api/compliance/posture/{framework}/generate."),
+    h("table", { className:"data-table" },
+      h("thead", null, h("tr", null,
+        h("th", null, "Framework"),
+        h("th", null, "Period"),
+        h("th", null, "Pass"),
+        h("th", null, "Signed at"),
+        h("th", null, "Statement ID"),
+      )),
+      h("tbody", null, items.map((s, i) =>
+        h("tr", { key:i },
+          h("td", null, s.framework?.toUpperCase() || "—"),
+          h("td", { className:"text-muted", style:{fontSize:11} },
+            `${(s.period_start || "").slice(0,10)} → ${(s.period_end || "").slice(0,10)}`),
+          h("td", null, h("span", {
+            className:`badge ${s.overall_pass ? "low" : "critical"}`,
+          }, s.overall_pass ? "PASS" : "FAIL")),
+          h("td", { className:"text-muted", style:{fontSize:11} }, (s.signed_at || "").slice(0,19)),
+          h("td", { style:{fontFamily:"monospace",fontSize:11} }, s.statement_id),
+        ),
+      )),
+    ),
+  );
+}
+
+function HoneypotHitsPage() {
+  const [hits] = useApi("/api/honeypot/hits?acknowledged=false", { hits: [] }, 10000);
+  const [decoys] = useApi("/api/honeypot/decoys", { decoys: [] }, 30000);
+  const hitItems = hits?.hits || [];
+  const decoyItems = decoys?.decoys || [];
+  return h("div", { className:"page" },
+    h("h1", { className:"page-title" }, "Honeypot Mesh"),
+    h("div", { className:"page-sub" },
+      `Active deception. ${decoyItems.length} decoys deployed, ${hitItems.length} unacknowledged hits.`),
+    h("h2", { className:"page-section" }, "Open hits (critical)"),
+    h("table", { className:"data-table" },
+      h("thead", null, h("tr", null,
+        h("th", null, "Decoy"),
+        h("th", null, "Source IP"),
+        h("th", null, "User-Agent"),
+        h("th", null, "Detected"),
+        h("th", null, "Severity"),
+      )),
+      h("tbody", null, hitItems.length === 0
+        ? [h("tr", { key:"empty" }, h("td", { colSpan:5, className:"text-muted" }, "No open hits."))]
+        : hitItems.map((hit, i) =>
+            h("tr", { key:i },
+              h("td", { style:{fontFamily:"monospace",fontSize:11} }, hit.decoy_id),
+              h("td", null, hit.source_ip || "—"),
+              h("td", { className:"text-muted", style:{fontSize:11} }, hit.user_agent || "—"),
+              h("td", { className:"text-muted", style:{fontSize:11} }, (hit.detected_at || "").slice(0,19)),
+              h("td", null, h(Badge, { sev: hit.severity })),
+            ),
+          ),
+      ),
+    ),
+    h("h2", { className:"page-section" }, "Decoy inventory"),
+    h("table", { className:"data-table" },
+      h("thead", null, h("tr", null,
+        h("th", null, "Public ID"),
+        h("th", null, "Kind"),
+        h("th", null, "Hits"),
+        h("th", null, "Last hit"),
+      )),
+      h("tbody", null, decoyItems.map((d, i) =>
+        h("tr", { key:i },
+          h("td", { style:{fontFamily:"monospace",fontSize:11} }, d.public_id),
+          h("td", null, d.kind),
+          h("td", null, d.hits),
+          h("td", { className:"text-muted", style:{fontSize:11} }, d.last_hit_at || "—"),
+        ),
+      )),
+    ),
+  );
+}
+
+function WorkflowDriftPage() {
+  const [workflows] = useApi("/api/workflow", { workflows: [] }, 30000);
+  const items = workflows?.workflows || [];
+  return h("div", { className:"page" },
+    h("h1", { className:"page-title" }, "Workflow Attestation"),
+    h("div", { className:"page-sub" },
+      `${items.length} active canonical workflows. Replay each to verify chain integrity end-to-end.`),
+    h("table", { className:"data-table" },
+      h("thead", null, h("tr", null,
+        h("th", null, "Workflow"),
+        h("th", null, "Hops"),
+        h("th", null, "Status"),
+        h("th", null, "Created"),
+        h("th", null, "Merkle root"),
+      )),
+      h("tbody", null, items.map((w, i) =>
+        h("tr", { key:i },
+          h("td", null, w.name),
+          h("td", null, (w.hops || []).length),
+          h("td", null, h("span", {
+            className:`badge ${w.status === "active" ? "low" : "medium"}`,
+          }, w.status)),
+          h("td", { className:"text-muted", style:{fontSize:11} }, (w.created_at || "").slice(0,19)),
+          h("td", { style:{fontFamily:"monospace",fontSize:11} }, (w.merkle_root || "").slice(0,16) + "…"),
+        ),
+      )),
+    ),
+  );
+}
+
 // ── Upsell modal — listens for tokendna:upsell events from apiFetch ───────────
 function UpsellModal() {
   const [detail, setDetail] = useState(null);
@@ -1624,16 +1803,29 @@ function App() {
       { id:"intent",     label:"Intent Detection", icon:"🎯" },
       { id:"graph",      label:"Trust Graph",      icon:"🕸" },
     ]},
+    { section: "Network", items: [
+      { id:"flywheel",   label:"Flywheel Digest",  icon:"📡" },
+      { id:"workflows",  label:"Workflows",        icon:"🔗" },
+      { id:"honeypots",  label:"Honeypots",        icon:"🍯" },
+    ]},
     { section: "Identity", items: [
       { id:"identity",   label:"Identity Card",    icon:"🪪" },
       { id:"ztix",       label:"ZTIX Exchange",     icon:"🔄" },
+    ]},
+    { section: "Compliance", items: [
+      { id:"posture",    label:"Posture",          icon:"📜" },
     ]},
     { section: "System", items: [
       { id:"system",     label:"System Health",    icon:"⚙" },
     ]},
   ];
 
-  const pageMap = { overview: OverviewPage, blast: BlastRadiusPage, intent: IntentPage, graph: TrustGraphPage, identity: IdentityCardPage, ztix: ZTIXExchangePage, system: SystemPage };
+  const pageMap = {
+    overview: OverviewPage, blast: BlastRadiusPage, intent: IntentPage, graph: TrustGraphPage,
+    identity: IdentityCardPage, ztix: ZTIXExchangePage, system: SystemPage,
+    flywheel: FlywheelDigestPage, workflows: WorkflowDriftPage,
+    honeypots: HoneypotHitsPage, posture: CompliancePosturePage,
+  };
   const Page = pageMap[page] || OverviewPage;
   const currentLabel = navItems.flatMap(g=>g.items).find(n=>n.id===page)?.label || "Overview";
 
