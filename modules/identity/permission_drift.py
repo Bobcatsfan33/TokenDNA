@@ -54,6 +54,9 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
+
+from modules.storage.ddl_runner import run_ddl
+from modules.storage.pg_connection import AdaptedCursor, get_db_conn
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -147,73 +150,59 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
 @contextmanager
 def _cursor():
+    """Yield a backend-portable AdaptedCursor (SQLite or Postgres)."""
     with _lock:
-        conn = _get_conn()
-        try:
-            cur = conn.cursor()
-            yield cur
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        with get_db_conn(db_path=_DB_PATH) as conn:
+            yield AdaptedCursor(conn.cursor())
+
+
+_DDL_STATEMENTS: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS drift_observations (
+        observation_id      TEXT NOT NULL PRIMARY KEY,
+        tenant_id           TEXT NOT NULL,
+        agent_id            TEXT NOT NULL,
+        policy_id           TEXT NOT NULL,
+        scope               TEXT NOT NULL DEFAULT '[]',
+        scope_weight        REAL NOT NULL,
+        recorded_at         TEXT NOT NULL,
+        source_event        TEXT,
+        has_attestation     INTEGER NOT NULL DEFAULT 0,
+        changed_by          TEXT,
+        metadata            TEXT NOT NULL DEFAULT '{}'
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS drift_alerts (
+        drift_id            TEXT NOT NULL PRIMARY KEY,
+        tenant_id           TEXT NOT NULL,
+        agent_id            TEXT NOT NULL,
+        policy_id           TEXT NOT NULL,
+        baseline_weight     REAL NOT NULL,
+        current_weight      REAL NOT NULL,
+        growth_factor       REAL NOT NULL,
+        baseline_date       TEXT NOT NULL,
+        detected_at         TEXT NOT NULL,
+        status              TEXT NOT NULL DEFAULT 'open',
+        approved_by         TEXT,
+        approved_at         TEXT,
+        approval_note       TEXT,
+        observations_count  INTEGER NOT NULL DEFAULT 0,
+        unattested_changes  INTEGER NOT NULL DEFAULT 0,
+        metadata            TEXT NOT NULL DEFAULT '{}'
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_do_tenant_agent ON drift_observations(tenant_id, agent_id, policy_id, recorded_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_da_tenant_status ON drift_alerts(tenant_id, status, detected_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_da_agent ON drift_alerts(tenant_id, agent_id, policy_id)",
+)
 
 
 def init_db() -> None:
-    """Idempotently create permission drift tables."""
-    with _cursor() as cur:
-        cur.executescript("""
-        CREATE TABLE IF NOT EXISTS drift_observations (
-            observation_id      TEXT NOT NULL PRIMARY KEY,
-            tenant_id           TEXT NOT NULL,
-            agent_id            TEXT NOT NULL,
-            policy_id           TEXT NOT NULL,
-            scope               TEXT NOT NULL DEFAULT '[]',
-            scope_weight        REAL NOT NULL,
-            recorded_at         TEXT NOT NULL,
-            source_event        TEXT,
-            has_attestation     INTEGER NOT NULL DEFAULT 0,
-            changed_by          TEXT,
-            metadata            TEXT NOT NULL DEFAULT '{}'
-        );
-
-        CREATE TABLE IF NOT EXISTS drift_alerts (
-            drift_id            TEXT NOT NULL PRIMARY KEY,
-            tenant_id           TEXT NOT NULL,
-            agent_id            TEXT NOT NULL,
-            policy_id           TEXT NOT NULL,
-            baseline_weight     REAL NOT NULL,
-            current_weight      REAL NOT NULL,
-            growth_factor       REAL NOT NULL,
-            baseline_date       TEXT NOT NULL,
-            detected_at         TEXT NOT NULL,
-            status              TEXT NOT NULL DEFAULT 'open',
-            approved_by         TEXT,
-            approved_at         TEXT,
-            approval_note       TEXT,
-            observations_count  INTEGER NOT NULL DEFAULT 0,
-            unattested_changes  INTEGER NOT NULL DEFAULT 0,
-            metadata            TEXT NOT NULL DEFAULT '{}'
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_do_tenant_agent
-            ON drift_observations(tenant_id, agent_id, policy_id, recorded_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_da_tenant_status
-            ON drift_alerts(tenant_id, status, detected_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_da_agent
-            ON drift_alerts(tenant_id, agent_id, policy_id);
-        """)
+    """Idempotently create permission drift tables on SQLite or Postgres."""
+    run_ddl(_DDL_STATEMENTS, _DB_PATH)
 
 
 # ---------------------------------------------------------------------------
