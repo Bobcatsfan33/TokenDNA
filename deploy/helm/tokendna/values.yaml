@@ -1,0 +1,171 @@
+# TokenDNA — Helm chart values
+#
+# Production deployment notes:
+#   - All HMAC secrets (delegation/workflow/honeypot/posture) MUST be
+#     supplied via the existing-secret reference (see secrets.* below).
+#     The chart refuses to render if secrets.existingSecret is empty in
+#     a context where TOKENDNA_ENV=production.
+#   - Database URL must be a real Postgres DSN; the SQLite fallback is
+#     rejected at startup by modules/security/secret_gate.py.
+
+replicaCount: 3
+
+image:
+  repository: ghcr.io/bobcatsfan33/tokendna
+  tag: ""                        # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+env:
+  TOKENDNA_ENV: production
+  ENVIRONMENT: production
+  DEV_MODE: "false"
+  DATA_BACKEND: postgres
+
+# -----------------------------------------------------------------------------
+# Secrets
+# -----------------------------------------------------------------------------
+# The chart never inlines secret values. Provide an existingSecret name
+# that contains keys: TOKENDNA_DELEGATION_SECRET, TOKENDNA_WORKFLOW_SECRET,
+# TOKENDNA_HONEYPOT_SECRET, TOKENDNA_POSTURE_SECRET, DATABASE_URL,
+# AUDIT_HMAC_KEY, DNA_HMAC_KEY, ATTESTATION_CA_SECRET. Generate it once
+# from your secret manager (AWS Secrets Manager / Vault).
+secrets:
+  existingSecret: "tokendna-secrets"
+
+# -----------------------------------------------------------------------------
+# Postgres
+# -----------------------------------------------------------------------------
+# When postgres.subchart.enabled=true the bundled bitnami/postgresql sub-chart
+# is deployed (NOT recommended for production — use a managed Postgres).
+postgres:
+  subchart:
+    enabled: false
+  externalDsnSecretKey: DATABASE_URL  # key inside existingSecret holding the DSN
+
+# -----------------------------------------------------------------------------
+# Service / ingress
+# -----------------------------------------------------------------------------
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: tokendna.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# -----------------------------------------------------------------------------
+# Resource sizing
+# -----------------------------------------------------------------------------
+resources:
+  limits:
+    cpu: "2000m"
+    memory: 1Gi
+  requests:
+    cpu: "500m"
+    memory: 256Mi
+
+# -----------------------------------------------------------------------------
+# Autoscaling
+# -----------------------------------------------------------------------------
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 75
+
+# -----------------------------------------------------------------------------
+# Pod hardening
+# -----------------------------------------------------------------------------
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# -----------------------------------------------------------------------------
+# Health probes
+# -----------------------------------------------------------------------------
+probes:
+  liveness:
+    httpGet:
+      path: /healthz
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+  readiness:
+    httpGet:
+      path: /readyz
+      port: 8000
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 5
+  startup:
+    httpGet:
+      path: /healthz
+      port: 8000
+    failureThreshold: 30
+    periodSeconds: 5
+
+# -----------------------------------------------------------------------------
+# Observability
+# -----------------------------------------------------------------------------
+observability:
+  prometheus:
+    enabled: true
+    port: 8000
+    path: /metrics
+    scrapeInterval: 15s
+  otel:
+    enabled: false
+    endpoint: ""                # OTEL_EXPORTER_OTLP_ENDPOINT
+    sampleRate: 0.1
+  sentry:
+    enabled: false
+    dsnSecretKey: SENTRY_DSN    # key inside existingSecret
+
+# -----------------------------------------------------------------------------
+# Migrations
+# -----------------------------------------------------------------------------
+migrations:
+  enabled: true
+  # Pre-upgrade hook job that runs `alembic upgrade head` before the
+  # rolling deployment proceeds. Skipped on first install.
+  image:
+    repository: ghcr.io/bobcatsfan33/tokendna
+    tag: ""
+
+# -----------------------------------------------------------------------------
+# Network policy
+# -----------------------------------------------------------------------------
+networkPolicy:
+  enabled: true
+  # Allow ingress from the cluster ingress-nginx namespace + the
+  # observability scraper.
+  ingressNamespaces:
+    - ingress-nginx
+    - monitoring
+  egressCidrs:
+    - 0.0.0.0/0  # tighten in production; OTel + KMS endpoints typically need DNS + 443

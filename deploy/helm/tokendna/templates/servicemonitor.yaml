@@ -1,0 +1,17 @@
+{{- if .Values.observability.prometheus.enabled }}
+{{- if .Capabilities.APIVersions.Has "monitoring.coreos.com/v1" }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "tokendna.fullname" . }}
+  labels: {{- include "tokendna.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels: {{- include "tokendna.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: {{ .Values.observability.prometheus.path }}
+      interval: {{ .Values.observability.prometheus.scrapeInterval }}
+      scrapeTimeout: 10s
+{{- end }}
+{{- end }}
