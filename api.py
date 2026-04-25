@@ -268,6 +268,8 @@ async def _startup_checks() -> None:
     _dr_init.init_db()
     from modules.identity import workflow_attestation as _wf_init  # noqa: PLC0415
     _wf_init.init_db()
+    from modules.identity import compliance_posture as _cp_init  # noqa: PLC0415
+    _cp_init.init_db()
 
     from modules.identity.cache_redis import is_available as redis_ok
     logger.info("Redis: %s", "connected" if redis_ok() else "UNREACHABLE")
@@ -6146,3 +6148,106 @@ async def api_workflow_observations(
         "count": len(items),
         "observations": items,
     }
+
+
+# ── Compliance Posture & Incident Reconstruction ──────────────────────────────
+# Auditor-facing surfaces. compliance.py owns the framework definitions;
+# this is the operator's "prove our posture as of now" deliverable.
+
+@app.post("/api/compliance/posture/{framework}/generate")
+async def api_posture_generate(
+    framework: str,
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    """Generate a signed posture statement for the framework. Body may
+    include period_start / period_end ISO strings; both default to a
+    30-day lookback ending now."""
+    from modules.identity import compliance_posture as cp  # noqa: PLC0415
+    try:
+        out = cp.generate_posture_statement(
+            tenant_id=tenant.tenant_id,
+            framework=framework,
+            period_start=body.get("period_start"),
+            period_end=body.get("period_end"),
+        )
+        return out.as_dict()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": str(exc), "valid": sorted(cp.SUPPORTED_FRAMEWORKS)},
+        ) from exc
+
+
+@app.get("/api/compliance/posture/statements/{statement_id}")
+async def api_posture_get(
+    statement_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import compliance_posture as cp  # noqa: PLC0415
+    out = cp.get_posture_statement(statement_id, tenant_id=tenant.tenant_id)
+    if not out:
+        raise HTTPException(status_code=404, detail={"error": "not_found"})
+    return out
+
+
+@app.get("/api/compliance/posture/statements")
+async def api_posture_list(
+    framework: str | None = None,
+    limit: int = 50,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import compliance_posture as cp  # noqa: PLC0415
+    items = cp.list_posture_statements(
+        tenant.tenant_id,
+        framework=framework,
+        limit=limit,
+    )
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(items),
+        "statements": items,
+    }
+
+
+@app.get("/api/compliance/posture/statements/{statement_id}/verify")
+async def api_posture_verify(
+    statement_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import compliance_posture as cp  # noqa: PLC0415
+    return cp.verify_posture_statement(statement_id, tenant_id=tenant.tenant_id)
+
+
+@app.post("/api/compliance/incident/{agent_id}/reconstruct")
+async def api_incident_reconstruct(
+    agent_id: str,
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    """Build a signed incident dossier joining delegation receipts,
+    blast-radius simulations, intent matches, drift events, and
+    policy-guard violations for one agent within a time window."""
+    from modules.identity import compliance_posture as cp  # noqa: PLC0415
+    since = str(body.get("since") or "").strip()
+    until = body.get("until")
+    if not since:
+        raise HTTPException(status_code=400, detail="'since' is required (ISO timestamp)")
+    return cp.incident_reconstruction(
+        tenant_id=tenant.tenant_id,
+        agent_id=agent_id,
+        since=since,
+        until=until,
+    )
+
+
+@app.get("/api/compliance/incident/reports/{report_id}")
+async def api_incident_get(
+    report_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import compliance_posture as cp  # noqa: PLC0415
+    out = cp.get_incident_report(report_id, tenant_id=tenant.tenant_id)
+    if not out:
+        raise HTTPException(status_code=404, detail={"error": "not_found"})
+    return out
