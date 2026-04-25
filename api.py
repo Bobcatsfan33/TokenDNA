@@ -270,6 +270,8 @@ async def _startup_checks() -> None:
     _wf_init.init_db()
     from modules.identity import compliance_posture as _cp_init  # noqa: PLC0415
     _cp_init.init_db()
+    from modules.identity import honeypot_mesh as _hp_init  # noqa: PLC0415
+    _hp_init.init_db()
 
     from modules.identity.cache_redis import is_available as redis_ok
     logger.info("Redis: %s", "connected" if redis_ok() else "UNREACHABLE")
@@ -6251,3 +6253,137 @@ async def api_incident_get(
     if not out:
         raise HTTPException(status_code=404, detail={"error": "not_found"})
     return out
+
+
+# ── Honeypot Mesh / Active Deception ──────────────────────────────────────────
+# Active counterpart to deception_mesh: emit attestation-valid decoys,
+# harvest attacker TTPs. Gated behind ent.enforcement_plane.
+
+@app.post("/api/honeypot/decoy/synthetic-agent")
+async def api_honeypot_synthesize_agent(
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    """Mint a synthetic agent decoy. The returned secret_value is shown
+    once — caller seeds it on bait surfaces and discards."""
+    from modules.identity import honeypot_mesh as hp  # noqa: PLC0415
+    out = hp.synthesize_decoy_agent(
+        tenant_id=tenant.tenant_id,
+        name_hint=body.get("name_hint"),
+        metadata=body.get("metadata") if isinstance(body.get("metadata"), dict) else None,
+    )
+    return out.as_dict()
+
+
+@app.post("/api/honeypot/decoy/honeytoken")
+async def api_honeypot_seed_honeytoken(
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    """Seed a credential / certificate honeytoken. Body: {kind?, metadata?}."""
+    from modules.identity import honeypot_mesh as hp  # noqa: PLC0415
+    kind = str(body.get("kind") or "honeytoken_credential")
+    try:
+        out = hp.seed_honeytoken(
+            tenant_id=tenant.tenant_id,
+            kind=kind,
+            metadata=body.get("metadata") if isinstance(body.get("metadata"), dict) else None,
+        )
+        return out.as_dict()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
+
+
+@app.get("/api/honeypot/decoys")
+async def api_honeypot_list_decoys(
+    kind: str | None = None,
+    active_only: bool = True,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import honeypot_mesh as hp  # noqa: PLC0415
+    items = hp.get_decoy_inventory(tenant.tenant_id, kind=kind, active_only=active_only)
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(items),
+        "decoys": items,
+    }
+
+
+@app.post("/api/honeypot/decoys/{decoy_id}/deactivate")
+async def api_honeypot_deactivate(
+    decoy_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import honeypot_mesh as hp  # noqa: PLC0415
+    if not hp.deactivate_decoy(decoy_id, tenant_id=tenant.tenant_id):
+        raise HTTPException(status_code=404,
+                            detail={"error": "decoy_not_found_or_already_inactive"})
+    return {"decoy_id": decoy_id, "active": False}
+
+
+@app.post("/api/honeypot/hits/record")
+async def api_honeypot_record_hit(
+    body: dict,
+    request: Request,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    """
+    Caller (typically the edge gateway) reports that a decoy was touched.
+    Body: {decoy_id, source_ip?, user_agent?, request_path?, request_meta?}.
+    Falls back to request.client.host when source_ip is not supplied.
+    """
+    from modules.identity import honeypot_mesh as hp  # noqa: PLC0415
+    decoy_id = str(body.get("decoy_id") or "").strip()
+    if not decoy_id:
+        raise HTTPException(status_code=400, detail="'decoy_id' is required")
+    source_ip = body.get("source_ip") or (request.client.host if request.client else None)
+    out = hp.record_decoy_hit(
+        decoy_id,
+        source_ip=source_ip,
+        user_agent=body.get("user_agent") or request.headers.get("user-agent"),
+        request_path=body.get("request_path"),
+        request_meta=body.get("request_meta") if isinstance(body.get("request_meta"), dict) else None,
+        severity=str(body.get("severity") or "critical"),
+        tenant_id=tenant.tenant_id,
+    )
+    if not out:
+        raise HTTPException(status_code=404,
+                            detail={"error": "decoy_not_found_or_cross_tenant"})
+    return out
+
+
+@app.get("/api/honeypot/hits")
+async def api_honeypot_hits(
+    decoy_id: str | None = None,
+    acknowledged: bool = False,
+    limit: int = 200,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import honeypot_mesh as hp  # noqa: PLC0415
+    items = hp.get_decoy_hits(
+        tenant.tenant_id,
+        decoy_id=decoy_id,
+        acknowledged=acknowledged,
+        limit=limit,
+    )
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(items),
+        "hits": items,
+    }
+
+
+@app.post("/api/honeypot/hits/{hit_id}/acknowledge")
+async def api_honeypot_ack(
+    hit_id: str,
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import honeypot_mesh as hp  # noqa: PLC0415
+    ack_by = str(body.get("acknowledged_by") or "").strip()
+    if not ack_by:
+        raise HTTPException(status_code=400, detail="'acknowledged_by' is required")
+    if not hp.acknowledge_hit(hit_id, ack_by, tenant_id=tenant.tenant_id):
+        raise HTTPException(status_code=404,
+                            detail={"error": "hit_not_found_or_already_acknowledged"})
+    return {"acknowledged": True, "hit_id": hit_id}
