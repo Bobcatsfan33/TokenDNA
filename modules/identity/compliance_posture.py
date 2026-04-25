@@ -121,7 +121,9 @@ _CONTROL_MAP: dict[str, dict[str, Any]] = {
 
 
 def _secret() -> bytes:
-    return os.getenv(
+    from modules.security.secret_gate import secret_value
+
+    return secret_value(
         "TOKENDNA_POSTURE_SECRET",
         "dev-posture-secret-do-not-use-in-prod",
     ).encode("utf-8")

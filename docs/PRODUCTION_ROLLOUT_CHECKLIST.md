@@ -13,9 +13,20 @@ python3 scripts/preflight_prod.py
 This validates critical environment variables and recommended settings:
 
 - `ENVIRONMENT=production`
+- `TOKENDNA_ENV=production` (activates `modules/security/secret_gate.py`)
 - `DEV_MODE=false`
 - strong keys present (`ATTESTATION_CA_SECRET`, `AUDIT_HMAC_KEY`, `DNA_HMAC_KEY`)
+- module HMAC secrets present and not the published dev defaults
+  (`TOKENDNA_DELEGATION_SECRET`, `TOKENDNA_WORKFLOW_SECRET`,
+  `TOKENDNA_HONEYPOT_SECRET`, `TOKENDNA_POSTURE_SECRET`)
 - operator/runtime thresholds configured (`EDGE_DECISION_SLO_MS`, `RATE_LIMIT_PER_MINUTE`)
+- `DATA_BACKEND=postgres` and `DATABASE_URL` set — SQLite is dev-only.
+
+The FastAPI app calls `assert_production_secrets()` on startup. When
+`TOKENDNA_ENV=production`, missing/weak/dev-default secrets cause the
+process to refuse to start. See `docs/ops/backup-dr.md` for key
+provisioning and rotation, and `docs/ops/external-engagements.md` for
+the pen-test and compliance gates that follow this checklist.
 
 ## 2) Key rotation drill (staging first)
 
