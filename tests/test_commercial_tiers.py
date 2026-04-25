@@ -223,17 +223,26 @@ class TestRequireFeatureDependency:
 
 # Representative endpoint per gate. Mix of:
 #   (a) routes added by the salvage commit (threat-sharing, delegation),
-#   (b) the existing Phase 5 routes the gating PR (PR-B) wires.
+#   (b) the existing Phase 5 routes that PR-B wires with require_feature.
 # Status codes other than 403 mean the gate is open — body errors (400/422)
 # are fine, the gate did its job.
 PHASE5_ROUTES: list[tuple[str, str, dict | None]] = [
     # Threat-sharing — ent.intent_correlation
     ("POST", "/api/threat-sharing/opt-in",              None),
+    ("POST", "/api/threat-sharing/opt-out",             None),
     ("GET",  "/api/threat-sharing/status",              None),
+    ("POST", "/api/threat-sharing/publish/custom:abc",  None),
+    ("POST", "/api/threat-sharing/sync",                None),
+    ("GET",  "/api/threat-sharing/network",             None),
     # Delegation — ent.enforcement_plane
     ("POST", "/api/delegation/receipt",                 {"delegator_id": "human:a", "delegatee_id": "agt-x", "scope": ["*"], "expires_in_seconds": 60}),
+    ("GET",  "/api/delegation/receipt/rcpt:none",       None),
+    ("GET",  "/api/delegation/receipt/rcpt:none/verify", None),
     ("GET",  "/api/delegation/chain/rcpt:none",         None),
-    # Existing Phase 5 routes now gated:
+    ("GET",  "/api/delegation/receipts/agt-x",          None),
+    ("POST", "/api/delegation/receipt/rcpt:none/revoke", {"revoked_by": "x"}),
+    ("GET",  "/api/delegation/chain/rcpt:none/report",  None),
+    # Existing Phase 5 routes now gated by PR-B:
     # MCP gateway — ent.mcp_gateway
     ("POST", "/api/mcp/verify",                         {"manifest": {}, "expected_manifest_hash": "x"}),
     ("POST", "/api/mcp/inspect",                        {}),
