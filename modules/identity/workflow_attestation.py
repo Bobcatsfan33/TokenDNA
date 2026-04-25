@@ -72,7 +72,9 @@ VALID_HOP_FIELDS: frozenset[str] = frozenset({
 
 
 def _secret() -> bytes:
-    return os.getenv(
+    from modules.security.secret_gate import secret_value
+
+    return secret_value(
         "TOKENDNA_WORKFLOW_SECRET",
         "dev-workflow-secret-do-not-use-in-prod",
     ).encode("utf-8")

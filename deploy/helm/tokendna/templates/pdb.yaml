@@ -1,0 +1,9 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "tokendna.fullname" . }}
+  labels: {{- include "tokendna.labels" . | nindent 4 }}
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels: {{- include "tokendna.selectorLabels" . | nindent 6 }}

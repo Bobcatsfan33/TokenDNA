@@ -64,6 +64,9 @@ import threading
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
+
+from modules.storage.ddl_runner import run_ddl
+from modules.storage.pg_connection import AdaptedCursor, get_db_conn
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -87,6 +90,77 @@ _db_initialized = False
 # ── DB bootstrap ───────────────────────────────────────────────────────────────
 
 
+_DDL_STATEMENTS: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS bd_events (
+        event_id     TEXT PRIMARY KEY,
+        tenant_id    TEXT NOT NULL,
+        agent_id     TEXT NOT NULL,
+        event_type   TEXT NOT NULL,
+        tool_name    TEXT,
+        resource     TEXT,
+        action_type  TEXT,
+        params_hash  TEXT,
+        hour_of_day  INTEGER,
+        day_of_week  INTEGER,
+        created_at   TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_bd_events_agent ON bd_events(tenant_id, agent_id, created_at DESC)",
+    """
+    CREATE TABLE IF NOT EXISTS bd_baselines (
+        baseline_id   TEXT PRIMARY KEY,
+        tenant_id     TEXT NOT NULL,
+        agent_id      TEXT NOT NULL,
+        dimension     TEXT NOT NULL,
+        dim_value     TEXT NOT NULL,
+        sample_count  INTEGER NOT NULL DEFAULT 0,
+        mean          REAL NOT NULL DEFAULT 0.0,
+        m2            REAL NOT NULL DEFAULT 0.0,
+        last_updated  TEXT NOT NULL
+    )
+    """,
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_bd_baseline_key ON bd_baselines(tenant_id, agent_id, dimension, dim_value)",
+    """
+    CREATE TABLE IF NOT EXISTS bd_drift_scores (
+        score_id     TEXT PRIMARY KEY,
+        tenant_id    TEXT NOT NULL,
+        agent_id     TEXT NOT NULL,
+        drift_score  REAL NOT NULL,
+        factors_json TEXT,
+        computed_at  TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_bd_drift_agent ON bd_drift_scores(tenant_id, agent_id, computed_at DESC)",
+    """
+    CREATE TABLE IF NOT EXISTS bd_drift_alerts (
+        alert_id         TEXT PRIMARY KEY,
+        tenant_id        TEXT NOT NULL,
+        agent_id         TEXT NOT NULL,
+        drift_score      REAL NOT NULL,
+        threshold        REAL NOT NULL,
+        factors_json     TEXT,
+        detected_at      TEXT NOT NULL,
+        acknowledged     INTEGER NOT NULL DEFAULT 0,
+        acknowledged_by  TEXT,
+        acknowledged_at  TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_bd_alerts_tenant ON bd_drift_alerts(tenant_id, acknowledged)",
+    """
+    CREATE TABLE IF NOT EXISTS bd_snapshots (
+        snapshot_id   TEXT PRIMARY KEY,
+        tenant_id     TEXT NOT NULL,
+        agent_id      TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL,
+        trigger       TEXT NOT NULL DEFAULT 'manual',
+        snapped_at    TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_bd_snapshots_agent ON bd_snapshots(tenant_id, agent_id, snapped_at DESC)",
+)
+
+
 def init_db(db_path: str = _DB_PATH) -> None:
     global _db_initialized
     if _db_initialized:
@@ -94,105 +168,15 @@ def init_db(db_path: str = _DB_PATH) -> None:
     with _lock:
         if _db_initialized:
             return
-        os.makedirs(
-            os.path.dirname(db_path) if os.path.dirname(db_path) else ".",
-            exist_ok=True,
-        )
-        with sqlite3.connect(db_path) as conn:
-            conn.executescript(
-                """
-                PRAGMA journal_mode=WAL;
-
-                -- ── Behavioural event log ─────────────────────────────────
-                CREATE TABLE IF NOT EXISTS bd_events (
-                    event_id     TEXT PRIMARY KEY,
-                    tenant_id    TEXT NOT NULL,
-                    agent_id     TEXT NOT NULL,
-                    event_type   TEXT NOT NULL,   -- tool_call|resource_access|action
-                    tool_name    TEXT,
-                    resource     TEXT,
-                    action_type  TEXT,
-                    params_hash  TEXT,
-                    hour_of_day  INTEGER,
-                    day_of_week  INTEGER,
-                    created_at   TEXT NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_bd_events_agent
-                    ON bd_events(tenant_id, agent_id, created_at DESC);
-
-                -- ── Welford baselines ─────────────────────────────────────
-                -- One row per (tenant, agent, dimension, value).
-                -- dimension: tool_name | resource | action_type | hour_of_day
-                CREATE TABLE IF NOT EXISTS bd_baselines (
-                    baseline_id   TEXT PRIMARY KEY,
-                    tenant_id     TEXT NOT NULL,
-                    agent_id      TEXT NOT NULL,
-                    dimension     TEXT NOT NULL,
-                    dim_value     TEXT NOT NULL,
-                    sample_count  INTEGER NOT NULL DEFAULT 0,
-                    mean          REAL NOT NULL DEFAULT 0.0,
-                    m2            REAL NOT NULL DEFAULT 0.0,
-                    last_updated  TEXT NOT NULL
-                );
-
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_bd_baseline_key
-                    ON bd_baselines(tenant_id, agent_id, dimension, dim_value);
-
-                -- ── Drift scores ──────────────────────────────────────────
-                CREATE TABLE IF NOT EXISTS bd_drift_scores (
-                    score_id     TEXT PRIMARY KEY,
-                    tenant_id    TEXT NOT NULL,
-                    agent_id     TEXT NOT NULL,
-                    drift_score  REAL NOT NULL,
-                    factors_json TEXT,
-                    computed_at  TEXT NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_bd_drift_agent
-                    ON bd_drift_scores(tenant_id, agent_id, computed_at DESC);
-
-                -- ── Drift alerts ──────────────────────────────────────────
-                CREATE TABLE IF NOT EXISTS bd_drift_alerts (
-                    alert_id         TEXT PRIMARY KEY,
-                    tenant_id        TEXT NOT NULL,
-                    agent_id         TEXT NOT NULL,
-                    drift_score      REAL NOT NULL,
-                    threshold        REAL NOT NULL,
-                    factors_json     TEXT,
-                    detected_at      TEXT NOT NULL,
-                    acknowledged     INTEGER NOT NULL DEFAULT 0,
-                    acknowledged_by  TEXT,
-                    acknowledged_at  TEXT
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_bd_alerts_tenant
-                    ON bd_drift_alerts(tenant_id, acknowledged);
-
-                -- ── Behavioral snapshots ──────────────────────────────────
-                CREATE TABLE IF NOT EXISTS bd_snapshots (
-                    snapshot_id   TEXT PRIMARY KEY,
-                    tenant_id     TEXT NOT NULL,
-                    agent_id      TEXT NOT NULL,
-                    snapshot_json TEXT NOT NULL,
-                    trigger       TEXT NOT NULL DEFAULT 'manual',
-                    snapped_at    TEXT NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_bd_snapshots_agent
-                    ON bd_snapshots(tenant_id, agent_id, snapped_at DESC);
-                """
-            )
+        run_ddl(_DDL_STATEMENTS, db_path)
         _db_initialized = True
 
 
 @contextmanager
 def _cursor(db_path: str = _DB_PATH):
-    with sqlite3.connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        yield conn.cursor()
-        conn.commit()
+    """Yield a backend-portable AdaptedCursor (SQLite or Postgres)."""
+    with get_db_conn(db_path=db_path) as conn:
+        yield AdaptedCursor(conn.cursor())
 
 
 # ── Event Recording ────────────────────────────────────────────────────────────

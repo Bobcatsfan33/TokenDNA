@@ -71,6 +71,9 @@ import sqlite3
 import threading
 import uuid
 from contextlib import contextmanager
+
+from modules.storage.ddl_runner import run_ddl
+from modules.storage.pg_connection import AdaptedCursor, get_db_conn
 from datetime import datetime, timezone
 from typing import Any
 
@@ -99,6 +102,100 @@ _db_initialized = False
 # ── DB bootstrap ──────────────────────────────────────────────────────────────
 
 
+_DDL_STATEMENTS: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS gw_sessions (
+        session_id   TEXT PRIMARY KEY,
+        tenant_id    TEXT NOT NULL,
+        agent_id     TEXT NOT NULL,
+        server_id    TEXT NOT NULL,
+        mode         TEXT NOT NULL DEFAULT 'audit',
+        passport_id  TEXT,
+        status       TEXT NOT NULL DEFAULT 'open',
+        opened_at    TEXT NOT NULL,
+        closed_at    TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_gw_sess_tenant ON gw_sessions(tenant_id, status)",
+    """
+    CREATE TABLE IF NOT EXISTS gw_enforcements (
+        enforcement_id  TEXT PRIMARY KEY,
+        session_id      TEXT NOT NULL,
+        tenant_id       TEXT NOT NULL,
+        agent_id        TEXT NOT NULL,
+        server_id       TEXT NOT NULL,
+        tool_name       TEXT NOT NULL,
+        params_json     TEXT,
+        outcome         TEXT NOT NULL,
+        risk_score      REAL NOT NULL DEFAULT 0.0,
+        reasons_json    TEXT,
+        inspector_used  INTEGER NOT NULL DEFAULT 0,
+        created_at      TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_gw_enforce_tenant ON gw_enforcements(tenant_id, created_at DESC)",
+    """
+    CREATE TABLE IF NOT EXISTS gw_fingerprints (
+        fingerprint_id  TEXT PRIMARY KEY,
+        tenant_id       TEXT NOT NULL,
+        server_id       TEXT NOT NULL,
+        tool_name       TEXT NOT NULL,
+        manifest_json   TEXT NOT NULL,
+        hash            TEXT NOT NULL,
+        created_at      TEXT NOT NULL
+    )
+    """,
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_gw_fp_current ON gw_fingerprints(tenant_id, server_id, tool_name, hash)",
+    "CREATE INDEX IF NOT EXISTS idx_gw_fp_lookup ON gw_fingerprints(tenant_id, server_id, tool_name, created_at DESC)",
+    """
+    CREATE TABLE IF NOT EXISTS gw_fp_alerts (
+        alert_id      TEXT PRIMARY KEY,
+        tenant_id     TEXT NOT NULL,
+        server_id     TEXT NOT NULL,
+        tool_name     TEXT NOT NULL,
+        old_hash      TEXT NOT NULL,
+        new_hash      TEXT NOT NULL,
+        created_at    TEXT NOT NULL,
+        resolved      INTEGER NOT NULL DEFAULT 0,
+        resolved_by   TEXT,
+        resolved_at   TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_gw_fp_alerts_tenant ON gw_fp_alerts(tenant_id, resolved)",
+    """
+    CREATE TABLE IF NOT EXISTS gw_anomaly_baselines (
+        baseline_id   TEXT PRIMARY KEY,
+        tenant_id     TEXT NOT NULL,
+        agent_id      TEXT NOT NULL,
+        tool_name     TEXT NOT NULL,
+        sample_count  INTEGER NOT NULL DEFAULT 0,
+        mean          REAL NOT NULL DEFAULT 0.0,
+        m2            REAL NOT NULL DEFAULT 0.0,
+        last_updated  TEXT NOT NULL
+    )
+    """,
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_gw_baseline_key ON gw_anomaly_baselines(tenant_id, agent_id, tool_name)",
+    """
+    CREATE TABLE IF NOT EXISTS gw_anomaly_alerts (
+        alert_id           TEXT PRIMARY KEY,
+        tenant_id          TEXT NOT NULL,
+        agent_id           TEXT NOT NULL,
+        tool_name          TEXT NOT NULL,
+        session_id         TEXT,
+        expected_rate      REAL NOT NULL,
+        actual_rate        REAL NOT NULL,
+        z_score            REAL NOT NULL,
+        first_call         INTEGER NOT NULL DEFAULT 0,
+        created_at         TEXT NOT NULL,
+        acknowledged       INTEGER NOT NULL DEFAULT 0,
+        acknowledged_by    TEXT,
+        acknowledged_at    TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_gw_anomaly_tenant ON gw_anomaly_alerts(tenant_id, acknowledged)",
+)
+
+
 def init_db(db_path: str = _DB_PATH) -> None:
     global _db_initialized
     if _db_initialized:
@@ -106,128 +203,15 @@ def init_db(db_path: str = _DB_PATH) -> None:
     with _lock:
         if _db_initialized:
             return
-        os.makedirs(os.path.dirname(db_path) if os.path.dirname(db_path) else ".", exist_ok=True)
-        with sqlite3.connect(db_path) as conn:
-            conn.executescript(
-                """
-                PRAGMA journal_mode=WAL;
-
-                -- ── Sessions ──────────────────────────────────────────────
-                CREATE TABLE IF NOT EXISTS gw_sessions (
-                    session_id   TEXT PRIMARY KEY,
-                    tenant_id    TEXT NOT NULL,
-                    agent_id     TEXT NOT NULL,
-                    server_id    TEXT NOT NULL,
-                    mode         TEXT NOT NULL DEFAULT 'audit',   -- audit|flag|block
-                    passport_id  TEXT,
-                    status       TEXT NOT NULL DEFAULT 'open',    -- open|closed
-                    opened_at    TEXT NOT NULL,
-                    closed_at    TEXT
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_gw_sess_tenant
-                    ON gw_sessions(tenant_id, status);
-
-                -- ── Enforcement log ───────────────────────────────────────
-                CREATE TABLE IF NOT EXISTS gw_enforcements (
-                    enforcement_id  TEXT PRIMARY KEY,
-                    session_id      TEXT NOT NULL,
-                    tenant_id       TEXT NOT NULL,
-                    agent_id        TEXT NOT NULL,
-                    server_id       TEXT NOT NULL,
-                    tool_name       TEXT NOT NULL,
-                    params_json     TEXT,
-                    outcome         TEXT NOT NULL,   -- allow|flag|block
-                    risk_score      REAL NOT NULL DEFAULT 0.0,
-                    reasons_json    TEXT,
-                    inspector_used  INTEGER NOT NULL DEFAULT 0,
-                    created_at      TEXT NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_gw_enforce_tenant
-                    ON gw_enforcements(tenant_id, created_at DESC);
-
-                -- ── Tool fingerprints ─────────────────────────────────────
-                CREATE TABLE IF NOT EXISTS gw_fingerprints (
-                    fingerprint_id  TEXT PRIMARY KEY,
-                    tenant_id       TEXT NOT NULL,
-                    server_id       TEXT NOT NULL,
-                    tool_name       TEXT NOT NULL,
-                    manifest_json   TEXT NOT NULL,
-                    hash            TEXT NOT NULL,
-                    created_at      TEXT NOT NULL
-                );
-
-                -- Only one "current" fingerprint per (tenant, server, tool)
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_gw_fp_current
-                    ON gw_fingerprints(tenant_id, server_id, tool_name, hash);
-
-                CREATE INDEX IF NOT EXISTS idx_gw_fp_lookup
-                    ON gw_fingerprints(tenant_id, server_id, tool_name, created_at DESC);
-
-                -- ── Fingerprint drift alerts ───────────────────────────────
-                CREATE TABLE IF NOT EXISTS gw_fp_alerts (
-                    alert_id      TEXT PRIMARY KEY,
-                    tenant_id     TEXT NOT NULL,
-                    server_id     TEXT NOT NULL,
-                    tool_name     TEXT NOT NULL,
-                    old_hash      TEXT NOT NULL,
-                    new_hash      TEXT NOT NULL,
-                    created_at    TEXT NOT NULL,
-                    resolved      INTEGER NOT NULL DEFAULT 0,
-                    resolved_by   TEXT,
-                    resolved_at   TEXT
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_gw_fp_alerts_tenant
-                    ON gw_fp_alerts(tenant_id, resolved);
-
-                -- ── Anomaly baselines ─────────────────────────────────────
-                CREATE TABLE IF NOT EXISTS gw_anomaly_baselines (
-                    baseline_id   TEXT PRIMARY KEY,
-                    tenant_id     TEXT NOT NULL,
-                    agent_id      TEXT NOT NULL,
-                    tool_name     TEXT NOT NULL,
-                    sample_count  INTEGER NOT NULL DEFAULT 0,
-                    mean          REAL NOT NULL DEFAULT 0.0,
-                    m2            REAL NOT NULL DEFAULT 0.0,   -- Welford variance accumulator
-                    last_updated  TEXT NOT NULL
-                );
-
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_gw_baseline_key
-                    ON gw_anomaly_baselines(tenant_id, agent_id, tool_name);
-
-                -- ── Anomaly alerts ────────────────────────────────────────
-                CREATE TABLE IF NOT EXISTS gw_anomaly_alerts (
-                    alert_id           TEXT PRIMARY KEY,
-                    tenant_id          TEXT NOT NULL,
-                    agent_id           TEXT NOT NULL,
-                    tool_name          TEXT NOT NULL,
-                    session_id         TEXT,
-                    expected_rate      REAL NOT NULL,
-                    actual_rate        REAL NOT NULL,
-                    z_score            REAL NOT NULL,
-                    first_call         INTEGER NOT NULL DEFAULT 0,
-                    created_at         TEXT NOT NULL,
-                    acknowledged       INTEGER NOT NULL DEFAULT 0,
-                    acknowledged_by    TEXT,
-                    acknowledged_at    TEXT
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_gw_anomaly_tenant
-                    ON gw_anomaly_alerts(tenant_id, acknowledged);
-                """
-            )
+        run_ddl(_DDL_STATEMENTS, db_path)
         _db_initialized = True
 
 
 @contextmanager
 def _cursor(db_path: str = _DB_PATH):
-    with sqlite3.connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        yield conn.cursor()
-        conn.commit()
+    """Yield a backend-portable AdaptedCursor (SQLite or Postgres)."""
+    with get_db_conn(db_path=db_path) as conn:
+        yield AdaptedCursor(conn.cursor())
 
 
 # ── Sessions ───────────────────────────────────────────────────────────────────

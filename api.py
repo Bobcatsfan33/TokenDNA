@@ -236,6 +236,13 @@ async def _startup_checks() -> None:
     if not OIDC_ISSUER and not DEV_MODE:
         logger.warning("OIDC_ISSUER not set — authenticated endpoints will 401.")
 
+    # Production HMAC secret gate — fail fast if any required secret is missing
+    # or set to a published dev default. No-op in non-prod.
+    from modules.security.secret_gate import assert_production_secrets, is_production
+    assert_production_secrets()
+    if is_production():
+        logger.info("Production secret gate passed ✓")
+
     # Observability — opt-in via env vars; no-ops when packages missing.
     try:
         from modules.observability.tracing import init_tracing
