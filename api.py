@@ -264,6 +264,8 @@ async def _startup_checks() -> None:
     _ts_init.init_db()
     from modules.product import threat_sharing_flywheel as _fw_init  # noqa: PLC0415
     _fw_init.init_db()
+    from modules.product import staged_rollout as _sr_init  # noqa: PLC0415
+    _sr_init.init_db()
     from modules.identity import delegation_receipt as _dr_init  # noqa: PLC0415
     _dr_init.init_db()
     from modules.identity import workflow_attestation as _wf_init  # noqa: PLC0415
@@ -6387,3 +6389,91 @@ async def api_honeypot_ack(
         raise HTTPException(status_code=404,
                             detail={"error": "hit_not_found_or_already_acknowledged"})
     return {"acknowledged": True, "hit_id": hit_id}
+
+
+# ── Staged Rollout / Allowlist Admin ──────────────────────────────────────────
+# Per-tenant feature allowlists for design-partner / beta / staged-rollout
+# scenarios. Admin-only. require_feature() consults this transparently;
+# tier-based entitlement remains the default.
+
+@app.post("/api/admin/staged-rollout/grant")
+async def api_staged_grant(
+    body: dict,
+    tenant: TenantContext = Depends(require_role(Role.OWNER)),
+):
+    """Grant a tenant access to a feature outside its commercial tier.
+    Body: {tenant_id, feature_key, granted_by, reason?}."""
+    from modules.product import staged_rollout  # noqa: PLC0415
+    target = str(body.get("tenant_id") or "").strip()
+    feature = str(body.get("feature_key") or "").strip()
+    granted_by = str(body.get("granted_by") or "").strip()
+    if not target or not feature or not granted_by:
+        raise HTTPException(
+            status_code=400,
+            detail="'tenant_id', 'feature_key', and 'granted_by' are required",
+        )
+    try:
+        out = staged_rollout.grant_access(
+            tenant_id=target, feature_key=feature,
+            granted_by=granted_by, reason=str(body.get("reason") or ""),
+        )
+        return out.as_dict()
+    except staged_rollout.AllowlistError as exc:
+        reason = str(exc)
+        code = 404 if reason == "unknown_feature_key" else 409
+        raise HTTPException(status_code=code, detail={"error": reason}) from exc
+
+
+@app.post("/api/admin/staged-rollout/revoke")
+async def api_staged_revoke(
+    body: dict,
+    tenant: TenantContext = Depends(require_role(Role.OWNER)),
+):
+    """Revoke an active grant. Body: {tenant_id, feature_key, revoked_by, reason?}."""
+    from modules.product import staged_rollout  # noqa: PLC0415
+    target = str(body.get("tenant_id") or "").strip()
+    feature = str(body.get("feature_key") or "").strip()
+    revoked_by = str(body.get("revoked_by") or "").strip()
+    if not target or not feature or not revoked_by:
+        raise HTTPException(
+            status_code=400,
+            detail="'tenant_id', 'feature_key', and 'revoked_by' are required",
+        )
+    out = staged_rollout.revoke_access(
+        tenant_id=target, feature_key=feature,
+        revoked_by=revoked_by, reason=str(body.get("reason") or ""),
+    )
+    if not out.get("revoked"):
+        raise HTTPException(status_code=404, detail=out)
+    return out
+
+
+@app.get("/api/admin/staged-rollout/{tenant_id}")
+async def api_staged_list(
+    tenant_id: str,
+    include_revoked: bool = False,
+    tenant: TenantContext = Depends(require_role(Role.OWNER)),
+):
+    """List grants (active + optionally revoked) for one tenant."""
+    from modules.product import staged_rollout  # noqa: PLC0415
+    items = staged_rollout.list_grants(tenant_id, include_revoked=include_revoked)
+    return {
+        "tenant_id": tenant_id,
+        "count": len(items),
+        "grants": [g.as_dict() for g in items],
+    }
+
+
+@app.get("/api/admin/staged-rollout/feature/{feature_key}")
+async def api_staged_list_for_feature(
+    feature_key: str,
+    tenant: TenantContext = Depends(require_role(Role.OWNER)),
+):
+    """List every tenant currently allowlisted onto one feature."""
+    from modules.product import staged_rollout  # noqa: PLC0415
+    items = staged_rollout.list_active_grants_for_feature(feature_key)
+    return {
+        "feature_key": feature_key,
+        "count": len(items),
+        "grants": [g.as_dict() for g in items],
+    }

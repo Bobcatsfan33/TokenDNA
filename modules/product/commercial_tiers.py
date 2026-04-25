@@ -274,6 +274,15 @@ def require_feature(feature_key: str) -> Callable[..., TenantContext]:
         tenant: TenantContext = Depends(get_tenant),
     ) -> TenantContext:
         if _rank(tier_for_plan(tenant.plan)) < _rank(gate.min_tier):
+            # Staged-rollout override: a tenant may be allowlisted onto a
+            # feature without paying for the tier. Lookup is best-effort —
+            # if staged_rollout is unavailable, fall through to the 403.
+            try:
+                from modules.product import staged_rollout  # noqa: PLC0415
+                if staged_rollout.is_allowlisted(tenant.tenant_id, feature_key):
+                    return tenant
+            except Exception:  # noqa: BLE001
+                pass
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=forbidden_payload(
