@@ -71,6 +71,9 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
+from modules.storage.ddl_runner import run_ddl
+from modules.storage.pg_connection import AdaptedCursor, get_db_conn
+
 log = logging.getLogger(__name__)
 
 # ── Configuration ──────────────────────────────────────────────────────────────
@@ -282,6 +285,61 @@ TOKENDNA_NATIVE_CONTROLS = {
 # ── DB bootstrap ───────────────────────────────────────────────────────────────
 
 
+_DDL_STATEMENTS: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS ce_classifications (
+        classification_id  TEXT PRIMARY KEY,
+        tenant_id          TEXT NOT NULL,
+        agent_id           TEXT NOT NULL,
+        framework_id       TEXT NOT NULL,
+        risk_level         TEXT NOT NULL,
+        risk_score         REAL NOT NULL DEFAULT 0.0,
+        factors_json       TEXT,
+        classified_by      TEXT,
+        classified_at      TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_ce_class_agent ON ce_classifications(tenant_id, agent_id, framework_id, classified_at DESC)",
+    """
+    CREATE TABLE IF NOT EXISTS ce_assessments (
+        assessment_id   TEXT PRIMARY KEY,
+        tenant_id       TEXT NOT NULL,
+        agent_id        TEXT NOT NULL,
+        framework_id    TEXT NOT NULL,
+        score           REAL NOT NULL DEFAULT 0.0,
+        controls_met    TEXT NOT NULL DEFAULT '[]',
+        controls_gap    TEXT NOT NULL DEFAULT '[]',
+        assessed_at     TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_ce_assess_agent ON ce_assessments(tenant_id, agent_id, framework_id, assessed_at DESC)",
+    """
+    CREATE TABLE IF NOT EXISTS ce_policies (
+        mapping_id              TEXT PRIMARY KEY,
+        tenant_id               TEXT NOT NULL,
+        agent_id                TEXT NOT NULL,
+        framework_id            TEXT NOT NULL,
+        control_id              TEXT NOT NULL,
+        enforcement_policy_id   TEXT,
+        description             TEXT,
+        created_at              TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_ce_policies_agent ON ce_policies(tenant_id, agent_id)",
+    """
+    CREATE TABLE IF NOT EXISTS ce_audit_exports (
+        export_id      TEXT PRIMARY KEY,
+        tenant_id      TEXT NOT NULL,
+        agent_id       TEXT NOT NULL,
+        framework_id   TEXT,
+        content_json   TEXT NOT NULL,
+        generated_at   TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_ce_exports_agent ON ce_audit_exports(tenant_id, agent_id, generated_at DESC)",
+)
+
+
 def init_db(db_path: str = _DB_PATH) -> None:
     global _db_initialized
     if _db_initialized:
@@ -289,86 +347,15 @@ def init_db(db_path: str = _DB_PATH) -> None:
     with _lock:
         if _db_initialized:
             return
-        os.makedirs(
-            os.path.dirname(db_path) if os.path.dirname(db_path) else ".",
-            exist_ok=True,
-        )
-        with sqlite3.connect(db_path) as conn:
-            conn.executescript(
-                """
-                PRAGMA journal_mode=WAL;
-
-                -- ── Risk classifications ───────────────────────────────────
-                CREATE TABLE IF NOT EXISTS ce_classifications (
-                    classification_id  TEXT PRIMARY KEY,
-                    tenant_id          TEXT NOT NULL,
-                    agent_id           TEXT NOT NULL,
-                    framework_id       TEXT NOT NULL,
-                    risk_level         TEXT NOT NULL,
-                    risk_score         REAL NOT NULL DEFAULT 0.0,
-                    factors_json       TEXT,
-                    classified_by      TEXT,
-                    classified_at      TEXT NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_ce_class_agent
-                    ON ce_classifications(tenant_id, agent_id, framework_id, classified_at DESC);
-
-                -- ── Compliance assessments ────────────────────────────────
-                CREATE TABLE IF NOT EXISTS ce_assessments (
-                    assessment_id   TEXT PRIMARY KEY,
-                    tenant_id       TEXT NOT NULL,
-                    agent_id        TEXT NOT NULL,
-                    framework_id    TEXT NOT NULL,
-                    score           REAL NOT NULL DEFAULT 0.0,
-                    controls_met    TEXT NOT NULL DEFAULT '[]',
-                    controls_gap    TEXT NOT NULL DEFAULT '[]',
-                    assessed_at     TEXT NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_ce_assess_agent
-                    ON ce_assessments(tenant_id, agent_id, framework_id, assessed_at DESC);
-
-                -- ── Compliance policy mappings ────────────────────────────
-                -- Tracks enforcement_plane policies created for compliance
-                CREATE TABLE IF NOT EXISTS ce_policies (
-                    mapping_id              TEXT PRIMARY KEY,
-                    tenant_id               TEXT NOT NULL,
-                    agent_id                TEXT NOT NULL,
-                    framework_id            TEXT NOT NULL,
-                    control_id              TEXT NOT NULL,
-                    enforcement_policy_id   TEXT,
-                    description             TEXT,
-                    created_at              TEXT NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_ce_policies_agent
-                    ON ce_policies(tenant_id, agent_id);
-
-                -- ── Audit exports ─────────────────────────────────────────
-                CREATE TABLE IF NOT EXISTS ce_audit_exports (
-                    export_id      TEXT PRIMARY KEY,
-                    tenant_id      TEXT NOT NULL,
-                    agent_id       TEXT NOT NULL,
-                    framework_id   TEXT,
-                    content_json   TEXT NOT NULL,
-                    generated_at   TEXT NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_ce_exports_agent
-                    ON ce_audit_exports(tenant_id, agent_id, generated_at DESC);
-                """
-            )
+        run_ddl(_DDL_STATEMENTS, db_path)
         _db_initialized = True
 
 
 @contextmanager
 def _cursor(db_path: str = _DB_PATH):
-    with sqlite3.connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        yield conn.cursor()
-        conn.commit()
+    """Yield a backend-portable AdaptedCursor (SQLite or Postgres)."""
+    with get_db_conn(db_path=db_path) as conn:
+        yield AdaptedCursor(conn.cursor())
 
 
 # ── Framework catalog ──────────────────────────────────────────────────────────

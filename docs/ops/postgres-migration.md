@@ -61,18 +61,24 @@ The pool is sized via `TOKENDNA_PG_POOL_MIN` / `TOKENDNA_PG_POOL_MAX`
 | `modules/product/threat_sharing.py` | ✅ | |
 | `modules/product/threat_sharing_flywheel.py` | ✅ | |
 | `modules/product/staged_rollout.py` | ✅ | |
-| `modules/identity/policy_guard.py` | ✅ | this PR |
-| `modules/identity/agent_lifecycle.py` | ✅ | this PR |
-| `modules/identity/permission_drift.py` | ✅ | this PR |
-| `modules/identity/mcp_inspector.py` | ✅ | this PR |
-| `modules/identity/mcp_gateway.py` | ✅ | this PR |
-| `modules/identity/agent_discovery.py` | ✅ | this PR |
-| `modules/identity/enforcement_plane.py` | ✅ | this PR |
-| `modules/identity/cert_dashboard.py` | ⏳ | follow-up |
-| `modules/identity/policy_advisor.py` | ⏳ | follow-up |
-| `modules/identity/behavioral_dna.py` | ⏳ | follow-up |
-| `modules/identity/compliance_engine.py` | ⏳ | follow-up |
-| `modules/identity/attestation_store.py` | ⏳ | follow-up |
+| `modules/identity/policy_guard.py` | ✅ | PR-C |
+| `modules/identity/agent_lifecycle.py` | ✅ | PR-C |
+| `modules/identity/permission_drift.py` | ✅ | PR-C |
+| `modules/identity/mcp_inspector.py` | ✅ | PR-C |
+| `modules/identity/mcp_gateway.py` | ✅ | PR-C |
+| `modules/identity/agent_discovery.py` | ✅ | PR-C |
+| `modules/identity/enforcement_plane.py` | ✅ | PR-C |
+| `modules/identity/cert_dashboard.py` | ✅ | this PR |
+| `modules/identity/policy_advisor.py` | ✅ | this PR |
+| `modules/identity/behavioral_dna.py` | ✅ | this PR |
+| `modules/identity/compliance_engine.py` | ✅ | this PR |
+| `modules/identity/attestation_store.py` | ✅ | this PR |
+
+**As of this PR every TokenDNA module that owns its own schema is
+backend-portable through `get_db_conn()` + `AdaptedCursor`.** The PG
+runtime path can now be activated cluster-wide by setting
+`TOKENDNA_DB_BACKEND=postgres` and `TOKENDNA_PG_DSN` — no more
+sqlite-only modules to gate.
 
 ## Verification
 
