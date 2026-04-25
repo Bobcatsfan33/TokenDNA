@@ -38,6 +38,24 @@ These numbers assume the production gating in PR-A is enabled and
 `prometheus_client` is recording per-request samples — the metrics
 middleware adds < 0.1 ms.
 
+### Measured baseline (dev laptop, in-process server)
+
+A 5-second smoke run against the in-process API (no Redis/ClickHouse,
+SQLite backend) on commodity hardware:
+
+| metric | value |
+|--------|-------|
+| RPS (mixed workload) | ~1100 |
+| p95 (overall) | < 5 ms |
+| `/healthz` p95 | < 5 ms |
+| `/api/uis/spec` p95 | < 5 ms |
+| `/saml/metadata` p95 | < 4 ms |
+| error rate | 0 % |
+
+These numbers exist to catch regressions in CI; production
+characteristics change with the real backend, network round-trips, and
+auth middleware.
+
 ---
 
 ## 3. The stress harness
