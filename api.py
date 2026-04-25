@@ -578,7 +578,7 @@ async def api_agent_attest(
 @app.post("/api/mcp/verify")
 async def api_mcp_verify(
     body: dict,
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.mcp_gateway")),
 ):
     manifest = body.get("manifest")
     expected_manifest_hash = str(body.get("expected_manifest_hash") or "").strip()
@@ -1135,7 +1135,7 @@ async def api_get_uis_event(
 @app.post("/api/agent/drift/assess")
 async def api_assess_agent_drift(
     body: dict,
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.behavioral_dna")),
 ):
     agent_id = str(body.get("agent_id", "")).strip()
     if not agent_id:
@@ -1177,7 +1177,9 @@ async def api_assess_agent_drift(
     return {"tenant_id": tenant.tenant_id, "drift": assessment.to_dict(), "drift_event": drift_event}
 
 
-@app.get("/api/agent/drift/events")
+@app.get("/api/agent/drift/events",
+    dependencies=[Depends(require_feature("ent.behavioral_dna"))],
+)
 async def api_list_agent_drift_events(
     limit: int = 100,
     agent_id: str | None = None,
@@ -2839,7 +2841,7 @@ async def api_graph_data(
 @app.post("/api/simulate/blast_radius")
 async def api_blast_radius(
     body: dict,
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.blast_radius")),
 ):
     """
     POST /api/simulate/blast_radius
@@ -2872,7 +2874,7 @@ async def api_blast_radius(
 async def api_blast_radius_history(
     agent_label: str | None = None,
     limit: int = 20,
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.blast_radius")),
 ):
     """
     GET /api/simulate/blast_radius/history
@@ -2895,7 +2897,7 @@ async def api_intent_matches(
     limit: int = 50,
     severity: str | None = None,
     playbook_id: str | None = None,
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
 ):
     """
     GET /api/intent/matches
@@ -2921,7 +2923,7 @@ async def api_intent_matches(
 @app.get("/api/intent/playbooks")
 async def api_intent_playbooks(
     include_builtin: bool = True,
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
 ):
     """
     GET /api/intent/playbooks
@@ -2939,7 +2941,9 @@ async def api_intent_playbooks(
     }
 
 
-@app.post("/api/intent/playbooks")
+@app.post("/api/intent/playbooks",
+    dependencies=[Depends(require_feature("ent.intent_correlation"))],
+)
 async def api_intent_add_playbook(
     body: dict,
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
@@ -2987,7 +2991,9 @@ async def api_intent_add_playbook(
     return {"playbook_id": pid, "tenant_id": tenant.tenant_id, "name": name}
 
 
-@app.delete("/api/intent/playbooks/{playbook_id}")
+@app.delete("/api/intent/playbooks/{playbook_id}",
+    dependencies=[Depends(require_feature("ent.intent_correlation"))],
+)
 async def api_intent_delete_playbook(
     playbook_id: str,
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
@@ -3097,7 +3103,7 @@ async def api_ztix_simulate(
 @app.post("/api/policy/guard/evaluate")
 async def api_policy_guard_evaluate(
     body: dict,
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
 ):
     """
     Evaluate a pending policy action against PolicyGuard constitutional rules.
@@ -3156,7 +3162,7 @@ async def api_policy_guard_violations(
     actor_id: Optional[str] = None,
     disposition: Optional[str] = None,
     limit: int = 50,
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
 ):
     """
     List PolicyGuard violations for the current tenant.
@@ -3199,7 +3205,7 @@ async def api_policy_guard_violations(
 @app.get("/api/policy/guard/violations/{violation_id}")
 async def api_policy_guard_get_violation(
     violation_id: str,
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
 ):
     """Get a specific PolicyGuard violation by ID."""
     policy_guard.init_db()
@@ -3225,7 +3231,9 @@ async def api_policy_guard_get_violation(
     }
 
 
-@app.post("/api/policy/guard/violations/{violation_id}/approve")
+@app.post("/api/policy/guard/violations/{violation_id}/approve",
+    dependencies=[Depends(require_feature("ent.enforcement_plane"))],
+)
 async def api_policy_guard_approve(
     violation_id: str,
     body: dict,
@@ -3263,7 +3271,9 @@ async def api_policy_guard_approve(
     }
 
 
-@app.post("/api/policy/guard/violations/{violation_id}/reject")
+@app.post("/api/policy/guard/violations/{violation_id}/reject",
+    dependencies=[Depends(require_feature("ent.enforcement_plane"))],
+)
 async def api_policy_guard_reject(
     violation_id: str,
     body: dict,
@@ -3302,7 +3312,7 @@ async def api_policy_guard_reject(
 
 @app.get("/api/policy/guard/stats")
 async def api_policy_guard_stats(
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
 ):
     """Summary statistics for PolicyGuard violations in the current tenant."""
     policy_guard.init_db()
@@ -3314,7 +3324,7 @@ async def api_policy_guard_stats(
 @app.post("/api/drift/record")
 async def api_drift_record(
     body: dict,
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.behavioral_dna")),
 ):
     """
     Record a permission scope observation for an agent.
@@ -3360,7 +3370,7 @@ async def api_drift_alerts(
     status: Optional[str] = "open",
     agent_id: Optional[str] = None,
     limit: int = 50,
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.behavioral_dna")),
 ):
     """
     List permission drift alerts for the current tenant.
@@ -3401,7 +3411,7 @@ async def api_drift_report(
     agent_id: str,
     policy_id: str,
     days: int = 30,
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.behavioral_dna")),
 ):
     """
     Full permission history timeline for one agent on one policy.
@@ -3441,7 +3451,9 @@ async def api_drift_report(
     }
 
 
-@app.post("/api/drift/approve/{drift_id}")
+@app.post("/api/drift/approve/{drift_id}",
+    dependencies=[Depends(require_feature("ent.behavioral_dna"))],
+)
 async def api_drift_approve(
     drift_id: str,
     body: dict,
@@ -3481,7 +3493,7 @@ async def api_drift_approve(
 
 @app.get("/api/drift/summary")
 async def api_drift_summary(
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.behavioral_dna")),
 ):
     """
     Tenant-level drift summary: agents tracked, agents with open alerts,
@@ -3506,7 +3518,7 @@ async def api_drift_blast_comparison(
     agent_id: str,
     policy_id: str,
     baseline_days: int = 30,
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.behavioral_dna")),
 ):
     """
     Blast radius comparison: current permission surface vs. baseline.
@@ -3715,7 +3727,7 @@ async def api_get_agent(
 @app.post("/api/mcp/inspect")
 async def api_mcp_inspect(
     body: dict = Body(...),
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.mcp_gateway")),
 ):
     """
     Inspect a pending MCP tool call before execution.
@@ -3743,7 +3755,7 @@ async def api_mcp_inspect(
 @app.post("/api/mcp/tools/register")
 async def api_mcp_register_tool(
     body: dict = Body(...),
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.mcp_gateway")),
 ):
     """Register or update a tool intent profile."""
     mcp_inspector.init_db()
@@ -3769,7 +3781,7 @@ async def api_mcp_register_tool(
 
 @app.get("/api/mcp/tools")
 async def api_mcp_list_tools(
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.mcp_gateway")),
 ):
     """List all tool intent profiles available to this tenant."""
     mcp_inspector.init_db()
@@ -3779,7 +3791,7 @@ async def api_mcp_list_tools(
 @app.get("/api/mcp/tools/{tool_name}")
 async def api_mcp_get_tool(
     tool_name: str,
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.mcp_gateway")),
 ):
     """Return a single tool intent profile."""
     mcp_inspector.init_db()
@@ -3793,7 +3805,7 @@ async def api_mcp_get_tool(
 async def api_mcp_violations(
     resolved: bool | None = None,
     limit: int = 200,
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.mcp_gateway")),
 ):
     """Return MCP violations for this tenant."""
     mcp_inspector.init_db()
@@ -3809,7 +3821,7 @@ async def api_mcp_violations(
 async def api_mcp_resolve_violation(
     violation_id: str,
     body: dict = Body(default={}),
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.mcp_gateway")),
 ):
     """Mark a violation as resolved."""
     mcp_inspector.init_db()
@@ -3830,7 +3842,7 @@ async def api_mcp_resolve_violation(
 async def api_mcp_chain(
     session_id: str,
     limit: int = 200,
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.mcp_gateway")),
 ):
     """Return the full tool-call chain for a session."""
     mcp_inspector.init_db()
@@ -3848,7 +3860,7 @@ async def api_mcp_chain(
 async def api_certs_fleet(
     status: str | None = None,
     limit: int = 500,
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
 ):
     """
     Full certificate fleet view for the tenant.
@@ -3864,7 +3876,7 @@ async def api_certs_fleet(
 
 @app.get("/api/certs/fleet/summary")
 async def api_certs_fleet_summary(
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
 ):
     """Quick-summary stats for the operator dashboard header widget."""
     cert_dashboard.init_db()
@@ -3875,7 +3887,7 @@ async def api_certs_fleet_summary(
 async def api_certs_expiring(
     within_days: int = 30,
     limit: int = 200,
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
 ):
     """
     Certs expiring within `within_days` days (default 30).
@@ -3894,7 +3906,7 @@ async def api_certs_expiring(
 async def api_ack_expiry_alert(
     alert_id: str,
     body: dict = Body(default={}),
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
 ):
     """Acknowledge a certificate expiry alert."""
     cert_dashboard.init_db()
@@ -3914,7 +3926,7 @@ async def api_ack_expiry_alert(
 @app.post("/api/certs/usage")
 async def api_record_cert_usage(
     body: dict = Body(...),
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
 ):
     """
     Record a certificate usage event. Runs anomaly detection automatically.
@@ -3951,7 +3963,7 @@ async def api_record_cert_usage(
 async def api_cert_anomalies(
     resolved: bool | None = None,
     limit: int = 200,
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
 ):
     """Return certificate usage anomalies for this tenant."""
     cert_dashboard.init_db()
@@ -3967,7 +3979,7 @@ async def api_cert_anomalies(
 async def api_resolve_cert_anomaly(
     anomaly_id: str,
     body: dict = Body(default={}),
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
 ):
     """Resolve a certificate anomaly."""
     cert_dashboard.init_db()
@@ -3988,7 +4000,7 @@ async def api_resolve_cert_anomaly(
 async def api_cert_history(
     cert_id: str,
     limit: int = 200,
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
 ):
     """Full usage history for a single certificate."""
     cert_dashboard.init_db()
@@ -4008,7 +4020,7 @@ async def api_cert_history(
 @app.post("/api/policy/suggestions/analyze")
 async def api_policy_suggestions_analyze(
     body: dict = Body(default={}),
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
 ):
     """
     Run gap analysis over the lookback window and generate policy suggestions.
@@ -4041,7 +4053,7 @@ async def api_list_policy_suggestions(
     amendment_type: str | None = None,
     min_confidence: float = 0.0,
     limit: int = 50,
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
 ):
     """
     List policy suggestions for this tenant.
@@ -4088,7 +4100,7 @@ async def api_list_policy_suggestions(
 
 @app.get("/api/policy/suggestions/stats")
 async def api_policy_suggestion_stats(
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
 ):
     """Summary statistics for this tenant's policy suggestions."""
     policy_advisor.init_db()
@@ -4098,7 +4110,7 @@ async def api_policy_suggestion_stats(
 @app.get("/api/policy/suggestions/{suggestion_id}")
 async def api_get_policy_suggestion(
     suggestion_id: str,
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
 ):
     """Get a single policy suggestion by ID."""
     policy_advisor.init_db()
@@ -4133,7 +4145,7 @@ async def api_get_policy_suggestion(
 async def api_approve_policy_suggestion(
     suggestion_id: str,
     body: dict = Body(default={}),
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
 ):
     """
     Operator approves a pending policy suggestion.
@@ -4180,7 +4192,7 @@ async def api_approve_policy_suggestion(
 async def api_reject_policy_suggestion(
     suggestion_id: str,
     body: dict = Body(default={}),
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
 ):
     """
     Operator rejects a pending policy suggestion.
@@ -4217,7 +4229,7 @@ async def api_reject_policy_suggestion(
 @app.post("/api/policy/suggestions/auto-tighten")
 async def api_policy_auto_tighten(
     body: dict = Body(default={}),
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
 ):
     """
     Bounded auto-tightening: automatically approve high-confidence suggestions
@@ -4829,7 +4841,9 @@ async def api_proof_stats(
 # ── Phase 5-1: MCP Security Gateway ──────────────────────────────────────────
 
 
-@app.post("/api/mcp/gateway/session/open")
+@app.post("/api/mcp/gateway/session/open",
+    dependencies=[Depends(require_feature("ent.mcp_gateway"))],
+)
 async def api_gw_open_session(
     body: dict = Body(default={}),
     tenant: TenantContext = Depends(require_role(Role.ADMIN)),
@@ -4849,7 +4863,9 @@ async def api_gw_open_session(
     )
 
 
-@app.post("/api/mcp/gateway/session/close/{session_id}")
+@app.post("/api/mcp/gateway/session/close/{session_id}",
+    dependencies=[Depends(require_feature("ent.mcp_gateway"))],
+)
 async def api_gw_close_session(
     session_id: str,
     tenant: TenantContext = Depends(require_role(Role.ADMIN)),
@@ -4862,7 +4878,9 @@ async def api_gw_close_session(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.get("/api/mcp/gateway/sessions")
+@app.get("/api/mcp/gateway/sessions",
+    dependencies=[Depends(require_feature("ent.mcp_gateway"))],
+)
 async def api_gw_list_sessions(
     status: str | None = None,
     agent_id: str | None = None,
@@ -4874,7 +4892,9 @@ async def api_gw_list_sessions(
     return {"sessions": mcp_gateway.list_sessions(tenant.tenant_id, status=status, agent_id=agent_id, limit=min(limit, 500))}
 
 
-@app.get("/api/mcp/gateway/sessions/{session_id}")
+@app.get("/api/mcp/gateway/sessions/{session_id}",
+    dependencies=[Depends(require_feature("ent.mcp_gateway"))],
+)
 async def api_gw_get_session(
     session_id: str,
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
@@ -4887,7 +4907,9 @@ async def api_gw_get_session(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.post("/api/mcp/gateway/enforce")
+@app.post("/api/mcp/gateway/enforce",
+    dependencies=[Depends(require_feature("ent.mcp_gateway"))],
+)
 async def api_gw_enforce(
     body: dict = Body(default={}),
     tenant: TenantContext = Depends(require_role(Role.ADMIN)),
@@ -4912,7 +4934,9 @@ async def api_gw_enforce(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.get("/api/mcp/gateway/enforcements")
+@app.get("/api/mcp/gateway/enforcements",
+    dependencies=[Depends(require_feature("ent.mcp_gateway"))],
+)
 async def api_gw_list_enforcements(
     session_id: str | None = None,
     outcome: str | None = None,
@@ -4924,7 +4948,9 @@ async def api_gw_list_enforcements(
     return {"enforcements": mcp_gateway.list_enforcements(tenant.tenant_id, session_id=session_id, outcome=outcome, limit=min(limit, 500))}
 
 
-@app.post("/api/mcp/gateway/session/{session_id}/bind")
+@app.post("/api/mcp/gateway/session/{session_id}/bind",
+    dependencies=[Depends(require_feature("ent.mcp_gateway"))],
+)
 async def api_gw_bind_passport(
     session_id: str,
     body: dict = Body(default={}),
@@ -4941,7 +4967,9 @@ async def api_gw_bind_passport(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.post("/api/mcp/fingerprint/register")
+@app.post("/api/mcp/fingerprint/register",
+    dependencies=[Depends(require_feature("ent.mcp_gateway"))],
+)
 async def api_gw_register_manifest(
     body: dict = Body(default={}),
     tenant: TenantContext = Depends(require_role(Role.ADMIN)),
@@ -4957,7 +4985,9 @@ async def api_gw_register_manifest(
     return mcp_gateway.register_manifest(tenant.tenant_id, server_id, tools)
 
 
-@app.get("/api/mcp/fingerprint/alerts")
+@app.get("/api/mcp/fingerprint/alerts",
+    dependencies=[Depends(require_feature("ent.mcp_gateway"))],
+)
 async def api_gw_fp_alerts(
     server_id: str | None = None,
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
@@ -4967,7 +4997,9 @@ async def api_gw_fp_alerts(
     return {"alerts": mcp_gateway.list_fingerprint_alerts(tenant.tenant_id, server_id=server_id)}
 
 
-@app.get("/api/mcp/fingerprint/{server_id}")
+@app.get("/api/mcp/fingerprint/{server_id}",
+    dependencies=[Depends(require_feature("ent.mcp_gateway"))],
+)
 async def api_gw_get_fingerprint(
     server_id: str,
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
@@ -4977,7 +5009,9 @@ async def api_gw_get_fingerprint(
     return mcp_gateway.get_fingerprint(tenant.tenant_id, server_id)
 
 
-@app.post("/api/mcp/fingerprint/alerts/{alert_id}/resolve")
+@app.post("/api/mcp/fingerprint/alerts/{alert_id}/resolve",
+    dependencies=[Depends(require_feature("ent.mcp_gateway"))],
+)
 async def api_gw_resolve_fp_alert(
     alert_id: str,
     body: dict = Body(default={}),
@@ -4992,7 +5026,9 @@ async def api_gw_resolve_fp_alert(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.get("/api/mcp/anomaly/baseline/{agent_id}")
+@app.get("/api/mcp/anomaly/baseline/{agent_id}",
+    dependencies=[Depends(require_feature("ent.mcp_gateway"))],
+)
 async def api_gw_anomaly_baseline(
     agent_id: str,
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
@@ -5002,7 +5038,9 @@ async def api_gw_anomaly_baseline(
     return {"agent_id": agent_id, "baseline": mcp_gateway.get_anomaly_baseline(tenant.tenant_id, agent_id)}
 
 
-@app.get("/api/mcp/anomaly/alerts")
+@app.get("/api/mcp/anomaly/alerts",
+    dependencies=[Depends(require_feature("ent.mcp_gateway"))],
+)
 async def api_gw_anomaly_alerts(
     agent_id: str | None = None,
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
@@ -5012,7 +5050,9 @@ async def api_gw_anomaly_alerts(
     return {"alerts": mcp_gateway.list_anomaly_alerts(tenant.tenant_id, agent_id=agent_id)}
 
 
-@app.post("/api/mcp/anomaly/alerts/{alert_id}/acknowledge")
+@app.post("/api/mcp/anomaly/alerts/{alert_id}/acknowledge",
+    dependencies=[Depends(require_feature("ent.mcp_gateway"))],
+)
 async def api_gw_ack_anomaly(
     alert_id: str,
     body: dict = Body(default={}),
@@ -5030,7 +5070,9 @@ async def api_gw_ack_anomaly(
 # ── Phase 5-2: Agent Discovery & Inventory ────────────────────────────────────
 
 
-@app.post("/api/discovery/agents/register")
+@app.post("/api/discovery/agents/register",
+    dependencies=[Depends(require_feature("ent.agent_discovery"))],
+)
 async def api_discovery_register(
     body: dict = Body(default={}),
     tenant: TenantContext = Depends(require_role(Role.ADMIN)),
@@ -5058,7 +5100,9 @@ async def api_discovery_register(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@app.get("/api/discovery/agents")
+@app.get("/api/discovery/agents",
+    dependencies=[Depends(require_feature("ent.agent_discovery"))],
+)
 async def api_discovery_census(
     status: str | None = None,
     provider: str | None = None,
@@ -5081,7 +5125,9 @@ async def api_discovery_census(
     return {"summary": summary, "agents": agents}
 
 
-@app.get("/api/discovery/agents/summary")
+@app.get("/api/discovery/agents/summary",
+    dependencies=[Depends(require_feature("ent.agent_discovery"))],
+)
 async def api_discovery_summary(
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
 ):
@@ -5090,7 +5136,9 @@ async def api_discovery_summary(
     return agent_discovery.census_summary(tenant.tenant_id)
 
 
-@app.get("/api/discovery/agents/{agent_id}")
+@app.get("/api/discovery/agents/{agent_id}",
+    dependencies=[Depends(require_feature("ent.agent_discovery"))],
+)
 async def api_discovery_get_agent(
     agent_id: str,
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
@@ -5127,7 +5175,9 @@ async def api_discovery_update_agent(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.post("/api/discovery/agents/{agent_id}/activity")
+@app.post("/api/discovery/agents/{agent_id}/activity",
+    dependencies=[Depends(require_feature("ent.agent_discovery"))],
+)
 async def api_discovery_record_activity(
     agent_id: str,
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
@@ -5141,7 +5191,9 @@ async def api_discovery_record_activity(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.post("/api/discovery/agents/{agent_id}/lifecycle")
+@app.post("/api/discovery/agents/{agent_id}/lifecycle",
+    dependencies=[Depends(require_feature("ent.agent_discovery"))],
+)
 async def api_discovery_lifecycle_transition(
     agent_id: str,
     body: dict = Body(default={}),
@@ -5167,7 +5219,9 @@ async def api_discovery_lifecycle_transition(
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
 
-@app.get("/api/discovery/agents/{agent_id}/lifecycle")
+@app.get("/api/discovery/agents/{agent_id}/lifecycle",
+    dependencies=[Depends(require_feature("ent.agent_discovery"))],
+)
 async def api_discovery_lifecycle_history(
     agent_id: str,
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
@@ -5177,7 +5231,9 @@ async def api_discovery_lifecycle_history(
     return {"history": agent_discovery.get_lifecycle_history(agent_id, tenant.tenant_id)}
 
 
-@app.post("/api/discovery/scan")
+@app.post("/api/discovery/scan",
+    dependencies=[Depends(require_feature("ent.agent_discovery"))],
+)
 async def api_discovery_scan(
     body: dict = Body(default={}),
     tenant: TenantContext = Depends(require_role(Role.ADMIN)),
@@ -5194,7 +5250,9 @@ async def api_discovery_scan(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@app.get("/api/discovery/scans")
+@app.get("/api/discovery/scans",
+    dependencies=[Depends(require_feature("ent.agent_discovery"))],
+)
 async def api_discovery_list_scans(
     provider: str | None = None,
     limit: int = 50,
@@ -5205,7 +5263,9 @@ async def api_discovery_list_scans(
     return {"scans": agent_discovery.list_scans(tenant.tenant_id, provider=provider, limit=min(limit, 200))}
 
 
-@app.get("/api/discovery/scans/{scan_id}")
+@app.get("/api/discovery/scans/{scan_id}",
+    dependencies=[Depends(require_feature("ent.agent_discovery"))],
+)
 async def api_discovery_get_scan(
     scan_id: str,
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
@@ -5218,7 +5278,9 @@ async def api_discovery_get_scan(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.get("/api/discovery/shadow")
+@app.get("/api/discovery/shadow",
+    dependencies=[Depends(require_feature("ent.agent_discovery"))],
+)
 async def api_discovery_shadow_alerts(
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
 ):
@@ -5227,7 +5289,9 @@ async def api_discovery_shadow_alerts(
     return {"alerts": agent_discovery.list_shadow_alerts(tenant.tenant_id)}
 
 
-@app.post("/api/discovery/shadow/{alert_id}/acknowledge")
+@app.post("/api/discovery/shadow/{alert_id}/acknowledge",
+    dependencies=[Depends(require_feature("ent.agent_discovery"))],
+)
 async def api_discovery_ack_shadow(
     alert_id: str,
     body: dict = Body(default={}),
@@ -5245,7 +5309,9 @@ async def api_discovery_ack_shadow(
 # ── Phase 5-3: Enforcement Plane ─────────────────────────────────────────────
 
 
-@app.post("/api/enforcement/policies")
+@app.post("/api/enforcement/policies",
+    dependencies=[Depends(require_feature("ent.enforcement_plane"))],
+)
 async def api_ep_create_policy(
     body: dict = Body(default={}),
     tenant: TenantContext = Depends(require_role(Role.ADMIN)),
@@ -5271,7 +5337,9 @@ async def api_ep_create_policy(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@app.get("/api/enforcement/policies")
+@app.get("/api/enforcement/policies",
+    dependencies=[Depends(require_feature("ent.enforcement_plane"))],
+)
 async def api_ep_list_policies(
     status: str | None = "active",
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
@@ -5280,7 +5348,9 @@ async def api_ep_list_policies(
     return {"policies": enforcement_plane.list_policies(tenant.tenant_id, status=status)}
 
 
-@app.get("/api/enforcement/policies/{policy_id}")
+@app.get("/api/enforcement/policies/{policy_id}",
+    dependencies=[Depends(require_feature("ent.enforcement_plane"))],
+)
 async def api_ep_get_policy(
     policy_id: str,
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
@@ -5314,7 +5384,9 @@ async def api_ep_update_policy(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@app.delete("/api/enforcement/policies/{policy_id}")
+@app.delete("/api/enforcement/policies/{policy_id}",
+    dependencies=[Depends(require_feature("ent.enforcement_plane"))],
+)
 async def api_ep_deactivate_policy(
     policy_id: str,
     tenant: TenantContext = Depends(require_role(Role.ADMIN)),
@@ -5326,7 +5398,9 @@ async def api_ep_deactivate_policy(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.post("/api/enforcement/evaluate")
+@app.post("/api/enforcement/evaluate",
+    dependencies=[Depends(require_feature("ent.enforcement_plane"))],
+)
 async def api_ep_evaluate(
     body: dict = Body(default={}),
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
@@ -5346,7 +5420,9 @@ async def api_ep_evaluate(
     )
 
 
-@app.get("/api/enforcement/decisions")
+@app.get("/api/enforcement/decisions",
+    dependencies=[Depends(require_feature("ent.enforcement_plane"))],
+)
 async def api_ep_decisions(
     agent_id: str | None = None,
     decision: str | None = None,
@@ -5359,7 +5435,9 @@ async def api_ep_decisions(
     )}
 
 
-@app.get("/api/enforcement/shadow/report")
+@app.get("/api/enforcement/shadow/report",
+    dependencies=[Depends(require_feature("ent.enforcement_plane"))],
+)
 async def api_ep_shadow_report(
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
 ):
@@ -5367,7 +5445,9 @@ async def api_ep_shadow_report(
     return enforcement_plane.shadow_report(tenant.tenant_id)
 
 
-@app.post("/api/enforcement/killswitch/{agent_id}")
+@app.post("/api/enforcement/killswitch/{agent_id}",
+    dependencies=[Depends(require_feature("ent.enforcement_plane"))],
+)
 async def api_ep_kill_switch_activate(
     agent_id: str,
     body: dict = Body(default={}),
@@ -5387,7 +5467,9 @@ async def api_ep_kill_switch_activate(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@app.delete("/api/enforcement/killswitch/{agent_id}")
+@app.delete("/api/enforcement/killswitch/{agent_id}",
+    dependencies=[Depends(require_feature("ent.enforcement_plane"))],
+)
 async def api_ep_kill_switch_deactivate(
     agent_id: str,
     body: dict = Body(default={}),
@@ -5403,7 +5485,9 @@ async def api_ep_kill_switch_deactivate(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@app.get("/api/enforcement/killswitch")
+@app.get("/api/enforcement/killswitch",
+    dependencies=[Depends(require_feature("ent.enforcement_plane"))],
+)
 async def api_ep_kill_switches_list(
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
 ):
@@ -5411,7 +5495,9 @@ async def api_ep_kill_switches_list(
     return {"kill_switches": enforcement_plane.list_active_kill_switches(tenant.tenant_id)}
 
 
-@app.get("/api/enforcement/killswitch/{agent_id}")
+@app.get("/api/enforcement/killswitch/{agent_id}",
+    dependencies=[Depends(require_feature("ent.enforcement_plane"))],
+)
 async def api_ep_kill_switch_status(
     agent_id: str,
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
@@ -5423,7 +5509,9 @@ async def api_ep_kill_switch_status(
 # ── Phase 5-3: Behavioral DNA ─────────────────────────────────────────────────
 
 
-@app.post("/api/behavioral/event")
+@app.post("/api/behavioral/event",
+    dependencies=[Depends(require_feature("ent.behavioral_dna"))],
+)
 async def api_bd_record_event(
     body: dict = Body(default={}),
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
@@ -5443,7 +5531,9 @@ async def api_bd_record_event(
     )
 
 
-@app.get("/api/behavioral/baseline/{agent_id}")
+@app.get("/api/behavioral/baseline/{agent_id}",
+    dependencies=[Depends(require_feature("ent.behavioral_dna"))],
+)
 async def api_bd_baseline(
     agent_id: str,
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
@@ -5452,7 +5542,9 @@ async def api_bd_baseline(
     return behavioral_dna.get_baseline(tenant.tenant_id, agent_id)
 
 
-@app.get("/api/behavioral/drift/{agent_id}")
+@app.get("/api/behavioral/drift/{agent_id}",
+    dependencies=[Depends(require_feature("ent.behavioral_dna"))],
+)
 async def api_bd_drift(
     agent_id: str,
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
@@ -5461,7 +5553,9 @@ async def api_bd_drift(
     return behavioral_dna.compute_drift_score(tenant.tenant_id, agent_id)
 
 
-@app.get("/api/behavioral/alerts")
+@app.get("/api/behavioral/alerts",
+    dependencies=[Depends(require_feature("ent.behavioral_dna"))],
+)
 async def api_bd_alerts(
     agent_id: str | None = None,
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
@@ -5470,7 +5564,9 @@ async def api_bd_alerts(
     return {"alerts": behavioral_dna.list_drift_alerts(tenant.tenant_id, agent_id=agent_id)}
 
 
-@app.post("/api/behavioral/alerts/{alert_id}/acknowledge")
+@app.post("/api/behavioral/alerts/{alert_id}/acknowledge",
+    dependencies=[Depends(require_feature("ent.behavioral_dna"))],
+)
 async def api_bd_ack_alert(
     alert_id: str,
     body: dict = Body(default={}),
@@ -5484,7 +5580,9 @@ async def api_bd_ack_alert(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.post("/api/behavioral/snapshot/{agent_id}")
+@app.post("/api/behavioral/snapshot/{agent_id}",
+    dependencies=[Depends(require_feature("ent.behavioral_dna"))],
+)
 async def api_bd_snapshot(
     agent_id: str,
     body: dict = Body(default={}),
@@ -5497,7 +5595,9 @@ async def api_bd_snapshot(
     )
 
 
-@app.get("/api/behavioral/audit/{agent_id}")
+@app.get("/api/behavioral/audit/{agent_id}",
+    dependencies=[Depends(require_feature("ent.behavioral_dna"))],
+)
 async def api_bd_audit(
     agent_id: str,
     limit: int = 200,

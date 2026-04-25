@@ -221,21 +221,20 @@ class TestRequireFeatureDependency:
 # End-to-end: Phase 5 routes through TestClient with dependency_overrides
 # ─────────────────────────────────────────────────────────────────────────────
 
-# A representative endpoint for every gate the salvage actually applied.
-# Phase 5 routes that already exist on remote main are *not* gated by this
-# salvage commit — that bulk modification is deferred to a follow-up sprint.
-# What we test here are the routes the salvage itself adds, all of which use
-# require_feature() at decoration time. Status codes other than 403 mean the
-# gate is open — body errors (400/422) are fine, the gate did its job.
+# Representative endpoint per gate. Mix of:
+#   (a) routes added by the salvage commit (threat-sharing, delegation),
+#   (b) the existing Phase 5 routes that PR-B wires with require_feature.
+# Status codes other than 403 mean the gate is open — body errors (400/422)
+# are fine, the gate did its job.
 PHASE5_ROUTES: list[tuple[str, str, dict | None]] = [
-    # Threat-sharing network — gated behind ent.intent_correlation
+    # Threat-sharing — ent.intent_correlation
     ("POST", "/api/threat-sharing/opt-in",              None),
     ("POST", "/api/threat-sharing/opt-out",             None),
     ("GET",  "/api/threat-sharing/status",              None),
     ("POST", "/api/threat-sharing/publish/custom:abc",  None),
     ("POST", "/api/threat-sharing/sync",                None),
     ("GET",  "/api/threat-sharing/network",             None),
-    # Delegation receipts — gated behind ent.enforcement_plane
+    # Delegation — ent.enforcement_plane
     ("POST", "/api/delegation/receipt",                 {"delegator_id": "human:a", "delegatee_id": "agt-x", "scope": ["*"], "expires_in_seconds": 60}),
     ("GET",  "/api/delegation/receipt/rcpt:none",       None),
     ("GET",  "/api/delegation/receipt/rcpt:none/verify", None),
@@ -243,6 +242,27 @@ PHASE5_ROUTES: list[tuple[str, str, dict | None]] = [
     ("GET",  "/api/delegation/receipts/agt-x",          None),
     ("POST", "/api/delegation/receipt/rcpt:none/revoke", {"revoked_by": "x"}),
     ("GET",  "/api/delegation/chain/rcpt:none/report",  None),
+    # Existing Phase 5 routes now gated by PR-B:
+    # MCP gateway — ent.mcp_gateway
+    ("POST", "/api/mcp/verify",                         {"manifest": {}, "expected_manifest_hash": "x"}),
+    ("POST", "/api/mcp/inspect",                        {}),
+    # Blast radius — ent.blast_radius
+    ("POST", "/api/simulate/blast_radius",              {"agent_label": "agt-x"}),
+    # Intent correlation — ent.intent_correlation
+    ("GET",  "/api/intent/matches",                     None),
+    # Policy guard — ent.enforcement_plane
+    ("GET",  "/api/policy/guard/violations",            None),
+    # Drift / behavioral DNA — ent.behavioral_dna
+    ("GET",  "/api/drift/alerts",                       None),
+    ("GET",  "/api/behavioral/alerts",                  None),
+    # Cert dashboard — ent.enforcement_plane
+    ("GET",  "/api/certs/fleet",                        None),
+    # Discovery — ent.agent_discovery
+    ("GET",  "/api/discovery/agents",                   None),
+    # Enforcement plane — ent.enforcement_plane
+    ("GET",  "/api/enforcement/policies",               None),
+    # Policy advisor — ent.enforcement_plane
+    ("GET",  "/api/policy/suggestions",                 None),
 ]
 
 # Core (ungated) routes that must remain accessible for community tenants.
