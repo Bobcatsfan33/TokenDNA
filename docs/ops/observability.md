@@ -42,19 +42,29 @@ the module returns a stub body so scrape configs do not error.
 | `tokendna_policy_decisions_total` | counter | module, decision |
 | `tokendna_secret_gate_failures_total` | counter | env_var |
 
-### Recommended alerts (PromQL)
+### Alerts and dashboards
 
-```
-# 5xx error rate above 1% over 10 minutes
+Ready-to-apply Prometheus rules and Grafana dashboards live under
+`deploy/grafana/`:
+
+* `tokendna-overview.json` — service-level dashboard (RPS, error rate,
+  latency, top routes, UIS / policy throughput).
+* `tokendna-security.json` — security-signal dashboard (secret-gate
+  failures, policy BLOCK rate, UIS DENY bursts).
+* `alert-rules.yaml` — six rules across two groups (`tokendna.slo`,
+  `tokendna.security`); page-level alerts include `runbook_url`
+  annotations.
+
+See `deploy/grafana/README.md` for import instructions.
+
+The two highest-severity rules are inlined here for reference:
+
+```promql
+# 5xx error rate above 1% over 10 minutes — page
 sum(rate(tokendna_http_requests_total{status_class="5xx"}[10m]))
-  / sum(rate(tokendna_http_requests_total[10m])) > 0.01
+  / clamp_min(sum(rate(tokendna_http_requests_total[10m])), 1) > 0.01
 
-# p95 request latency above 500ms over 10 minutes
-histogram_quantile(0.95,
-  sum(rate(tokendna_http_request_duration_seconds_bucket[10m])) by (le)
-) > 0.5
-
-# Secret gate failed at startup — must page immediately
+# Secret gate failed at startup — page immediately
 increase(tokendna_secret_gate_failures_total[5m]) > 0
 ```
 

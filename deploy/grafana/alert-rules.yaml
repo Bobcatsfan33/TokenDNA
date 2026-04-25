@@ -1,0 +1,96 @@
+# TokenDNA — Prometheus alerting rules
+#
+# Apply to a prometheus-operator cluster as a PrometheusRule:
+#
+#   kubectl apply -f deploy/grafana/alert-rules.yaml
+#
+# Or use this as the body of a `extraConfig` block in your Prometheus
+# Helm values. Naming follows the SRE Workbook convention: <service>_<severity>_<symptom>.
+
+groups:
+  - name: tokendna.slo
+    interval: 30s
+    rules:
+      - alert: TokendnaHighErrorRate
+        expr: |
+          sum(rate(tokendna_http_requests_total{status_class="5xx"}[10m]))
+            / clamp_min(sum(rate(tokendna_http_requests_total[10m])), 1)
+            > 0.01
+        for: 5m
+        labels:
+          severity: page
+          service: tokendna
+        annotations:
+          summary: "TokenDNA 5xx error rate above 1%"
+          description: |
+            Sustained > 1% 5xx error rate over the last 10 minutes.
+            Check /readyz on each pod and the most recent deploy.
+          runbook_url: "https://github.com/Bobcatsfan33/TokenDNA/blob/main/docs/ops/observability.md#troubleshooting"
+
+      - alert: TokendnaHighLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(tokendna_http_request_duration_seconds_bucket[10m])) by (le)
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: page
+          service: tokendna
+        annotations:
+          summary: "TokenDNA p95 latency above 500ms"
+          description: "p95 over 10 minutes exceeds the 500ms SLO target."
+
+      - alert: TokendnaSecretGateFailure
+        expr: increase(tokendna_secret_gate_failures_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: page
+          service: tokendna
+        annotations:
+          summary: "TokenDNA secret gate failed at startup"
+          description: |
+            One or more pods failed assert_production_secrets() at startup.
+            This means a missing, weak, or dev-default HMAC key in production.
+            DO NOT continue rolling — investigate the secret manager and the
+            most recent rotation event.
+          runbook_url: "https://github.com/Bobcatsfan33/TokenDNA/blob/main/docs/ops/backup-dr.md#hmac-key-recovery"
+
+      - alert: TokendnaReadinessFlapping
+        expr: |
+          changes(up{job=~".*tokendna.*"}[15m]) > 5
+        for: 5m
+        labels:
+          severity: warn
+          service: tokendna
+        annotations:
+          summary: "TokenDNA readiness probe flapping"
+          description: "Pod is rapidly transitioning ready/not-ready. Likely a Redis or ClickHouse dependency outage."
+
+  - name: tokendna.security
+    interval: 1m
+    rules:
+      - alert: TokendnaPolicyBlockSpike
+        expr: |
+          sum(rate(tokendna_policy_decisions_total{decision=~"block|BLOCK"}[5m]))
+            > 5 * sum(rate(tokendna_policy_decisions_total{decision=~"block|BLOCK"}[1h] offset 1d))
+        for: 10m
+        labels:
+          severity: warn
+          service: tokendna
+        annotations:
+          summary: "Policy BLOCK decisions 5× yesterday's baseline"
+          description: |
+            Either an attack is in progress, or a recent policy push is
+            over-blocking legitimate traffic. Check the most recent
+            policy_advisor changes and the security dashboard.
+
+      - alert: TokendnaUisDenyBurst
+        expr: |
+          sum(rate(tokendna_uis_events_total{decision=~"deny|DENY|block|BLOCK"}[5m])) > 50
+        for: 10m
+        labels:
+          severity: warn
+          service: tokendna
+        annotations:
+          summary: "UIS deny rate above 50/s"
+          description: "Sustained UIS DENY rate above 50/s. Investigate the originating tenants and UIS protocol distribution."
