@@ -177,7 +177,65 @@ def test_scim_spc_route(api_client):
     r = api_client.get("/scim/v2/ServiceProviderConfig")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("application/scim+json")
-    assert r.json()["patch"]["supported"] is False
+    body = r.json()
+    assert body["patch"]["supported"] is True
+    assert body["filter"]["supported"] is True
+
+
+def test_scim_patch_user_via_route(api_client):
+    create = api_client.post(
+        "/scim/v2/Users",
+        json={"schemas": [scim.SCHEMA_USER], "userName": "patch@example.com", "active": True},
+    )
+    user_id = create.json()["id"]
+
+    patch = api_client.patch(
+        f"/scim/v2/Users/{user_id}",
+        json={
+            "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+            "Operations": [{"op": "replace", "path": "active", "value": False}],
+        },
+    )
+    assert patch.status_code == 200
+    assert patch.json()["active"] is False
+
+
+def test_scim_patch_unsupported_filtered_path_returns_501(api_client):
+    create = api_client.post(
+        "/scim/v2/Users",
+        json={"schemas": [scim.SCHEMA_USER], "userName": "filt@example.com"},
+    )
+    user_id = create.json()["id"]
+    r = api_client.patch(
+        f"/scim/v2/Users/{user_id}",
+        json={
+            "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+            "Operations": [{"op": "replace", "path": 'emails[type eq "work"].value', "value": "x"}],
+        },
+    )
+    assert r.status_code == 501
+
+
+def test_scim_filter_via_list_route(api_client):
+    for name in ("alpha@example.com", "bravo@example.com", "charlie@other.com"):
+        api_client.post(
+            "/scim/v2/Users",
+            json={"schemas": [scim.SCHEMA_USER], "userName": name},
+        )
+    r = api_client.get('/scim/v2/Users', params={"filter": 'userName ew "@example.com"'})
+    assert r.status_code == 200
+    body = r.json()
+    names = {u["userName"] for u in body["Resources"]}
+    assert "alpha@example.com" in names
+    assert "bravo@example.com" in names
+    assert "charlie@other.com" not in names
+
+
+def test_scim_filter_invalid_returns_400(api_client):
+    r = api_client.get('/scim/v2/Users', params={"filter": 'userName eq'})
+    assert r.status_code == 400
+    body = r.json()
+    assert body.get("scimType") == "invalidFilter"
 
 
 def test_scim_user_lifecycle_via_routes(api_client):

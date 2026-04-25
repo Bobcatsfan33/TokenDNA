@@ -62,10 +62,10 @@ SAML_NAME_ID_FORMAT=urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress
 | `/scim/v2/ServiceProviderConfig` | GET | Capability advertisement. |
 | `/scim/v2/ResourceTypes` | GET | Schemas exposed (User, Group). |
 | `/scim/v2/Users` | POST | Create user. |
-| `/scim/v2/Users/{id}` | GET / PUT / DELETE | User CRUD. |
-| `/scim/v2/Users` | GET | List users with `startIndex` / `count` pagination. |
-| `/scim/v2/Groups` | POST / GET | Group create / list. |
-| `/scim/v2/Groups/{id}` | GET / DELETE | Group lookup / delete. |
+| `/scim/v2/Users/{id}` | GET / PUT / PATCH / DELETE | User CRUD + RFC 7644 PatchOp. |
+| `/scim/v2/Users` | GET | List with `startIndex` / `count` pagination + `filter=`. |
+| `/scim/v2/Groups` | POST / GET | Group create / list (with `filter=`). |
+| `/scim/v2/Groups/{id}` | GET / PATCH / DELETE | Group lookup / patch / delete. |
 
 ### 2.2 Auth
 
@@ -85,13 +85,16 @@ gracefully when the extension is absent.
 
 | Feature | Status |
 |---------|--------|
-| `PATCH` operations | Returns `501`. Replace via `PUT`. |
+| `PATCH` operations (simple paths) | **Supported.** `add` / `replace` / `remove` on top-level scalars and dotted sub-attributes (`name.givenName`). |
+| `PATCH` value-filtered paths | Returns `501`. e.g. `path = emails[type eq "work"].value` — added after observing real customer traffic. |
 | `bulk` operations | `bulk.supported = false`. |
 | `sort` parameter | Not honored. |
-| Complex `filter` expressions | Only `userName eq <value>` is honored. |
+| `filter` expressions | **Supported.** `eq`, `ne`, `sw`, `ew`, `co`, `gt`, `lt`, `ge`, `le`, `pr`; `and` / `or` / `not`; parens. Dotted paths (`name.givenName`, `meta.lastModified`). Multi-valued bracketed filters (`emails[...]`) return 501. |
 | ETag / `If-Match` | Not honored. |
 
-These are tracked for the GA release.
+ETag and bulk are the remaining gaps before GA. The two we just shipped
+— PATCH and filter — close the largest customer-blocking surface from
+the original alpha scope.
 
 ---
 

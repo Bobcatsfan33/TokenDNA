@@ -522,6 +522,14 @@ async def scim_replace_user(user_id: str, request: Request, tenant: TenantContex
     return _scim_response(replace_user(user_id, payload, tenant_id=tenant.tenant_id))
 
 
+@app.patch("/scim/v2/Users/{user_id}")
+@_scim_handle
+async def scim_patch_user(user_id: str, request: Request, tenant: TenantContext = Depends(get_tenant)):
+    from modules.auth.scim import patch_user
+    payload = await request.json()
+    return _scim_response(patch_user(user_id, payload, tenant_id=tenant.tenant_id))
+
+
 @app.delete("/scim/v2/Users/{user_id}")
 @_scim_handle
 async def scim_delete_user(user_id: str, tenant: TenantContext = Depends(get_tenant)):
@@ -535,10 +543,18 @@ async def scim_delete_user(user_id: str, tenant: TenantContext = Depends(get_ten
 async def scim_list_users(
     startIndex: int = 1,
     count: int = 100,
+    filter: str | None = None,
     tenant: TenantContext = Depends(get_tenant),
 ):
     from modules.auth.scim import list_users
-    return _scim_response(list_users(tenant_id=tenant.tenant_id, start_index=startIndex, count=count))
+    return _scim_response(
+        list_users(
+            tenant_id=tenant.tenant_id,
+            start_index=startIndex,
+            count=count,
+            filter_expr=filter,
+        )
+    )
 
 
 @app.post("/scim/v2/Groups")
@@ -558,9 +574,20 @@ async def scim_get_group(group_id: str, tenant: TenantContext = Depends(get_tena
 
 @app.get("/scim/v2/Groups")
 @_scim_handle
-async def scim_list_groups(tenant: TenantContext = Depends(get_tenant)):
+async def scim_list_groups(
+    filter: str | None = None,
+    tenant: TenantContext = Depends(get_tenant),
+):
     from modules.auth.scim import list_groups
-    return _scim_response(list_groups(tenant_id=tenant.tenant_id))
+    return _scim_response(list_groups(tenant_id=tenant.tenant_id, filter_expr=filter))
+
+
+@app.patch("/scim/v2/Groups/{group_id}")
+@_scim_handle
+async def scim_patch_group(group_id: str, request: Request, tenant: TenantContext = Depends(get_tenant)):
+    from modules.auth.scim import patch_group
+    payload = await request.json()
+    return _scim_response(patch_group(group_id, payload, tenant_id=tenant.tenant_id))
 
 
 @app.delete("/scim/v2/Groups/{group_id}")
