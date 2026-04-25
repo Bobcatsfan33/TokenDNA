@@ -765,6 +765,14 @@ def get_playbooks(
                 f"SELECT * FROM intent_playbooks {w} ORDER BY builtin DESC, name",
                 tuple(params),
             ).fetchall()
+            def _opt(row: sqlite3.Row, key: str) -> Any:
+                """Read a column that may not exist on legacy DBs (additive
+                migration: columns added by threat_sharing.init_db)."""
+                try:
+                    return row[key]
+                except (IndexError, KeyError):
+                    return None
+
             return [
                 {
                     "playbook_id": r["playbook_id"],
@@ -778,6 +786,9 @@ def get_playbooks(
                     "builtin": bool(r["builtin"]),
                     "created_at": r["created_at"],
                     "updated_at": r["updated_at"],
+                    "source": _opt(r, "source") or "local",
+                    "network_playbook_id": _opt(r, "network_playbook_id"),
+                    "shared": bool(_opt(r, "shared") or 0),
                 }
                 for r in rows
             ]

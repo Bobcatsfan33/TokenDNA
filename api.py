@@ -113,6 +113,11 @@ def sdk_attest_agent(**kwargs):
         kwargs["owner_org"] = kwargs.pop("tenant_name")
     return sdk_create_attestation(**kwargs)
 from modules.product import metering as feature_metering
+from modules.product.commercial_tiers import (
+    list_features as list_commercial_features,
+    require_feature,
+    tier_for_plan,
+)
 from modules.product.feature_gates import PlanTier, evaluate_feature_access, list_feature_matrix
 from modules.storage import db_backend
 from modules.identity.uis_narrative import enrich_event as uis_enrich_event
@@ -255,6 +260,18 @@ async def _startup_checks() -> None:
     decision_audit.init_db()
     trust_federation.init_db()
     feature_metering.init_db()
+    from modules.product import threat_sharing as _ts_init  # noqa: PLC0415
+    _ts_init.init_db()
+    from modules.product import threat_sharing_flywheel as _fw_init  # noqa: PLC0415
+    _fw_init.init_db()
+    from modules.identity import delegation_receipt as _dr_init  # noqa: PLC0415
+    _dr_init.init_db()
+    from modules.identity import workflow_attestation as _wf_init  # noqa: PLC0415
+    _wf_init.init_db()
+    from modules.identity import compliance_posture as _cp_init  # noqa: PLC0415
+    _cp_init.init_db()
+    from modules.identity import honeypot_mesh as _hp_init  # noqa: PLC0415
+    _hp_init.init_db()
 
     from modules.identity.cache_redis import is_available as redis_ok
     logger.info("Redis: %s", "connected" if redis_ok() else "UNREACHABLE")
@@ -5610,3 +5627,763 @@ async def api_ce_audit_export(
     return compliance_engine.generate_audit_export(
         tenant.tenant_id, agent_id, framework_id,
     )
+
+
+# ── Commercial Tier Entitlements ──────────────────────────────────────────────
+# Ungated — community tenants need to see what they're locked out of.
+
+@app.get("/api/product/entitlements")
+async def api_product_entitlements(
+    tenant: TenantContext = Depends(get_tenant),
+):
+    """Return the commercial-tier feature matrix for the current tenant."""
+    return {
+        "tenant_id": tenant.tenant_id,
+        "tenant_tier": tier_for_plan(tenant.plan).value,
+        "features": list_commercial_features(tenant.plan),
+        "upgrade_url": "/billing/upgrade",
+    }
+
+
+# ── Threat Sharing Network ────────────────────────────────────────────────────
+# Cross-tenant threat-intel sharing built on top of intent_correlation.
+# Gated behind ent.intent_correlation since the network is an extension of
+# that feature.
+
+@app.post("/api/threat-sharing/opt-in")
+async def api_threat_sharing_opt_in(
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Opt the current tenant into the threat-sharing network."""
+    from modules.product import threat_sharing  # noqa: PLC0415
+    return threat_sharing.opt_in(tenant.tenant_id)
+
+
+@app.post("/api/threat-sharing/opt-out")
+async def api_threat_sharing_opt_out(
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Opt the current tenant out. Past propagations are retained."""
+    from modules.product import threat_sharing  # noqa: PLC0415
+    return threat_sharing.opt_out(tenant.tenant_id)
+
+
+@app.get("/api/threat-sharing/status")
+async def api_threat_sharing_status(
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Opt-in status + counters for the current tenant."""
+    from modules.product import threat_sharing  # noqa: PLC0415
+    return threat_sharing.get_status(tenant.tenant_id)
+
+
+@app.post("/api/threat-sharing/publish/{playbook_id}")
+async def api_threat_sharing_publish(
+    playbook_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Anonymize and publish one of the tenant's custom playbooks."""
+    from modules.product import threat_sharing  # noqa: PLC0415
+    try:
+        return threat_sharing.publish_playbook(tenant.tenant_id, playbook_id)
+    except ValueError as exc:
+        reason = str(exc)
+        if reason == "not_opted_in":
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "not_opted_in",
+                        "message": "Tenant must opt in to the threat-sharing network before publishing."},
+            ) from exc
+        if reason == "not_found":
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "playbook_not_found",
+                        "message": f"Playbook {playbook_id!r} not found or not owned by this tenant."},
+            ) from exc
+        if reason == "builtin_blocked":
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "builtin_not_publishable",
+                        "message": "Built-in playbooks are global; only tenant-owned custom playbooks can be published."},
+            ) from exc
+        raise
+
+
+@app.post("/api/threat-sharing/sync")
+async def api_threat_sharing_sync(
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Pull every new network playbook the tenant has not yet received."""
+    from modules.product import threat_sharing  # noqa: PLC0415
+    added = threat_sharing.sync_network_playbooks(tenant.tenant_id)
+    return {
+        "tenant_id": tenant.tenant_id,
+        "added": added,
+        "opted_in": threat_sharing.is_opted_in(tenant.tenant_id),
+    }
+
+
+@app.get("/api/threat-sharing/network")
+async def api_threat_sharing_network(
+    limit: int = 100,
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Browse the anonymized network catalog."""
+    from modules.product import threat_sharing  # noqa: PLC0415
+    playbooks = threat_sharing.list_network_playbooks(limit=limit)
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(playbooks),
+        "playbooks": playbooks,
+    }
+
+
+# ── Delegation Receipts ───────────────────────────────────────────────────────
+# Cryptographic paper trail for agent delegation chains. Gated behind
+# ent.enforcement_plane — receipts are an authorization-enforcement primitive.
+
+def _delegation_error_to_http(exc: Exception) -> HTTPException:
+    """Translate DelegationError reason codes to structured 4xx responses."""
+    code_map = {
+        "scope_must_be_list_of_strings":      400,
+        "expires_in_seconds_must_be_positive": 400,
+        "root_delegator_must_be_human":       400,
+        "parent_not_found":                   404,
+        "parent_cross_tenant":                403,
+        "parent_revoked":                     409,
+        "parent_expired":                     409,
+        "delegator_not_parent_delegatee":     403,
+        "scope_exceeds_parent":               403,
+        "not_found":                          404,
+        "cross_tenant":                       403,
+    }
+    reason = str(exc)
+    return HTTPException(
+        status_code=code_map.get(reason, 400),
+        detail={"error": reason, "message": reason.replace("_", " ")},
+    )
+
+
+@app.post("/api/delegation/receipt")
+async def api_delegation_issue(
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    """Issue a signed delegation receipt."""
+    from modules.identity import delegation_receipt  # noqa: PLC0415
+    delegator_id = str(body.get("delegator_id") or "").strip()
+    delegatee_id = str(body.get("delegatee_id") or "").strip()
+    scope = body.get("scope")
+    expires_in = body.get("expires_in_seconds")
+    parent = body.get("parent_receipt_id")
+    ceiling = body.get("ceiling")
+    if not delegator_id or not delegatee_id:
+        raise HTTPException(status_code=400,
+                            detail="'delegator_id' and 'delegatee_id' are required")
+    if not isinstance(scope, list):
+        raise HTTPException(status_code=400, detail="'scope' must be a list")
+    try:
+        expires_in = int(expires_in)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400,
+                            detail="'expires_in_seconds' must be an integer") from None
+    try:
+        receipt = delegation_receipt.issue_receipt(
+            tenant_id=tenant.tenant_id,
+            delegator_id=delegator_id,
+            delegatee_id=delegatee_id,
+            scope=scope,
+            expires_in_seconds=expires_in,
+            parent_receipt_id=parent or None,
+            ceiling=ceiling if isinstance(ceiling, dict) else None,
+        )
+        return receipt.as_dict()
+    except delegation_receipt.DelegationError as exc:
+        raise _delegation_error_to_http(exc) from exc
+
+
+@app.get("/api/delegation/receipt/{receipt_id}")
+async def api_delegation_get(
+    receipt_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import delegation_receipt  # noqa: PLC0415
+    receipt = delegation_receipt.get_receipt(receipt_id, tenant_id=tenant.tenant_id)
+    if not receipt:
+        raise HTTPException(status_code=404, detail={"error": "not_found"})
+    return receipt.as_dict()
+
+
+@app.get("/api/delegation/receipt/{receipt_id}/verify")
+async def api_delegation_verify(
+    receipt_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import delegation_receipt  # noqa: PLC0415
+    return delegation_receipt.verify_receipt(
+        receipt_id, tenant_id=tenant.tenant_id
+    ).as_dict()
+
+
+@app.get("/api/delegation/chain/{receipt_id}")
+async def api_delegation_chain(
+    receipt_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import delegation_receipt  # noqa: PLC0415
+    chain = delegation_receipt.get_chain(receipt_id, tenant_id=tenant.tenant_id)
+    if not chain:
+        raise HTTPException(status_code=404, detail={"error": "not_found"})
+    return {
+        "receipt_id": receipt_id,
+        "depth": chain[-1].depth,
+        "human_principal_id": chain[-1].human_principal_id,
+        "chain": [r.as_dict() for r in chain],
+    }
+
+
+@app.get("/api/delegation/receipts/{agent_id}")
+async def api_delegation_receipts_for_agent(
+    agent_id: str,
+    include_revoked: bool = False,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import delegation_receipt  # noqa: PLC0415
+    receipts = delegation_receipt.get_receipts_for_agent(
+        tenant_id=tenant.tenant_id,
+        agent_id=agent_id,
+        include_revoked=include_revoked,
+    )
+    return {
+        "tenant_id": tenant.tenant_id,
+        "agent_id": agent_id,
+        "count": len(receipts),
+        "receipts": [r.as_dict() for r in receipts],
+    }
+
+
+@app.post("/api/delegation/receipt/{receipt_id}/revoke")
+async def api_delegation_revoke(
+    receipt_id: str,
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import delegation_receipt  # noqa: PLC0415
+    revoked_by = str(body.get("revoked_by") or "").strip()
+    if not revoked_by:
+        raise HTTPException(status_code=400, detail="'revoked_by' is required")
+    cascade = bool(body.get("cascade", True))
+    try:
+        return delegation_receipt.revoke_receipt(
+            receipt_id=receipt_id,
+            revoked_by=revoked_by,
+            cascade=cascade,
+            tenant_id=tenant.tenant_id,
+        )
+    except delegation_receipt.DelegationError as exc:
+        raise _delegation_error_to_http(exc) from exc
+
+
+@app.get("/api/delegation/chain/{receipt_id}/report")
+async def api_delegation_chain_report(
+    receipt_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import delegation_receipt  # noqa: PLC0415
+    report = delegation_receipt.export_chain_report(receipt_id, tenant_id=tenant.tenant_id)
+    if not report.get("found"):
+        raise HTTPException(status_code=404, detail=report)
+    return report
+
+
+# ── Threat Sharing Flywheel ───────────────────────────────────────────────────
+# Network-effect loops on top of /api/threat-sharing: hit recording, catalog
+# scoring, industry digest, auto-subscribe.
+
+@app.post("/api/threat-sharing/network/{network_playbook_id}/hit")
+async def api_flywheel_record_hit(
+    network_playbook_id: str,
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Log that a network-sourced playbook fired in this tenant."""
+    from modules.product import threat_sharing_flywheel as fw  # noqa: PLC0415
+    match_id = str(body.get("match_id") or "").strip() or None
+    hit = fw.record_network_hit(
+        tenant_id=tenant.tenant_id,
+        network_playbook_id=network_playbook_id,
+        match_id=match_id,
+    )
+    return {"recorded": hit is not None, "hit": hit}
+
+
+@app.post("/api/threat-sharing/hits/{hit_id}/confirm")
+async def api_flywheel_confirm_hit(
+    hit_id: str,
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Operator confirms a network-playbook hit was a true positive."""
+    from modules.product import threat_sharing_flywheel as fw  # noqa: PLC0415
+    confirmed_by = str(body.get("confirmed_by") or "").strip()
+    if not confirmed_by:
+        raise HTTPException(status_code=400, detail="'confirmed_by' is required")
+    ok = fw.confirm_hit(hit_id, confirmed_by)
+    if not ok:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "hit_not_found_or_already_confirmed"},
+        )
+    return {"confirmed": True, "hit_id": hit_id}
+
+
+@app.get("/api/threat-sharing/network/scored")
+async def api_flywheel_scored_catalog(
+    limit: int = 100,
+    min_confidence: float = 0.0,
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Browse the network catalog with derived confidence scores attached.
+    Sorted by confidence desc."""
+    from modules.product import threat_sharing_flywheel as fw  # noqa: PLC0415
+    items = fw.list_scored_catalog(limit=limit, min_confidence=min_confidence)
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(items),
+        "playbooks": items,
+    }
+
+
+@app.get("/api/threat-sharing/network/{network_playbook_id}/score")
+async def api_flywheel_playbook_score(
+    network_playbook_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    from modules.product import threat_sharing_flywheel as fw  # noqa: PLC0415
+    return fw.score_network_playbook(network_playbook_id).as_dict()
+
+
+@app.post("/api/threat-sharing/industry")
+async def api_flywheel_set_industry(
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Tag the tenant with an industry vertical for digest clustering."""
+    from modules.product import threat_sharing_flywheel as fw  # noqa: PLC0415
+    industry = str(body.get("industry") or "").strip()
+    try:
+        return fw.set_tenant_industry(tenant.tenant_id, industry)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": str(exc), "valid": sorted(fw.VALID_INDUSTRIES)},
+        ) from exc
+
+
+@app.get("/api/threat-sharing/industry/digest")
+async def api_flywheel_industry_digest(
+    days: int = 7,
+    limit: int = 25,
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Confirmed attacks against peers in the same industry vertical."""
+    from modules.product import threat_sharing_flywheel as fw  # noqa: PLC0415
+    return fw.get_industry_digest(tenant.tenant_id, days=days, limit=limit)
+
+
+@app.post("/api/threat-sharing/subscription")
+async def api_flywheel_set_subscription(
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Enable or disable auto-subscribe + tune the confidence threshold."""
+    from modules.product import threat_sharing_flywheel as fw  # noqa: PLC0415
+    enabled = bool(body.get("enabled"))
+    min_conf = body.get("min_confidence")
+    return fw.set_auto_subscribe(
+        tenant.tenant_id,
+        enabled=enabled,
+        min_confidence=min_conf if min_conf is not None else None,
+    )
+
+
+@app.post("/api/threat-sharing/auto-sync")
+async def api_flywheel_auto_sync(
+    tenant: TenantContext = Depends(require_feature("ent.intent_correlation")),
+):
+    """Honour auto-subscribe — pull every network playbook above the
+    tenant's confidence threshold. Falls through to plain sync if
+    auto-subscribe is off."""
+    from modules.product import threat_sharing_flywheel as fw  # noqa: PLC0415
+    return fw.auto_sync_subscribed(tenant.tenant_id)
+
+
+# ── Workflow Attestation ──────────────────────────────────────────────────────
+# Multi-hop signed DAG with replay + drift detection. Gated behind
+# ent.enforcement_plane — workflow attestation is the chain-of-custody
+# layer above per-receipt delegation.
+
+@app.post("/api/workflow/register")
+async def api_workflow_register(
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    """Register a canonical workflow. Body: {name, hops[], description?,
+    created_by?}."""
+    from modules.identity import workflow_attestation as wf  # noqa: PLC0415
+    name = str(body.get("name") or "").strip()
+    hops = body.get("hops")
+    if not isinstance(hops, list):
+        raise HTTPException(status_code=400, detail="'hops' must be a list")
+    try:
+        out = wf.register_workflow(
+            tenant_id=tenant.tenant_id,
+            name=name,
+            hops=hops,
+            description=str(body.get("description") or ""),
+            created_by=body.get("created_by"),
+        )
+        return out.as_dict()
+    except wf.WorkflowError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": str(exc)},
+        ) from exc
+
+
+@app.get("/api/workflow/{workflow_id}")
+async def api_workflow_get(
+    workflow_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import workflow_attestation as wf  # noqa: PLC0415
+    out = wf.get_workflow(workflow_id, tenant_id=tenant.tenant_id)
+    if not out:
+        raise HTTPException(status_code=404, detail={"error": "not_found"})
+    return out.as_dict()
+
+
+@app.get("/api/workflow")
+async def api_workflow_list(
+    status: str = "active",
+    limit: int = 100,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import workflow_attestation as wf  # noqa: PLC0415
+    items = wf.list_workflows(
+        tenant.tenant_id,
+        status=None if status == "all" else status,
+        limit=limit,
+    )
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(items),
+        "workflows": [w.as_dict() for w in items],
+    }
+
+
+@app.post("/api/workflow/{workflow_id}/retire")
+async def api_workflow_retire(
+    workflow_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import workflow_attestation as wf  # noqa: PLC0415
+    if not wf.retire_workflow(workflow_id, tenant_id=tenant.tenant_id):
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "not_found_or_already_retired"},
+        )
+    return {"workflow_id": workflow_id, "status": "retired"}
+
+
+@app.get("/api/workflow/{workflow_id}/replay")
+async def api_workflow_replay(
+    workflow_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    """Re-derive signature, re-verify all linked delegation receipts,
+    return a per-hop verification report."""
+    from modules.identity import workflow_attestation as wf  # noqa: PLC0415
+    return wf.replay_workflow(workflow_id, tenant_id=tenant.tenant_id).as_dict()
+
+
+@app.post("/api/workflow/{workflow_id}/observe")
+async def api_workflow_observe(
+    workflow_id: str,
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    """Record an observed run. Body: {hops[]}."""
+    from modules.identity import workflow_attestation as wf  # noqa: PLC0415
+    hops = body.get("hops")
+    if not isinstance(hops, list):
+        raise HTTPException(status_code=400, detail="'hops' must be a list")
+    try:
+        return wf.record_observation(
+            workflow_id=workflow_id,
+            observed_hops=hops,
+            tenant_id=tenant.tenant_id,
+        )
+    except wf.WorkflowError as exc:
+        reason = str(exc)
+        if reason == "not_found_or_cross_tenant":
+            raise HTTPException(status_code=404, detail={"error": reason}) from exc
+        raise HTTPException(status_code=400, detail={"error": reason}) from exc
+
+
+@app.get("/api/workflow/{workflow_id}/observations")
+async def api_workflow_observations(
+    workflow_id: str,
+    drift_only: bool = False,
+    limit: int = 50,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import workflow_attestation as wf  # noqa: PLC0415
+    items = wf.get_observations(
+        workflow_id=workflow_id,
+        drift_only=drift_only,
+        limit=limit,
+        tenant_id=tenant.tenant_id,
+    )
+    return {
+        "workflow_id": workflow_id,
+        "count": len(items),
+        "observations": items,
+    }
+
+
+# ── Compliance Posture & Incident Reconstruction ──────────────────────────────
+# Auditor-facing surfaces. compliance.py owns the framework definitions;
+# this is the operator's "prove our posture as of now" deliverable.
+
+@app.post("/api/compliance/posture/{framework}/generate")
+async def api_posture_generate(
+    framework: str,
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    """Generate a signed posture statement for the framework. Body may
+    include period_start / period_end ISO strings; both default to a
+    30-day lookback ending now."""
+    from modules.identity import compliance_posture as cp  # noqa: PLC0415
+    try:
+        out = cp.generate_posture_statement(
+            tenant_id=tenant.tenant_id,
+            framework=framework,
+            period_start=body.get("period_start"),
+            period_end=body.get("period_end"),
+        )
+        return out.as_dict()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": str(exc), "valid": sorted(cp.SUPPORTED_FRAMEWORKS)},
+        ) from exc
+
+
+@app.get("/api/compliance/posture/statements/{statement_id}")
+async def api_posture_get(
+    statement_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import compliance_posture as cp  # noqa: PLC0415
+    out = cp.get_posture_statement(statement_id, tenant_id=tenant.tenant_id)
+    if not out:
+        raise HTTPException(status_code=404, detail={"error": "not_found"})
+    return out
+
+
+@app.get("/api/compliance/posture/statements")
+async def api_posture_list(
+    framework: str | None = None,
+    limit: int = 50,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import compliance_posture as cp  # noqa: PLC0415
+    items = cp.list_posture_statements(
+        tenant.tenant_id,
+        framework=framework,
+        limit=limit,
+    )
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(items),
+        "statements": items,
+    }
+
+
+@app.get("/api/compliance/posture/statements/{statement_id}/verify")
+async def api_posture_verify(
+    statement_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import compliance_posture as cp  # noqa: PLC0415
+    return cp.verify_posture_statement(statement_id, tenant_id=tenant.tenant_id)
+
+
+@app.post("/api/compliance/incident/{agent_id}/reconstruct")
+async def api_incident_reconstruct(
+    agent_id: str,
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    """Build a signed incident dossier joining delegation receipts,
+    blast-radius simulations, intent matches, drift events, and
+    policy-guard violations for one agent within a time window."""
+    from modules.identity import compliance_posture as cp  # noqa: PLC0415
+    since = str(body.get("since") or "").strip()
+    until = body.get("until")
+    if not since:
+        raise HTTPException(status_code=400, detail="'since' is required (ISO timestamp)")
+    return cp.incident_reconstruction(
+        tenant_id=tenant.tenant_id,
+        agent_id=agent_id,
+        since=since,
+        until=until,
+    )
+
+
+@app.get("/api/compliance/incident/reports/{report_id}")
+async def api_incident_get(
+    report_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import compliance_posture as cp  # noqa: PLC0415
+    out = cp.get_incident_report(report_id, tenant_id=tenant.tenant_id)
+    if not out:
+        raise HTTPException(status_code=404, detail={"error": "not_found"})
+    return out
+
+
+# ── Honeypot Mesh / Active Deception ──────────────────────────────────────────
+# Active counterpart to deception_mesh: emit attestation-valid decoys,
+# harvest attacker TTPs. Gated behind ent.enforcement_plane.
+
+@app.post("/api/honeypot/decoy/synthetic-agent")
+async def api_honeypot_synthesize_agent(
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    """Mint a synthetic agent decoy. The returned secret_value is shown
+    once — caller seeds it on bait surfaces and discards."""
+    from modules.identity import honeypot_mesh as hp  # noqa: PLC0415
+    out = hp.synthesize_decoy_agent(
+        tenant_id=tenant.tenant_id,
+        name_hint=body.get("name_hint"),
+        metadata=body.get("metadata") if isinstance(body.get("metadata"), dict) else None,
+    )
+    return out.as_dict()
+
+
+@app.post("/api/honeypot/decoy/honeytoken")
+async def api_honeypot_seed_honeytoken(
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    """Seed a credential / certificate honeytoken. Body: {kind?, metadata?}."""
+    from modules.identity import honeypot_mesh as hp  # noqa: PLC0415
+    kind = str(body.get("kind") or "honeytoken_credential")
+    try:
+        out = hp.seed_honeytoken(
+            tenant_id=tenant.tenant_id,
+            kind=kind,
+            metadata=body.get("metadata") if isinstance(body.get("metadata"), dict) else None,
+        )
+        return out.as_dict()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
+
+
+@app.get("/api/honeypot/decoys")
+async def api_honeypot_list_decoys(
+    kind: str | None = None,
+    active_only: bool = True,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import honeypot_mesh as hp  # noqa: PLC0415
+    items = hp.get_decoy_inventory(tenant.tenant_id, kind=kind, active_only=active_only)
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(items),
+        "decoys": items,
+    }
+
+
+@app.post("/api/honeypot/decoys/{decoy_id}/deactivate")
+async def api_honeypot_deactivate(
+    decoy_id: str,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import honeypot_mesh as hp  # noqa: PLC0415
+    if not hp.deactivate_decoy(decoy_id, tenant_id=tenant.tenant_id):
+        raise HTTPException(status_code=404,
+                            detail={"error": "decoy_not_found_or_already_inactive"})
+    return {"decoy_id": decoy_id, "active": False}
+
+
+@app.post("/api/honeypot/hits/record")
+async def api_honeypot_record_hit(
+    body: dict,
+    request: Request,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    """
+    Caller (typically the edge gateway) reports that a decoy was touched.
+    Body: {decoy_id, source_ip?, user_agent?, request_path?, request_meta?}.
+    Falls back to request.client.host when source_ip is not supplied.
+    """
+    from modules.identity import honeypot_mesh as hp  # noqa: PLC0415
+    decoy_id = str(body.get("decoy_id") or "").strip()
+    if not decoy_id:
+        raise HTTPException(status_code=400, detail="'decoy_id' is required")
+    source_ip = body.get("source_ip") or (request.client.host if request.client else None)
+    out = hp.record_decoy_hit(
+        decoy_id,
+        source_ip=source_ip,
+        user_agent=body.get("user_agent") or request.headers.get("user-agent"),
+        request_path=body.get("request_path"),
+        request_meta=body.get("request_meta") if isinstance(body.get("request_meta"), dict) else None,
+        severity=str(body.get("severity") or "critical"),
+        tenant_id=tenant.tenant_id,
+    )
+    if not out:
+        raise HTTPException(status_code=404,
+                            detail={"error": "decoy_not_found_or_cross_tenant"})
+    return out
+
+
+@app.get("/api/honeypot/hits")
+async def api_honeypot_hits(
+    decoy_id: str | None = None,
+    acknowledged: bool = False,
+    limit: int = 200,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import honeypot_mesh as hp  # noqa: PLC0415
+    items = hp.get_decoy_hits(
+        tenant.tenant_id,
+        decoy_id=decoy_id,
+        acknowledged=acknowledged,
+        limit=limit,
+    )
+    return {
+        "tenant_id": tenant.tenant_id,
+        "count": len(items),
+        "hits": items,
+    }
+
+
+@app.post("/api/honeypot/hits/{hit_id}/acknowledge")
+async def api_honeypot_ack(
+    hit_id: str,
+    body: dict,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    from modules.identity import honeypot_mesh as hp  # noqa: PLC0415
+    ack_by = str(body.get("acknowledged_by") or "").strip()
+    if not ack_by:
+        raise HTTPException(status_code=400, detail="'acknowledged_by' is required")
+    if not hp.acknowledge_hit(hit_id, ack_by, tenant_id=tenant.tenant_id):
+        raise HTTPException(status_code=404,
+                            detail={"error": "hit_not_found_or_already_acknowledged"})
+    return {"acknowledged": True, "hit_id": hit_id}

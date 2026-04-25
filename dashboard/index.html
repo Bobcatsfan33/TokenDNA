@@ -220,6 +220,22 @@
   .ztix-token-card { background: linear-gradient(135deg, rgba(59,130,246,.12) 0%, rgba(99,102,241,.08) 100%); border: 1px solid rgba(59,130,246,.25); border-radius: 8px; padding: 16px; }
   .ztix-mode-btn { padding: 7px 18px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); background: var(--surface2); color: var(--muted); transition: all .12s; }
   .ztix-mode-btn.active { background: var(--accent); border-color: var(--accent); color: white; }
+
+  /* Upsell modal — fires on tier-403 from any apiFetch() call */
+  .upsell-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.65); display: flex; align-items: center; justify-content: center; z-index: 1000; backdrop-filter: blur(4px); }
+  .upsell-modal { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; width: min(520px, 92vw); padding: 28px; box-shadow: 0 24px 64px rgba(0,0,0,.55); }
+  .upsell-eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+  .upsell-title { font-size: 22px; font-weight: 700; margin-top: 6px; }
+  .upsell-message { color: var(--muted); margin-top: 10px; line-height: 1.55; }
+  .upsell-tiers { display: flex; gap: 10px; margin-top: 18px; }
+  .upsell-tier-pill { flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface2); }
+  .upsell-tier-pill.required { border-color: rgba(59,130,246,.5); background: rgba(59,130,246,.08); }
+  .upsell-tier-label { font-size: 11px; color: var(--muted); }
+  .upsell-tier-value { font-size: 14px; font-weight: 600; margin-top: 2px; text-transform: capitalize; }
+  .upsell-actions { display: flex; gap: 10px; margin-top: 22px; }
+  .upsell-btn { flex: 1; padding: 10px 14px; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); background: var(--surface2); color: var(--text); }
+  .upsell-btn.primary { background: var(--accent); border-color: var(--accent); color: white; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+  .upsell-btn.primary:hover { background: var(--accent2); }
 </style>
 </head>
 <body>
@@ -229,12 +245,31 @@ const { createElement: h, useState, useEffect, useRef } = React;
 const API_BASE = "";
 
 // ── Data fetching ─────────────────────────────────────────────────────────────
+// apiFetch wraps fetch and dispatches a window event when the server returns
+// a 403 with {error: "feature_not_entitled", ...}; the UpsellModal listens
+// for that event and renders the upgrade CTA.
+async function apiFetch(path, opts = {}) {
+  const headers = { "X-API-Key": "demo-key", ...(opts.headers || {}) };
+  const r = await fetch(`${API_BASE}${path}`, { ...opts, headers });
+  if (r.status === 403) {
+    try {
+      const cloned = r.clone();
+      const body = await cloned.json();
+      const detail = body && body.detail;
+      if (detail && detail.error === "feature_not_entitled") {
+        window.dispatchEvent(new CustomEvent("tokendna:upsell", { detail }));
+      }
+    } catch(e) { /* non-JSON 403 — caller handles it */ }
+  }
+  return r;
+}
+
 function useApi(path, fallback, interval = 0) {
   const [data, setData] = useState(fallback);
   const [loading, setLoading] = useState(true);
   const fetch_ = async () => {
     try {
-      const r = await fetch(`${API_BASE}${path}`, { headers: { "X-API-Key": "demo-key" } });
+      const r = await apiFetch(path);
       if (r.ok) setData(await r.json());
     } catch(e) {}
     finally { setLoading(false); }
@@ -1544,6 +1579,41 @@ function ZTIXExchangePage() {
 }
 
 // ── App shell ─────────────────────────────────────────────────────────────────
+// ── Upsell modal — listens for tokendna:upsell events from apiFetch ───────────
+function UpsellModal() {
+  const [detail, setDetail] = useState(null);
+  useEffect(() => {
+    const onUpsell = e => setDetail(e.detail);
+    window.addEventListener("tokendna:upsell", onUpsell);
+    return () => window.removeEventListener("tokendna:upsell", onUpsell);
+  }, []);
+  if (!detail) return null;
+  const close = () => setDetail(null);
+  const onBackdrop = e => { if (e.target === e.currentTarget) close(); };
+  const upgradeHref = detail.upgrade_url || "/billing/upgrade";
+  return h("div", { className: "upsell-overlay", onClick: onBackdrop },
+    h("div", { className: "upsell-modal", role: "dialog", "aria-modal": "true" },
+      h("div", { className: "upsell-eyebrow" }, "Enterprise Feature"),
+      h("div", { className: "upsell-title" }, detail.feature_name || detail.feature),
+      h("div", { className: "upsell-message" }, detail.message),
+      h("div", { className: "upsell-tiers" },
+        h("div", { className: "upsell-tier-pill" },
+          h("div", { className: "upsell-tier-label" }, "Your tier"),
+          h("div", { className: "upsell-tier-value" }, detail.tenant_tier || "—"),
+        ),
+        h("div", { className: "upsell-tier-pill required" },
+          h("div", { className: "upsell-tier-label" }, "Required"),
+          h("div", { className: "upsell-tier-value" }, detail.required_tier || "—"),
+        ),
+      ),
+      h("div", { className: "upsell-actions" },
+        h("button", { className: "upsell-btn", onClick: close }, "Not now"),
+        h("a", { className: "upsell-btn primary", href: upgradeHref }, "Upgrade"),
+      ),
+    ),
+  );
+}
+
 function App() {
   const [page, setPage] = useState("overview");
 
@@ -1603,6 +1673,7 @@ function App() {
       ),
       h("div", { className:"content" }, h(Page)),
     ),
+    h(UpsellModal),
   );
 }
 
