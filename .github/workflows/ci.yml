@@ -359,7 +359,10 @@ jobs:
           --health-retries 10
     env:
       TOKENDNA_DB_BACKEND: postgres
-      TOKENDNA_PG_DSN: postgresql://tokendna:tokendna@localhost:5432/tokendna
+      # `+psycopg` selects the psycopg v3 driver (we ship psycopg 3 in
+      # requirements.txt, not the legacy psycopg2 default that SQLAlchemy
+      # otherwise tries to import).
+      TOKENDNA_PG_DSN: postgresql+psycopg://tokendna:tokendna@localhost:5432/tokendna
     steps:
       - uses: actions/checkout@v4
 
