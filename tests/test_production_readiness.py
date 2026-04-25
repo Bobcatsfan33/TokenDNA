@@ -502,42 +502,42 @@ class TestNormalizeDsnForPsycopg:
     """
 
     def test_strips_psycopg_driver_suffix(self):
-        from modules.storage.pg_connection import _normalize_dsn_for_psycopg
+        from modules.storage.pg_connection import normalize_dsn_for_psycopg
 
         assert (
-            _normalize_dsn_for_psycopg(
+            normalize_dsn_for_psycopg(
                 "postgresql+psycopg://u:p@host:5432/db"
             )
             == "postgresql://u:p@host:5432/db"
         )
 
     def test_strips_arbitrary_driver_suffix(self):
-        from modules.storage.pg_connection import _normalize_dsn_for_psycopg
+        from modules.storage.pg_connection import normalize_dsn_for_psycopg
 
         assert (
-            _normalize_dsn_for_psycopg(
+            normalize_dsn_for_psycopg(
                 "postgres+asyncpg://u:p@host/db"
             )
             == "postgres://u:p@host/db"
         )
 
     def test_passes_through_plain_postgresql_url(self):
-        from modules.storage.pg_connection import _normalize_dsn_for_psycopg
+        from modules.storage.pg_connection import normalize_dsn_for_psycopg
 
         assert (
-            _normalize_dsn_for_psycopg("postgresql://u:p@host:5432/db")
+            normalize_dsn_for_psycopg("postgresql://u:p@host:5432/db")
             == "postgresql://u:p@host:5432/db"
         )
 
     def test_passes_through_keyvalue_conninfo(self):
-        from modules.storage.pg_connection import _normalize_dsn_for_psycopg
+        from modules.storage.pg_connection import normalize_dsn_for_psycopg
 
         kv = "host=localhost port=5432 dbname=tokendna user=u password=p"
-        assert _normalize_dsn_for_psycopg(kv) == kv
+        assert normalize_dsn_for_psycopg(kv) == kv
 
     def test_does_not_strip_for_non_postgres_scheme(self):
-        from modules.storage.pg_connection import _normalize_dsn_for_psycopg
+        from modules.storage.pg_connection import normalize_dsn_for_psycopg
 
         # Only postgres/postgresql schemes get the driver-suffix treatment.
         weird = "mysql+pymysql://u:p@host/db"
-        assert _normalize_dsn_for_psycopg(weird) == weird
+        assert normalize_dsn_for_psycopg(weird) == weird

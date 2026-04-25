@@ -361,8 +361,13 @@ jobs:
       TOKENDNA_DB_BACKEND: postgres
       # `+psycopg` selects the psycopg v3 driver (we ship psycopg 3 in
       # requirements.txt, not the legacy psycopg2 default that SQLAlchemy
-      # otherwise tries to import).
+      # otherwise tries to import). Direct psycopg consumers normalise
+      # this back to a plain libpq URI via normalize_dsn_for_psycopg().
       TOKENDNA_PG_DSN: postgresql+psycopg://tokendna:tokendna@localhost:5432/tokendna
+      # Modules not yet ported to Postgres (attestation_store, agent_lifecycle,
+      # mcp_inspector) fall back to SQLite. The default /data path isn't
+      # writable on the runner, so point them at /tmp.
+      DATA_DB_PATH: /tmp/tokendna-ci.db
     steps:
       - uses: actions/checkout@v4
 

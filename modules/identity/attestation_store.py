@@ -28,7 +28,9 @@ def _db_path() -> str:
 
 
 def _pg_dsn() -> str:
-    return str(os.getenv("TOKENDNA_PG_DSN", "")).strip()
+    from modules.storage.pg_connection import normalize_dsn_for_psycopg
+
+    return normalize_dsn_for_psycopg(str(os.getenv("TOKENDNA_PG_DSN", "")).strip())
 
 
 def _encode_cursor(order_value: str, item_id: str) -> str:

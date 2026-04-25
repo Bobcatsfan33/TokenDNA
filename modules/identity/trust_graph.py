@@ -71,7 +71,9 @@ def _get_conn() -> sqlite3.Connection:
 
 
 def _pg_dsn() -> str:
-    return os.getenv("TOKENDNA_PG_DSN", "")
+    from modules.storage.pg_connection import normalize_dsn_for_psycopg
+
+    return normalize_dsn_for_psycopg(os.getenv("TOKENDNA_PG_DSN", ""))
 
 
 def _use_pg() -> bool:
