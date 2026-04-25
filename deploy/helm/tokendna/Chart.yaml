@@ -1,0 +1,16 @@
+apiVersion: v2
+name: tokendna
+description: TokenDNA — AI agent identity security platform
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/Bobcatsfan33/TokenDNA
+sources:
+  - https://github.com/Bobcatsfan33/TokenDNA
+maintainers:
+  - name: TokenDNA Platform
+keywords:
+  - identity
+  - ai-agents
+  - attestation
+  - security
