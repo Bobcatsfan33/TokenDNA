@@ -31,6 +31,31 @@ def _has(value: str | None) -> bool:
     return bool(str(value or "").strip())
 
 
+# Minimum acceptable length for any HMAC key in production.
+_MIN_KEY_BYTES = 16
+
+# Known dev-default HMAC values that ship in source. Anything matching these
+# in a prod deploy is treated as unset.
+_KNOWN_DEV_DEFAULTS: dict[str, str] = {
+    "TOKENDNA_DELEGATION_SECRET": "dev-delegation-secret-do-not-use-in-prod",
+    "TOKENDNA_WORKFLOW_SECRET": "dev-workflow-secret-do-not-use-in-prod",
+    "TOKENDNA_HONEYPOT_SECRET": "dev-honeypot-secret-do-not-use-in-prod",
+    "TOKENDNA_POSTURE_SECRET": "dev-posture-secret-do-not-use-in-prod",
+}
+
+
+def _is_strong_secret(env_var: str) -> tuple[bool, str]:
+    """Return (ok, detail) for an HMAC env var."""
+    raw = os.getenv(env_var, "")
+    if not raw:
+        return False, f"{env_var} not set"
+    if raw == _KNOWN_DEV_DEFAULTS.get(env_var):
+        return False, f"{env_var} matches published dev default"
+    if len(raw.encode("utf-8")) < _MIN_KEY_BYTES:
+        return False, f"{env_var} shorter than {_MIN_KEY_BYTES} bytes"
+    return True, "ok"
+
+
 def run_preflight(environment: str | None = None) -> dict[str, Any]:
     env = (environment or os.getenv("ENVIRONMENT", "dev")).strip().lower()
     checks: list[dict[str, Any]] = []
@@ -45,6 +70,16 @@ def run_preflight(environment: str | None = None) -> dict[str, Any]:
     add_check("oidc_audience_set", _has(os.getenv("OIDC_AUDIENCE")), "OIDC_AUDIENCE required")
     add_check("dna_hmac_key_set", _has(os.getenv("DNA_HMAC_KEY")), "DNA_HMAC_KEY required")
     add_check("audit_hmac_key_set", _has(os.getenv("AUDIT_HMAC_KEY")), "AUDIT_HMAC_KEY required")
+
+    # Production HMAC secret gate — value-level checks, not just presence.
+    for env_var in (
+        "TOKENDNA_DELEGATION_SECRET",
+        "TOKENDNA_WORKFLOW_SECRET",
+        "TOKENDNA_HONEYPOT_SECRET",
+        "TOKENDNA_POSTURE_SECRET",
+    ):
+        ok, detail = _is_strong_secret(env_var)
+        add_check(env_var.lower() + "_strong", ok, detail)
 
     ca_alg = (os.getenv("ATTESTATION_CA_ALG", "HS256") or "HS256").upper()
     ca_backend = (os.getenv("ATTESTATION_KEY_BACKEND", "software") or "software").lower()

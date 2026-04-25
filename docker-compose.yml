@@ -61,6 +61,12 @@ services:
       - AUDIT_BACKEND=all
       - AUDIT_LOG_PATH=/var/log/aegis/audit.jsonl
       - ENVIRONMENT=production
+      # Triggers modules/security/secret_gate.assert_production_secrets() at
+      # startup. The four TOKENDNA_*_SECRET values must be supplied via .env
+      # (or, preferably, AWS Secrets Manager / Vault — see docs/ops/backup-dr.md).
+      - TOKENDNA_ENV=production
+      # Force Postgres in production. SQLite fallback is dev-only.
+      - DATA_BACKEND=postgres
     env_file:
       - .env
     deploy:
