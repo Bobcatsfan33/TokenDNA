@@ -90,3 +90,40 @@ def test_malformed_filter_raises_filter_error():
         parse('eq "x"')        # no attr
     with pytest.raises(FilterError):
         parse('')              # empty
+
+
+# ── ReDoS / DoS guards ────────────────────────────────────────────────────────
+
+
+def test_long_whitespace_input_does_not_hang():
+    """
+    Adversarial whitespace-only payload: must reject quickly, not catastrophically
+    backtrack.  CodeQL py/polynomial-redos flagged the pre-fix _TOKEN_RE pattern
+    on inputs starting with '\\n    ' repetitions; the rewrite handles whitespace
+    in a separate cheap match instead of as a top-level alternation arm.
+    """
+    import time
+
+    payload = ("\n    " * 600) + 'userName eq "alice"'
+    start = time.perf_counter()
+    f = parse(payload)
+    elapsed = time.perf_counter() - start
+    # Generous bound — pre-fix this could go quadratic; sub-second proves linear.
+    assert elapsed < 1.0, f"tokenize took {elapsed:.3f}s on whitespace-padded input"
+    assert f({"userName": "alice"}) is True
+
+
+def test_filter_length_cap_rejects_oversize():
+    huge = 'userName eq "' + ("a" * 10_000) + '"'
+    with pytest.raises(FilterError, match="maximum length"):
+        parse(huge)
+
+
+def test_token_count_cap_rejects_compound_explosion():
+    # Many short ``pr`` clauses — exceeds _MAX_TOKENS without tripping the
+    # length cap.  ``a pr`` = 2 tokens; joined by ``or`` (1 token); ~3 tokens
+    # per ~8 chars => 350 reps yields ~1050 tokens in ~2800 chars.
+    expr = " or ".join(["a pr"] * 350)
+    assert len(expr) < 4096
+    with pytest.raises(FilterError, match="token count"):
+        parse(expr)

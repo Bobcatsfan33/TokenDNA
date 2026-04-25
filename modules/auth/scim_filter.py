@@ -48,9 +48,15 @@ class UnsupportedFilter(FilterError):
 # ── Lexer ─────────────────────────────────────────────────────────────────────
 
 
+# Whitespace is consumed in its own dedicated match so the token regex
+# is a flat alternation of mutually-exclusive concrete patterns.  Folding
+# `\s+` into `_TOKEN_RE` triggers CodeQL py/polynomial-redos because the
+# engine cannot prove the whitespace branch will not interact with the
+# other branches under adversarial input.
+_WS_RE = re.compile(r"\s+")
+
 _TOKEN_RE = re.compile(
     r"""
-    \s+                              |   # whitespace
     (?P<lparen>\()                   |
     (?P<rparen>\))                   |
     (?P<lbracket>\[)                 |
@@ -62,6 +68,12 @@ _TOKEN_RE = re.compile(
     """,
     re.VERBOSE | re.IGNORECASE,
 )
+
+# Defense-in-depth caps on filter expressions — most production IdPs send
+# filters under 1 KB; the ceiling here is chosen to be large enough for
+# legitimate compound filters while bounding parser CPU under attack.
+_MAX_FILTER_LEN = 4096
+_MAX_TOKENS = 1024
 
 
 @dataclass
@@ -77,11 +89,19 @@ _OPS = {"eq", "ne", "sw", "ew", "co", "gt", "lt", "ge", "le", "pr"}
 def _tokenize(expr: str) -> list[_Token]:
     out: list[_Token] = []
     i = 0
-    while i < len(expr):
+    n = len(expr)
+    while i < n:
+        ws = _WS_RE.match(expr, i)
+        if ws:
+            i = ws.end()
+            if i >= n:
+                break
         m = _TOKEN_RE.match(expr, i)
         if not m:
             raise FilterError(f"unrecognized character at offset {i}: {expr[i:i+10]!r}")
         i = m.end()
+        if len(out) >= _MAX_TOKENS:
+            raise FilterError(f"filter exceeds maximum token count ({_MAX_TOKENS})")
         if m.group("lparen"):
             out.append(_Token("lparen", "("))
         elif m.group("rparen"):
@@ -104,8 +124,6 @@ def _tokenize(expr: str) -> list[_Token]:
                 out.append(_Token("op", w))
             else:
                 out.append(_Token("attr", m.group("word")))
-        else:  # whitespace
-            continue
     return out
 
 
@@ -298,6 +316,10 @@ def parse(expr: str) -> Filter:
     """Parse a SCIM filter expression and return an evaluator callable."""
     if not expr or not expr.strip():
         raise FilterError("empty filter expression")
+    if len(expr) > _MAX_FILTER_LEN:
+        raise FilterError(
+            f"filter expression exceeds maximum length ({_MAX_FILTER_LEN} chars)"
+        )
     tokens = _tokenize(expr)
     if not tokens:
         raise FilterError("empty filter expression")
