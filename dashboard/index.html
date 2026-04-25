@@ -220,6 +220,8 @@
   .ztix-token-card { background: linear-gradient(135deg, rgba(59,130,246,.12) 0%, rgba(99,102,241,.08) 100%); border: 1px solid rgba(59,130,246,.25); border-radius: 8px; padding: 16px; }
   .ztix-mode-btn { padding: 7px 18px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); background: var(--surface2); color: var(--muted); transition: all .12s; }
   .ztix-mode-btn.active { background: var(--accent); border-color: var(--accent); color: white; }
+  .ztix-demo-banner { display: flex; align-items: center; gap: 12px; padding: 12px 16px; margin: 0 0 16px 0; border-radius: 8px; background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.35); color: var(--text); font-size: 13px; line-height: 1.55; }
+  .ztix-demo-badge { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: .12em; background: var(--yellow); color: #1a1206; }
 
   /* Upsell modal — fires on tier-403 from any apiFetch() call */
   .upsell-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.65); display: flex; align-items: center; justify-content: center; z-index: 1000; backdrop-filter: blur(4px); }
@@ -1412,6 +1414,22 @@ function ZTIXExchangePage() {
     h("div", { className: "section-head" },
       h("div", { className: "section-title" }, "\ud83d\udd04 ZTIX Exchange Flow"),
       h("div", { className: "section-sub" }, "Zero-Trust Identity Exchange \u2014 how two agents establish trust and exchange identity tokens"),
+    ),
+    // Honesty banner: this page is a sales-demo of ZTIX, not the
+    // production exchange. The returned tokens are unsigned. The real
+    // ZTIX surface lives in the federation Periodic Proof-of-Control
+    // routes; a signed-token endpoint will ship at /api/ztix/token later.
+    h("div", { className: "ztix-demo-banner" },
+      h("span", { className: "ztix-demo-badge" }, "DEMO"),
+      h("span", null,
+        "This page simulates a ZTIX exchange for walkthroughs. The token returned is ",
+        h("strong", null, "not"),
+        " cryptographically bound to any key. The production ZTIX surface is the ",
+        h("a", { href: "/api/federation/verifiers/proof-registry",
+                 style: { color: "var(--accent)", textDecoration: "none" } },
+          "Periodic Proof-of-Control"),
+        " feature on federation verifiers.",
+      ),
     ),
     h("div", { style: { display: "flex", gap: 8, marginBottom: 20 } },
       h("button", { className: `ztix-mode-btn${mode === "walkthrough" ? " active" : ""}`, onClick: () => setMode("walkthrough") }, "Walkthrough"),

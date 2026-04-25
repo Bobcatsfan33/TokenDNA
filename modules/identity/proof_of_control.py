@@ -1,45 +1,52 @@
 """
-TokenDNA — ZTIX Continuous Proof-of-Control (Expansion #2)
+TokenDNA — ZTIX Periodic Proof-of-Control (Expansion #2)
 
 Closes the credential-persistence attack vector: a verifier whose private key
 has been lost, rotated, or stolen can still pass static certificate checks
-indefinitely. Continuous Proof-of-Control requires every verifier to
+indefinitely. Periodic Proof-of-Control requires every verifier to
 cryptographically prove they still hold their key within a configurable
 interval — or get automatically demoted from quorum participation.
 
-Background (original roadmap note)
-───────────────────────────────────
-"Substantially covered by PR #18's federation lifecycle hardening.
- Remaining short-interval proof renewal is ~1 week. Slot as a side sprint
- in Phase 3 (between 3-2 and 3-3)."
+Naming note
+───────────
+Originally documented as "Continuous Proof-of-Control"; renamed to
+"Periodic" because the production interval is hourly, not continuous.
+"Continuous" implied minutes-or-less and oversold the guarantee. The
+default interval is now 1 hour (was 24h, which left a stolen key
+effective for up to a day). Tighten further via
+``POC_DEFAULT_INTERVAL_HOURS=1`` (or 0 environments not yet supported —
+1h is the floor).
 
-The `verifier_reputation` module already provides challenge-response mechanics
-(issue_challenge / resolve_challenge / expire_pending_challenges). This module
-adds the *interval enforcement layer* on top:
+Auto-wiring
+───────────
+``verifier_reputation.resolve_challenge`` calls ``record_proof`` inline
+on a CORRECT outcome. The previous integration-by-docstring pattern
+("API layer wires these; no cross-module import needed") was a footgun —
+if a future engineer forgot the second call, verifiers silently got
+demoted on the next sweep. The auto-wire is best-effort (try/except)
+so a proof_of_control outage cannot break challenge resolution.
+
+The `verifier_reputation` module owns the challenge-response mechanics
+(issue_challenge / resolve_challenge / expire_pending_challenges). This
+module adds the *interval enforcement layer* on top:
 
   1. Proof Interval Registry
-     Each verifier has a configurable proof interval (default 24 h, min 1 h).
-     Operators can tighten to 4 h for high-security environments.
+     Each verifier has a configurable proof interval (default 1 h,
+     min 1 h, max 168 h). Operators tune up for low-volume tenants.
 
   2. Proof Recording
-     When a verifier successfully resolves a challenge (CORRECT outcome via
-     verifier_reputation), the API layer calls record_proof() here. This
-     advances `next_proof_due` by the configured interval.
+     Every CORRECT challenge resolution auto-advances ``next_proof_due``
+     by the configured interval (see auto-wiring above).
 
   3. Sweep + Auto-Demotion
-     sweep_expired_proofs() finds verifiers past their proof due date and:
+     sweep_expired_proofs() finds verifiers past their proof due date:
        - Updates their proof status to OVERDUE / EXPIRED
        - Demotes them in trust_federation_verifiers (status → 'unverified')
        - Returns a list of demoted verifier IDs for alerting
 
   4. Re-activation
-     Once a demoted verifier proves control again (record_proof() called),
-     sweep will promote them back to 'active' on the next successful proof.
-
-Integration points (API layer wires these; no cross-module import needed):
-  - After verifier_reputation.resolve_challenge() → CORRECT → call record_proof()
-  - Periodic sweep: POST /api/federation/verifiers/proof-sweep
-  - Status check: GET /api/federation/verifiers/{id}/proof-status
+     Once a demoted verifier proves control again, sweep promotes them
+     back to 'active' on the next successful proof.
 
 API
 ───
@@ -68,7 +75,11 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-_DEFAULT_INTERVAL_HOURS: int = int(os.getenv("POC_DEFAULT_INTERVAL_HOURS", "24"))
+# Default proof interval. 1 hour is the new default (was 24 hours) — see
+# the module docstring's "Naming note" for why. Operators wanting tighter
+# windows would need to lower _MIN_INTERVAL_HOURS below 1; the floor is
+# left at 1h to bound the scheduler load.
+_DEFAULT_INTERVAL_HOURS: int = int(os.getenv("POC_DEFAULT_INTERVAL_HOURS", "1"))
 _MIN_INTERVAL_HOURS: int = 1
 _MAX_INTERVAL_HOURS: int = 168  # 1 week
 

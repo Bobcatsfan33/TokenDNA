@@ -491,6 +491,26 @@ def resolve_challenge(
 
     # Refresh materialized reputation score
     _refresh_reputation(challenge.verifier_id, challenge.tenant_id)
+
+    # Auto-wire ZTIX Periodic Proof-of-Control: a CORRECT challenge IS the
+    # proof. Recording it here (instead of leaving the call to integration
+    # docstrings) closes the drift risk where a future caller forgets to
+    # invoke record_proof and verifiers silently get demoted.
+    # Wrapped in try/except so a proof_of_control outage cannot block the
+    # resolve flow — the worst case is one missed proof window, not a
+    # broken challenge resolution.
+    if outcome == ChallengeOutcome.CORRECT:
+        try:
+            from modules.identity import proof_of_control as _poc  # noqa: PLC0415
+            _poc.record_proof(challenge.verifier_id, challenge.tenant_id)
+        except Exception:  # noqa: BLE001
+            import logging  # noqa: PLC0415
+            logging.getLogger(__name__).exception(
+                "proof_of_control.record_proof failed for verifier=%s tenant=%s "
+                "(challenge=%s) — continuing",
+                challenge.verifier_id, challenge.tenant_id, challenge_id,
+            )
+
     return challenge
 
 
