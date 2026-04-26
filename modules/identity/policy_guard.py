@@ -62,10 +62,34 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
+from modules.security.audit_log import AuditEventType, AuditOutcome, log_event
 from modules.storage.ddl_runner import run_ddl
 from modules.storage.pg_connection import AdaptedCursor, get_db_conn
 
 logger = logging.getLogger(__name__)
+
+
+def _emit_audit(
+    event_type: AuditEventType,
+    outcome: AuditOutcome,
+    *,
+    tenant_id: str,
+    subject: str,
+    resource: str,
+    detail: dict[str, Any],
+) -> None:
+    """Best-effort audit emission — never block the caller on logging failure."""
+    try:
+        log_event(
+            event_type,
+            outcome,
+            tenant_id=tenant_id,
+            subject=subject,
+            resource=resource,
+            detail=detail,
+        )
+    except Exception:
+        logger.exception("audit log emit failed for %s", event_type)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -388,6 +412,22 @@ def evaluate(action: PolicyAction) -> GuardEvaluation:
             action.target_policy_name, triggered_rules,
         )
 
+    _emit_audit(
+        AuditEventType.POLICY_EVALUATED,
+        AuditOutcome.SUCCESS if worst_disposition == Disposition.ALLOW
+        else AuditOutcome.FAILURE,
+        tenant_id=action.tenant_id,
+        subject=action.actor_id,
+        resource=action.target_policy_name or action.target_policy_id,
+        detail={
+            "request_id": action.request_id,
+            "action_type": action.action_type,
+            "disposition": worst_disposition.value,
+            "rules_triggered": triggered_rules,
+            "violation_id": violation_id,
+        },
+    )
+
     return GuardEvaluation(
         request_id=action.request_id,
         actor_id=action.actor_id,
@@ -518,7 +558,21 @@ def approve_violation(
         """, (now, approved_by, note, violation_id, tenant_id))
         if cur.rowcount == 0:
             return None
-    return get_violation(violation_id, tenant_id)
+    violation = get_violation(violation_id, tenant_id)
+    _emit_audit(
+        AuditEventType.POLICY_VIOLATION_APPROVED,
+        AuditOutcome.SUCCESS,
+        tenant_id=tenant_id,
+        subject=approved_by,
+        resource=violation.target_policy_name if violation else violation_id,
+        detail={
+            "violation_id": violation_id,
+            "actor_id": violation.actor_id if violation else None,
+            "disposition": violation.disposition.value if violation else None,
+            "note": note,
+        },
+    )
+    return violation
 
 
 def reject_violation(
@@ -538,7 +592,21 @@ def reject_violation(
         """, (now, rejected_by, note, violation_id, tenant_id))
         if cur.rowcount == 0:
             return None
-    return get_violation(violation_id, tenant_id)
+    violation = get_violation(violation_id, tenant_id)
+    _emit_audit(
+        AuditEventType.POLICY_VIOLATION_REJECTED,
+        AuditOutcome.SUCCESS,
+        tenant_id=tenant_id,
+        subject=rejected_by,
+        resource=violation.target_policy_name if violation else violation_id,
+        detail={
+            "violation_id": violation_id,
+            "actor_id": violation.actor_id if violation else None,
+            "disposition": violation.disposition.value if violation else None,
+            "note": note,
+        },
+    )
+    return violation
 
 
 def violation_stats(tenant_id: str) -> dict[str, Any]:

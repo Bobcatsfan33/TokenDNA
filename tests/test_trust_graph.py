@@ -563,3 +563,230 @@ class TestNodeIDHelpers:
         eid1 = tg._edge_id("t", "A", "B", "uses_tool")
         eid2 = tg._edge_id("t", "B", "A", "uses_tool")
         assert eid1 != eid2
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RSA gap detections — POLICY_SCOPE_MODIFICATION + PERMISSION_WEIGHT_DRIFT
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestPolicyScopeModificationAnomaly:
+    """RSA gap 1 — agent self-elevation via policy modification."""
+
+    def test_self_modification_fires_critical(self, tg):
+        anomalies = tg.record_policy_modification(
+            TENANT,
+            target_agent="agent-A",
+            modified_by="agent-A",
+            policy_id="pol-1",
+            scope=["s3:write:*"],
+        )
+        types = [a.anomaly_type for a in anomalies]
+        assert "POLICY_SCOPE_MODIFICATION" in types
+        sm = next(a for a in anomalies if a.anomaly_type == "POLICY_SCOPE_MODIFICATION")
+        assert sm.severity == "critical"
+        assert sm.context["self_modification"] is True
+        assert sm.context["modifier"] == "agent-A"
+        assert sm.context["target"] == "agent-A"
+
+    def test_other_modifies_no_self_anomaly(self, tg):
+        anomalies = tg.record_policy_modification(
+            TENANT,
+            target_agent="agent-A",
+            modified_by="admin-bot",
+            policy_id="pol-1",
+            scope=["s3:read:*"],
+        )
+        types = [a.anomaly_type for a in anomalies]
+        assert "POLICY_SCOPE_MODIFICATION" not in types
+
+    def test_self_modification_includes_policy_and_scope(self, tg):
+        anomalies = tg.record_policy_modification(
+            TENANT,
+            target_agent="agent-X",
+            modified_by="agent-X",
+            policy_id="pol-42",
+            scope=["iam:CreateAccessKey", "iam:PutRolePolicy"],
+        )
+        sm = next(a for a in anomalies if a.anomaly_type == "POLICY_SCOPE_MODIFICATION")
+        assert sm.context["policy_id"] == "pol-42"
+        assert sm.context["scope"] == [
+            "iam:CreateAccessKey",
+            "iam:PutRolePolicy",
+        ]
+
+    def test_required_args_validated(self, tg):
+        with pytest.raises(ValueError):
+            tg.record_policy_modification(
+                TENANT, target_agent="", modified_by="m", policy_id="p"
+            )
+        with pytest.raises(ValueError):
+            tg.record_policy_modification(
+                TENANT, target_agent="t", modified_by="", policy_id="p"
+            )
+        with pytest.raises(ValueError):
+            tg.record_policy_modification(
+                TENANT, target_agent="t", modified_by="m", policy_id=""
+            )
+
+
+class TestPermissionWeightDriftAnomaly:
+    """RSA gap 2 — modifier→target edge weight grows past threshold without attestation."""
+
+    def test_below_threshold_no_anomaly(self, tg):
+        # First call creates the edge with weight=1; threshold is 4.
+        anomalies = tg.record_policy_modification(
+            TENANT,
+            target_agent="agent-T",
+            modified_by="admin-bot",
+            policy_id="pol-1",
+        )
+        assert all(a.anomaly_type != "PERMISSION_WEIGHT_DRIFT" for a in anomalies)
+
+    def test_growth_past_threshold_with_no_attestation_fires_high(self, tg):
+        # Drive the edge weight up to the threshold by repeated modifications
+        # from the same actor against the same target.
+        threshold = tg._PERMISSION_WEIGHT_DRIFT_THRESHOLD
+        last_anomalies: list = []
+        for i in range(threshold):
+            last_anomalies = tg.record_policy_modification(
+                TENANT,
+                target_agent="agent-T",
+                modified_by="admin-bot",
+                policy_id=f"pol-{i}",
+            )
+        types = [a.anomaly_type for a in last_anomalies]
+        assert "PERMISSION_WEIGHT_DRIFT" in types
+        drift = next(
+            a for a in last_anomalies if a.anomaly_type == "PERMISSION_WEIGHT_DRIFT"
+        )
+        assert drift.severity == "high"
+        assert drift.context["edge_weight"] >= threshold
+        assert drift.context["modifier"] == "admin-bot"
+        assert drift.context["target"] == "agent-T"
+        assert drift.context["attestation_present"] is False
+
+    def test_growth_with_recent_attestation_suppresses_anomaly(self, tg):
+        # Seed a recent attested_by edge for the modifier so the attestation
+        # gate suppresses PERMISSION_WEIGHT_DRIFT.
+        from datetime import datetime, timezone
+
+        modifier = "admin-bot"
+        target = "agent-T"
+        now_iso = datetime.now(timezone.utc).isoformat()
+        tg._upsert_nodes(
+            TENANT,
+            [("agent", modifier, "{}"), ("verifier", "ver-1", "{}")],
+            now_iso,
+        )
+        tg._upsert_edges(
+            TENANT,
+            [("agent", modifier, "verifier", "ver-1", "attested_by")],
+            now_iso,
+        )
+
+        threshold = tg._PERMISSION_WEIGHT_DRIFT_THRESHOLD
+        last_anomalies: list = []
+        for i in range(threshold):
+            last_anomalies = tg.record_policy_modification(
+                TENANT,
+                target_agent=target,
+                modified_by=modifier,
+                policy_id=f"pol-{i}",
+            )
+        assert all(
+            a.anomaly_type != "PERMISSION_WEIGHT_DRIFT" for a in last_anomalies
+        ), "attestation in window should suppress drift anomaly"
+
+    def test_self_modification_and_drift_can_coexist(self, tg):
+        # Self-mod fires per call (CRITICAL); drift fires once weight crosses
+        # threshold (HIGH).  The final call should yield both.
+        threshold = tg._PERMISSION_WEIGHT_DRIFT_THRESHOLD
+        last_anomalies: list = []
+        for i in range(threshold):
+            last_anomalies = tg.record_policy_modification(
+                TENANT,
+                target_agent="agent-S",
+                modified_by="agent-S",
+                policy_id=f"pol-{i}",
+            )
+        types = sorted(a.anomaly_type for a in last_anomalies)
+        assert "POLICY_SCOPE_MODIFICATION" in types
+        assert "PERMISSION_WEIGHT_DRIFT" in types
+
+    def test_out_of_window_first_seen_suppresses_drift(self, tg, monkeypatch):
+        """
+        If the modifier→target edge was first seen more than
+        PERMISSION_DRIFT_WINDOW_DAYS ago, drift should NOT fire even when
+        the weight has crossed the threshold.  Otherwise an old edge that
+        slowly accumulates weight would trip the gate without representing
+        rapid recent growth.
+        """
+        monkeypatch.setattr(tg, "PERMISSION_DRIFT_WINDOW_DAYS", 1)
+        threshold = tg._PERMISSION_WEIGHT_DRIFT_THRESHOLD
+        for i in range(threshold):
+            tg.record_policy_modification(
+                TENANT,
+                target_agent="agent-O",
+                modified_by="admin-bot",
+                policy_id=f"pol-{i}",
+            )
+        # Backdate the edge's first_seen so it falls outside the 1-day window.
+        from datetime import datetime, timedelta, timezone
+
+        backdated = (
+            datetime.now(timezone.utc) - timedelta(days=10)
+        ).isoformat()
+        src = tg._node_id(TENANT, "agent", "admin-bot")
+        dst = tg._node_id(TENANT, "agent", "agent-O")
+        eid = tg._edge_id(TENANT, src, dst, tg._POLICY_MOD_EDGE_TYPE)
+        conn = tg._get_conn()
+        try:
+            conn.execute(
+                "UPDATE tg_edges SET first_seen=? WHERE edge_id=?",
+                (backdated, eid),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        anomalies = tg.record_policy_modification(
+            TENANT,
+            target_agent="agent-O",
+            modified_by="admin-bot",
+            policy_id="pol-final",
+        )
+        assert all(
+            a.anomaly_type != "PERMISSION_WEIGHT_DRIFT" for a in anomalies
+        )
+
+    def test_unparseable_timestamp_does_not_crash(self, tg):
+        """
+        Defensive: if first_seen is not ISO8601 parseable for any reason,
+        _check_permission_weight_drift returns None instead of raising.
+        """
+        tg.record_policy_modification(
+            TENANT,
+            target_agent="agent-Q",
+            modified_by="admin-bot",
+            policy_id="pol-q",
+        )
+        src = tg._node_id(TENANT, "agent", "admin-bot")
+        dst = tg._node_id(TENANT, "agent", "agent-Q")
+        eid = tg._edge_id(TENANT, src, dst, tg._POLICY_MOD_EDGE_TYPE)
+        conn = tg._get_conn()
+        try:
+            conn.execute(
+                "UPDATE tg_edges SET first_seen=? WHERE edge_id=?",
+                ("not-a-date", eid),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        anomalies = tg.record_policy_modification(
+            TENANT,
+            target_agent="agent-Q",
+            modified_by="admin-bot",
+            policy_id="pol-q-2",
+        )
+        assert isinstance(anomalies, list)

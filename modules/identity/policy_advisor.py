@@ -45,12 +45,36 @@ from collections import Counter, defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
+from modules.security.audit_log import AuditEventType, AuditOutcome, log_event
 from modules.storage.pg_connection import AdaptedCursor, get_db_conn
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def _emit_audit(
+    event_type: AuditEventType,
+    outcome: AuditOutcome,
+    *,
+    tenant_id: str,
+    subject: str,
+    resource: str,
+    detail: dict[str, Any],
+) -> None:
+    """Best-effort audit emission — never block the caller on logging failure."""
+    try:
+        log_event(
+            event_type,
+            outcome,
+            tenant_id=tenant_id,
+            subject=subject,
+            resource=resource,
+            detail=detail,
+        )
+    except Exception:
+        logger.exception("audit log emit failed for %s", event_type)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -681,6 +705,22 @@ def analyze_and_generate(
     for s in new_suggestions:
         _persist_suggestion(s)
 
+    if new_suggestions:
+        _emit_audit(
+            AuditEventType.POLICY_SUGGESTION_GENERATED,
+            AuditOutcome.SUCCESS,
+            tenant_id=tenant_id,
+            subject="policy_advisor",
+            resource="policy_suggestions",
+            detail={
+                "analysis_window_hours": lookback_hours,
+                "violations_analyzed": len(violations),
+                "denied_decisions_analyzed": len(denied),
+                "suggestions_generated": len(new_suggestions),
+                "suggestion_ids": [s.suggestion_id for s in new_suggestions],
+            },
+        )
+
     return {
         "tenant_id": tenant_id,
         "analysis_window_hours": lookback_hours,
@@ -796,7 +836,23 @@ def approve_suggestion(
             json.dumps(reg_result) if reg_result else None,
             suggestion_id, tenant_id,
         ))
-    return get_suggestion(suggestion_id, tenant_id)
+    final = get_suggestion(suggestion_id, tenant_id)
+    _emit_audit(
+        AuditEventType.POLICY_SUGGESTION_APPROVED,
+        AuditOutcome.SUCCESS,
+        tenant_id=tenant_id,
+        subject=approved_by,
+        resource=suggestion_id,
+        detail={
+            "suggestion_id": suggestion_id,
+            "amendment_type": s.amendment_type.value,
+            "confidence": s.confidence,
+            "regression_tested": run_regression,
+            "regression_passed": reg_passed,
+            "note": note,
+        },
+    )
+    return final
 
 
 def reject_suggestion(
@@ -816,7 +872,20 @@ def reject_suggestion(
         """, (now, rejected_by, note, suggestion_id, tenant_id))
         if cur.rowcount == 0:
             return None
-    return get_suggestion(suggestion_id, tenant_id)
+    final = get_suggestion(suggestion_id, tenant_id)
+    _emit_audit(
+        AuditEventType.POLICY_SUGGESTION_REJECTED,
+        AuditOutcome.SUCCESS,
+        tenant_id=tenant_id,
+        subject=rejected_by,
+        resource=suggestion_id,
+        detail={
+            "suggestion_id": suggestion_id,
+            "amendment_type": final.amendment_type.value if final else None,
+            "note": note,
+        },
+    )
+    return final
 
 
 def bounded_auto_tighten(
@@ -876,6 +945,22 @@ def bounded_auto_tighten(
         except Exception as exc:
             logger.warning("Auto-tighten error for %s: %s", s.suggestion_id, exc)
             errors.append(s.suggestion_id)
+
+    if applied or skipped_regression or errors:
+        _emit_audit(
+            AuditEventType.POLICY_AUTO_TIGHTENED,
+            AuditOutcome.SUCCESS if not errors else AuditOutcome.FAILURE,
+            tenant_id=tenant_id,
+            subject=auto_approved_by,
+            resource="policy_suggestions",
+            detail={
+                "confidence_threshold": confidence_threshold,
+                "candidates_evaluated": len(pending),
+                "applied_ids": applied,
+                "skipped_regression_ids": skipped_regression,
+                "error_ids": errors,
+            },
+        )
 
     return {
         "tenant_id": tenant_id,

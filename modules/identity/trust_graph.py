@@ -18,7 +18,8 @@ is set — the same recursive CTE syntax works on Postgres 8.4+.
 
 Anomaly detection
 -----------------
-Three signal types are evaluated on every insert:
+Five signal types are evaluated.  The first three fire on UIS event ingest;
+the last two fire when ``record_policy_modification`` is invoked.
 
   NEW_TOOL_IN_STABLE_AGENT_TOOLKIT
     An agent that has made ≥ MIN_STABLE_OBSERVATIONS observations suddenly
@@ -30,6 +31,15 @@ Three signal types are evaluated on every insert:
 
   DELEGATION_DEPTH_EXCEEDED
     A delegation chain for a tenant exceeds MAX_DELEGATION_DEPTH hops.
+
+  POLICY_SCOPE_MODIFICATION  (RSA gap 1, CRITICAL)
+    An agent modifies a policy that affects its own permission boundary —
+    the CrowdStrike Fortune-50 self-elevation pattern.
+
+  PERMISSION_WEIGHT_DRIFT    (RSA gap 2, HIGH)
+    A (modifier → target) policy-modification edge accumulates weight
+    >= _PERMISSION_WEIGHT_DRIFT_THRESHOLD within PERMISSION_DRIFT_WINDOW_DAYS
+    while the modifier has no attestation event in the same window.
 """
 
 from __future__ import annotations
@@ -602,6 +612,219 @@ def _check_delegation_depth(
             },
         )
     return None
+
+
+# ── RSA gap detections — POLICY_SCOPE_MODIFICATION + PERMISSION_WEIGHT_DRIFT ──
+#
+# These two anomaly types address the CrowdStrike Fortune-50 scenario from RSA
+# 2026: an agent that quietly writes policy edges expanding its own permission
+# boundary, or a permission edge that silently grows in weight without a
+# corresponding attestation event in the same window.
+#
+# Both are CRITICAL/HIGH severity — operators should freeze the agent and
+# require human approval before any further state change.
+
+# Edge type used by record_policy_modification — represents
+# "<modifier_agent> modified the policy granting permissions to <target_agent>".
+_POLICY_MOD_EDGE_TYPE = "modifies_policy_for"
+
+# Weight at which a (modifier → target) policy-mod edge is considered
+# "rapidly growing" for the PERMISSION_WEIGHT_DRIFT check.  Combined with the
+# PERMISSION_DRIFT_WINDOW_DAYS time gate and the absence-of-attestation gate,
+# this captures the >2x growth signal without needing schema columns for
+# baseline weight snapshots.
+_PERMISSION_WEIGHT_DRIFT_THRESHOLD: int = max(
+    2, int(round(PERMISSION_GROWTH_THRESHOLD * 2))
+)
+
+
+def record_policy_modification(
+    tenant_id: str,
+    *,
+    target_agent: str,
+    modified_by: str,
+    policy_id: str,
+    scope: list[str] | None = None,
+    now: str | None = None,
+) -> list[GraphAnomaly]:
+    """
+    Record a policy / permission modification into the trust graph and run the
+    two RSA gap detections.
+
+    Parameters
+    ----------
+    target_agent
+        Agent label whose permission set this policy affects.
+    modified_by
+        Agent label of the actor making the modification.  When this equals
+        ``target_agent`` it is a self-modification — POLICY_SCOPE_MODIFICATION
+        fires CRITICAL.
+    policy_id
+        Stable identifier for the policy being modified.
+    scope
+        Optional list of permission strings the policy grants.  Stored on the
+        edge meta_json for downstream review.
+    now
+        ISO8601 timestamp; defaults to current UTC.
+
+    Returns
+    -------
+    list[GraphAnomaly]
+        Any anomalies fired by this modification.
+    """
+    if not target_agent or not modified_by or not policy_id:
+        raise ValueError("target_agent, modified_by, policy_id are required")
+
+    when = now or _now()
+
+    # Persist the policy node + the modifier→target edge.  The edge weight is
+    # incremented on every call so PERMISSION_WEIGHT_DRIFT can see growth.
+    nodes: list[tuple[str, str, str]] = [
+        ("policy", f"policy:{policy_id}", json.dumps({"scope": scope or []})),
+        ("agent", modified_by, "{}"),
+        ("agent", target_agent, "{}"),
+    ]
+    edges: list[tuple[str, str, str, str, str]] = [
+        ("agent", modified_by, "agent", target_agent, _POLICY_MOD_EDGE_TYPE),
+    ]
+    _upsert_nodes(tenant_id, nodes, when)
+    _upsert_edges(tenant_id, edges, when)
+
+    anomalies: list[GraphAnomaly] = []
+
+    # Detection 1: self-modification — modifier is changing its own scope.
+    if modified_by == target_agent:
+        anomalies.append(
+            GraphAnomaly(
+                anomaly_type="POLICY_SCOPE_MODIFICATION",
+                tenant_id=tenant_id,
+                detected_at=when,
+                subject_node=target_agent,
+                detail=(
+                    f"Agent '{modified_by}' modified policy '{policy_id}' "
+                    f"affecting its own permission boundary."
+                ),
+                severity="critical",
+                context={
+                    "modifier": modified_by,
+                    "target": target_agent,
+                    "policy_id": policy_id,
+                    "scope": scope or [],
+                    "self_modification": True,
+                },
+            )
+        )
+
+    # Detection 2: permission weight drift — same modifier→target edge has
+    # accumulated rapid growth recently with no attestation event for the
+    # modifier in the drift window.
+    drift = _check_permission_weight_drift(
+        tenant_id=tenant_id,
+        modified_by=modified_by,
+        target_agent=target_agent,
+        policy_id=policy_id,
+        now=when,
+    )
+    if drift is not None:
+        anomalies.append(drift)
+
+    return anomalies
+
+
+def _check_permission_weight_drift(
+    *,
+    tenant_id: str,
+    modified_by: str,
+    target_agent: str,
+    policy_id: str,
+    now: str,
+) -> GraphAnomaly | None:
+    """
+    Fire PERMISSION_WEIGHT_DRIFT if a (modifier → target) policy-modification
+    edge has weight at or above ``_PERMISSION_WEIGHT_DRIFT_THRESHOLD``,
+    was first seen within ``PERMISSION_DRIFT_WINDOW_DAYS``, and the modifier
+    has no ``attested_by`` edge within the same window.
+    """
+    if _use_pg():
+        # Postgres-backed anomaly detection lives behind the same SQLite path
+        # for now; the existing detectors gate the same way.
+        return None
+
+    src_id = _node_id(tenant_id, "agent", modified_by)
+    dst_id = _node_id(tenant_id, "agent", target_agent)
+    eid = _edge_id(tenant_id, src_id, dst_id, _POLICY_MOD_EDGE_TYPE)
+
+    with _lock:
+        conn = _get_conn()
+        try:
+            edge_row = conn.execute(
+                "SELECT weight, first_seen FROM tg_edges WHERE edge_id=?",
+                (eid,),
+            ).fetchone()
+            if edge_row is None:
+                return None
+            weight = int(edge_row["weight"])
+            if weight < _PERMISSION_WEIGHT_DRIFT_THRESHOLD:
+                return None
+
+            # Time gate: edge must have been first seen within the drift window.
+            from datetime import datetime, timedelta, timezone
+
+            try:
+                first_seen = datetime.fromisoformat(edge_row["first_seen"])
+                now_dt = datetime.fromisoformat(now)
+            except ValueError:
+                return None
+            if first_seen.tzinfo is None:
+                first_seen = first_seen.replace(tzinfo=timezone.utc)
+            if now_dt.tzinfo is None:
+                now_dt = now_dt.replace(tzinfo=timezone.utc)
+            window = timedelta(days=PERMISSION_DRIFT_WINDOW_DAYS)
+            if (now_dt - first_seen) > window:
+                return None
+
+            # Attestation gate: any attested_by edge from the modifier within
+            # the same window suppresses the anomaly.
+            attested = conn.execute(
+                """
+                SELECT 1 FROM tg_edges
+                WHERE tenant_id=? AND src_node=? AND edge_type='attested_by'
+                  AND last_seen >= ?
+                LIMIT 1
+                """,
+                (
+                    tenant_id,
+                    src_id,
+                    (now_dt - window).isoformat(),
+                ),
+            ).fetchone()
+            if attested:
+                return None
+
+            return GraphAnomaly(
+                anomaly_type="PERMISSION_WEIGHT_DRIFT",
+                tenant_id=tenant_id,
+                detected_at=now,
+                subject_node=target_agent,
+                detail=(
+                    f"Modifier '{modified_by}' has accumulated {weight} "
+                    f"unattested policy modifications affecting "
+                    f"'{target_agent}' within the last "
+                    f"{PERMISSION_DRIFT_WINDOW_DAYS} days."
+                ),
+                severity="high",
+                context={
+                    "modifier": modified_by,
+                    "target": target_agent,
+                    "policy_id": policy_id,
+                    "edge_weight": weight,
+                    "threshold": _PERMISSION_WEIGHT_DRIFT_THRESHOLD,
+                    "window_days": PERMISSION_DRIFT_WINDOW_DAYS,
+                    "attestation_present": False,
+                },
+            )
+        finally:
+            conn.close()
 
 
 def _delegation_depth(tenant_id: str, start_node_id: str) -> int:

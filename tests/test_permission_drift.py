@@ -526,3 +526,137 @@ class TestDriftAPI:
         data = resp.json()
         assert data["observation_count"] == 1
         assert data["observations"][0]["scope_weight"] == 1.0
+
+
+# ===========================================================================
+# Drift detection — edge cases (Sprint A hardening)
+# ===========================================================================
+
+
+class TestDriftDetectionEdgeCases:
+    """
+    Production-realistic edges for the drift-detection algorithm.  Adds the
+    coverage Sprint A's audit identified as missing — the existing tests cover
+    threshold + ordering + dedup, but not boundary behavior, zero baseline,
+    cross-tenant isolation, or out-of-window observations.
+    """
+
+    def test_growth_exactly_at_threshold_fires(self, pd, monkeypatch):
+        """Boundary: growth_factor == DRIFT_THRESHOLD_MULTIPLIER must alert."""
+        monkeypatch.setattr(pd, "DRIFT_THRESHOLD_MULTIPLIER", 2.0)
+        monkeypatch.setattr(pd, "DRIFT_STABLE_MIN_OBSERVATIONS", 2)
+        _seed_old_obs(pd, TENANT, AGENT, POLICY, 2.0, days_ago=10)
+        # current scope size = 4 → growth = 4/2 = 2.0 (exactly at threshold)
+        pd.record_observation(
+            tenant_id=TENANT,
+            agent_id=AGENT,
+            policy_id=POLICY,
+            scope=["r", "w", "x", "d"],
+        )
+        alerts = pd.list_alerts(TENANT)
+        assert len(alerts) == 1, "growth at threshold must fire"
+        assert alerts[0].growth_factor >= 2.0
+
+    def test_zero_baseline_weight_does_not_alert(self, pd, monkeypatch):
+        """A zero-weight baseline cannot ratio meaningfully — must not crash."""
+        monkeypatch.setattr(pd, "DRIFT_STABLE_MIN_OBSERVATIONS", 2)
+        # Seed a zero-weight baseline observation
+        _seed_old_obs(pd, TENANT, AGENT, POLICY, 0.0, days_ago=10)
+        pd.record_observation(
+            tenant_id=TENANT,
+            agent_id=AGENT,
+            policy_id=POLICY,
+            scope=["r", "w", "x", "d", "e"],  # weight=5
+        )
+        alerts = pd.list_alerts(TENANT)
+        assert len(alerts) == 0, "zero baseline must not produce a divide-by-zero alert"
+
+    def test_observations_outside_window_are_ignored(self, pd, monkeypatch):
+        """
+        Old observations beyond DRIFT_BASELINE_DAYS must not contribute to
+        the baseline — otherwise an attacker can suppress drift detection by
+        keeping ancient large-scope observations on file.
+        """
+        monkeypatch.setattr(pd, "DRIFT_BASELINE_DAYS", 7)
+        monkeypatch.setattr(pd, "DRIFT_THRESHOLD_MULTIPLIER", 2.0)
+        monkeypatch.setattr(pd, "DRIFT_STABLE_MIN_OBSERVATIONS", 2)
+        # 30-day-old huge observation that should be ignored
+        _seed_old_obs(pd, TENANT, AGENT, POLICY, 100.0, days_ago=30)
+        # In-window baseline + growth
+        _seed_old_obs(pd, TENANT, AGENT, POLICY, 1.0, days_ago=5)
+        pd.record_observation(
+            tenant_id=TENANT,
+            agent_id=AGENT,
+            policy_id=POLICY,
+            scope=["r"] * 5,  # 5x the in-window baseline
+        )
+        alerts = pd.list_alerts(TENANT)
+        assert len(alerts) == 1, (
+            "drift must be computed against the in-window baseline only"
+        )
+        assert alerts[0].baseline_weight == 1.0
+
+    def test_tenants_isolated_in_detection(self, pd, monkeypatch):
+        """
+        A drift in tenant A must not surface in tenant B's alert list, even
+        when the same agent_id and policy_id strings are reused.
+        """
+        monkeypatch.setattr(pd, "DRIFT_THRESHOLD_MULTIPLIER", 2.0)
+        monkeypatch.setattr(pd, "DRIFT_STABLE_MIN_OBSERVATIONS", 2)
+        for tenant in (TENANT, TENANT_B):
+            _seed_old_obs(pd, tenant, AGENT, POLICY, 1.0, days_ago=10)
+        # Drive drift on tenant A only
+        pd.record_observation(
+            tenant_id=TENANT,
+            agent_id=AGENT,
+            policy_id=POLICY,
+            scope=["x"] * 6,
+        )
+        alerts_a = pd.list_alerts(TENANT)
+        alerts_b = pd.list_alerts(TENANT_B)
+        assert len(alerts_a) >= 1
+        assert len(alerts_b) == 0, "tenant B must not see tenant A's drift"
+
+    def test_attested_observations_lower_unattested_count(self, pd, monkeypatch):
+        """
+        unattested_changes counts only the observations within the window
+        that lacked attestation.  Mixing attested + unattested must reflect
+        accurately on the alert.
+        """
+        monkeypatch.setattr(pd, "DRIFT_THRESHOLD_MULTIPLIER", 2.0)
+        monkeypatch.setattr(pd, "DRIFT_STABLE_MIN_OBSERVATIONS", 2)
+        _seed_old_obs(pd, TENANT, AGENT, POLICY, 1.0, days_ago=10)
+        pd.record_observation(
+            tenant_id=TENANT, agent_id=AGENT, policy_id=POLICY,
+            scope=["a", "b", "c"], has_attestation=True,
+        )
+        pd.record_observation(
+            tenant_id=TENANT, agent_id=AGENT, policy_id=POLICY,
+            scope=["a", "b", "c", "d", "e"], has_attestation=False,
+        )
+        alerts = pd.list_alerts(TENANT)
+        assert len(alerts) == 1
+        # Only the seeded one (False, since _seed_old_obs hard-codes 0)
+        # plus the second record_observation (False) are unattested.  The
+        # explicitly attested call must NOT count.
+        assert alerts[0].unattested_changes == 2
+        assert alerts[0].observations_in_window == 3
+
+    def test_per_policy_isolation_within_same_agent(self, pd, monkeypatch):
+        """
+        Drift on (agent, policy-A) must not surface as a (agent, policy-B)
+        alert.  The (agent_id, policy_id) tuple is the alert key.
+        """
+        monkeypatch.setattr(pd, "DRIFT_THRESHOLD_MULTIPLIER", 2.0)
+        monkeypatch.setattr(pd, "DRIFT_STABLE_MIN_OBSERVATIONS", 2)
+        _seed_old_obs(pd, TENANT, AGENT, "pol-A", 1.0, days_ago=10)
+        _seed_old_obs(pd, TENANT, AGENT, "pol-B", 1.0, days_ago=10)
+        pd.record_observation(
+            tenant_id=TENANT, agent_id=AGENT, policy_id="pol-A",
+            scope=["x"] * 6,
+        )
+        alerts = pd.list_alerts(TENANT, agent_id=AGENT)
+        pol_a_alerts = [a for a in alerts if a.policy_id == "pol-A"]
+        pol_b_alerts = [a for a in alerts if a.policy_id == "pol-B"]
+        assert len(pol_a_alerts) == 1
+        assert len(pol_b_alerts) == 0
