@@ -36,5 +36,5 @@ numpy==1.26.4                    # lightweight — used for profile distance mat
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
 pydantic==2.7.1                  # FastAPI model validation (v2 API)
-python-dotenv==1.0.1             # load .env in development
+python-dotenv==1.2.1             # load .env in development
 eval_type_backport>=0.2.0   # Python 3.9 compat for PEP 604 type unions
