@@ -80,6 +80,12 @@ class AuditEventType(str, Enum):
     PERMISSION_DRIFT_DETECTED   = "permission.drift.detected"
     PERMISSION_DRIFT_APPROVED   = "permission.drift.approved"
 
+    # MCP runtime inspection (Sprint MCP)
+    MCP_CALL_INSPECTED          = "mcp.call.inspected"
+    MCP_VIOLATION_DETECTED      = "mcp.violation.detected"
+    MCP_CHAIN_PATTERN_MATCHED   = "mcp.chain.pattern_matched"
+    MCP_VIOLATION_RESOLVED      = "mcp.violation.resolved"
+
     # Threat detection (TokenDNA)
     THREAT_IMPOSSIBLE_TRAVEL = "threat.impossible_travel"
     THREAT_TOR_EXIT          = "threat.tor_exit"
