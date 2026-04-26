@@ -1,5 +1,5 @@
 # TokenDNA — CLAUDE.md
-_Last updated: 2026-04-26 (post-MCP-Sprint merge)_
+_Last updated: 2026-04-26 (post-Sprint B merge — FAT sprint active)_
 
 ## What This Project Is
 
@@ -91,13 +91,30 @@ These existed before today's audit; CLAUDE.md previously listed them as "not sta
 - 16 new tests covering subsequence matcher, time-window gating, trust_graph integration, audit emission.
 - Coverage: `mcp_inspector` 97% (up from ~65% baseline).
 
+### Sprint B — Demo Polish + Runtime Risk Engine packaging (shipped 2026-04-26, PR #48)
+
+- `BlastRadiusResult.recent_anomalies_in_blast` + `recent_mcp_violations_in_blast` — single API call surfaces live Trust Graph anomalies + open MCP violations attached to nodes inside the blast set.
+- 5 new built-in Intent Correlation playbooks tying Sprint-A and MCP signals into kill chains (RSA gap 1, RSA gap 2, MCP read→exfil, MCP privilege ladder, multi-vector finale). Total: 15 → 20.
+- `scripts/demo_runtime_risk_engine.py` — replayable, idempotent 10-min demo arc covering all seven scenes (baseline → drift → self-mod → MCP chain → deception → blast radius → verdict).
+- README rewritten to lead with the Runtime Risk Engine pitch, three RSA gaps closed, integrated detection loop diagram, commercial tier map.
+
 ### What is NOT done yet
 
-#### Sprint B — Demo Polish + Runtime Risk Engine packaging (ACTIVE)
-- Connect Blast Radius visualization to live Trust Graph data
-- Seed Intent Correlation with sample playbook library
-- 10-minute demo arc: Blast Radius → Intent Feed → Deception Mesh catch → MCP violation → policy_guard reject
-- Update README, API spec, docs — package as "TokenDNA Runtime Risk Engine"
+#### FAT — Federated Agent Trust (ACTIVE)
+The moat-widening expansion identified during Sprint B. Closes the cross-organization agent attribution blind spot from RSA'26 — the "SAML moment" for AI agents.
+
+- New `modules/identity/federation.py` — federation handshake + mutual trust establishment between TokenDNA-using orgs at the agent level (not the API-key level).
+- Extend `verifier_reputation_network` with cross-org agent reputation queries and signed reputation evidence chains.
+- Extend `trust_graph` with `crosses_org` edge type carrying both orgs' policy IDs.
+- Extend `policy_guard` with a cross-org rule (`CONST-06`: cross-org action without dual attestation → BLOCK).
+- New audit event types: `FEDERATION_HANDSHAKE_INITIATED`, `FEDERATION_TRUST_ESTABLISHED`, `CROSS_ORG_ACTION_BLOCKED`, `CROSS_ORG_ACTION_APPROVED`, `WHY_EVIDENCE_MISSING` (warning-only; tightens to BLOCK when Reasoning Attestation ships).
+- `ent.federation` commercial tier gate.
+- Tests to ≥80% coverage on every touched module.
+
+**FAT v1 done when:** federation handshake works between two simulated orgs in tests; trust graph carries cross-org edges; policy_guard rejects cross-org actions without dual attestation; ≥80% coverage on `federation.py`; integration test proves the cross-org demo arc end-to-end.
+
+#### Reasoning Attestation (DEFERRED — separate future feature)
+Identified during Sprint B as the #1 moat-widening opportunity. Captures `WHO + WHAT + WHEN + WHY` (prompt context, model identifier, reasoning trace) for every agent action as a signed bundle. Required for EU AI Act / GDPR Art. 22 / NIST AI RMF compliance. **Not in FAT v1 scope** — FAT will flag missing reasoning bundles as warnings now and tighten to required when Reasoning Attestation ships.
 
 #### Modules deferred to post-customer (or lighter post-Sprint-B cycle)
 - `agent_lifecycle.py` — ghost-agent enforcement; needs trust_graph integration to be production-grade. Low moat cost (table-stakes feature).
@@ -117,19 +134,28 @@ All 5 items shipped (anomaly detections, audit emission, drift algorithm tests, 
 
 All 5 items shipped (chain pattern matcher with bounded-gap subsequence matching + confidence scoring, trust_graph agent→tool edge emission, MCP_* audit events, 16 new tests bringing coverage to 97%).
 
-### Sprint B — Demo polish + RSA Runtime Risk Engine packaging — ACTIVE (started 2026-04-26 post-MCP merge)
+### Sprint B — Demo polish + RSA Runtime Risk Engine packaging — ✅ DONE (PR #48, merged 2026-04-26)
+
+All 4 items shipped (live blast radius enrichment, 5 new playbooks, 10-min demo arc script, README repackaging). 1632/1632 tests pass on `main`.
+
+### FAT — Federated Agent Trust — ACTIVE (started 2026-04-26 post Sprint B merge)
+
+Cross-org agent attribution — the RSA'26 blind spot no major vendor closed. Build the federation primitives that turn TokenDNA from an intra-org runtime risk engine into the cross-org agent trust standard.
 
 | # | Task | Est |
 |---|------|-----|
-| 1 | Live Blast Radius ↔ Trust Graph wiring (replace mocked simulation data with real graph queries) | 2 days |
-| 2 | Seed Intent Correlation with playbook library (data-exfil, privilege escalation, lateral movement, etc.) | 1 day |
-| 3 | 10-min demo arc script: Blast Radius → Intent Feed → Deception Mesh catch → MCP Inspector violation → policy_guard reject (live data, end-to-end) | 1 day |
-| 4 | README + API spec + marketing site copy: package the integrated story as "TokenDNA Runtime Risk Engine" | 1 day |
+| 1 | New `modules/identity/federation.py` — handshake + mutual trust establishment between TokenDNA orgs | 2 days |
+| 2 | Extend `verifier_reputation_network` with cross-org agent reputation queries + signed evidence chains | 1 day |
+| 3 | Extend `trust_graph` with `crosses_org` edge type carrying both orgs' policy IDs + cross-org anomaly detection | 1 day |
+| 4 | Extend `policy_guard` with `CONST-06`: cross-org action without dual attestation → BLOCK | 0.5 day |
+| 5 | Federation audit events + `ent.federation` tier gate + cross-org demo extension to `demo_runtime_risk_engine.py` | 1 day |
+| 6 | Buffer / coverage hardening | 0.5 day |
 
-**Done when:** demo arc runs reliably 5x in a row against a fresh deployment; README + landing-page copy match the demo; tier gates verified on all demo touchpoints.
+**FAT v1 done when:** federation handshake works between two simulated orgs in tests; trust graph carries `crosses_org` edges; policy_guard rejects cross-org actions without dual attestation; ≥80% coverage on `federation.py`; integration test proves the cross-org demo arc end-to-end.
 
-### Deferred (post-customer or lighter sprint cycle)
+### Deferred (post-customer or future sprint cycle)
 
+- **Reasoning Attestation** — the #1 moat-widening feature identified during Sprint B. Will be its own sprint after FAT lands. Captures `WHY` for every agent action (prompt context, model identifier, reasoning trace, alternatives considered) as a signed bundle. EU AI Act / GDPR Art. 22 / NIST AI RMF compliance prerequisite.
 - `agent_lifecycle.py` ghost-agent offboarding hardening
 - `cert_dashboard.py` lifecycle automation
 - Phase 7+ (no scope yet — a live customer's feedback will reshape this)
@@ -139,9 +165,19 @@ All 5 items shipped (chain pattern matcher with bounded-gap subsequence matching
 ## Sequencing (do not deviate)
 
 ```
-Sprint A  →  MCP Inspector hardening  →  Sprint B  →  hard pivot to non-engineering tracks
-                                                       (customer-facing dashboard, SOC 2,
-                                                        onboarding docs, GTM artifacts)
+Sprint A  →  MCP Inspector hardening  →  Sprint B  →  FAT (Federated Agent Trust)
+                                                            │
+                                                            ▼
+                                                       Reasoning Attestation
+                                                       (next moat-widening
+                                                        feature; deferred
+                                                        to its own sprint)
+                                                            │
+                                                            ▼
+                                                       Hard pivot to non-engineering
+                                                       tracks (customer-facing
+                                                       dashboard, SOC 2, onboarding
+                                                       docs, GTM artifacts)
 ```
 
 After Sprint B: agent_lifecycle and cert_dashboard get a lighter sprint cycle only if a customer signal demands them, otherwise they wait.
