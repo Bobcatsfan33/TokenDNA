@@ -34,13 +34,30 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def isolated_db(tmp_path):
-    """Run every test against a fresh SQLite DB in a temp dir."""
+    """
+    Run every test against a clean store.
+
+    SQLite mode: each test gets a fresh tmp file (default).
+    Postgres mode: the tmp file is unused; instead we TRUNCATE the
+    passport tables before each test so state cannot leak between
+    tests sharing the same database.
+    """
     db_path = str(tmp_path / "test_passport.db")
     with mock.patch.dict(os.environ, {"DATA_DB_PATH": db_path}):
         # Re-import after env patch so db path is picked up
         import importlib
         import modules.identity.passport as pm
         importlib.reload(pm)
+        from modules.storage.db_backend import should_use_postgres
+
+        if should_use_postgres():
+            from modules.storage.pg_connection import get_db_conn
+
+            pm.init_db()
+            with get_db_conn() as conn:
+                conn.execute("TRUNCATE TABLE passport_evidence, passports CASCADE")
+                conn.commit()
+
         yield pm
 
 

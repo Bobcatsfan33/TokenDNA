@@ -320,17 +320,33 @@ def init_db() -> None:
         ]:
             cur.execute(idx_sql)
 
-        # Seed built-in tool profiles (idempotent — INSERT OR IGNORE)
-        now = _iso_now()
-        for tool in _BUILTIN_TOOLS:
-            cur.execute(
+        # Seed built-in tool profiles (idempotent).  SQLite uses
+        # ``INSERT OR IGNORE``; Postgres uses ``ON CONFLICT DO NOTHING``
+        # against the (tool_name, tenant_id) primary key.
+        from modules.storage.db_backend import should_use_postgres
+
+        if should_use_postgres():
+            seed_sql = """
+                INSERT INTO mcp_tool_profiles
+                    (tool_name, tenant_id, access_mode, description,
+                     allowed_params, forbidden_params, param_constraints,
+                     created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (tool_name, tenant_id) DO NOTHING
                 """
+        else:
+            seed_sql = """
                 INSERT OR IGNORE INTO mcp_tool_profiles
                     (tool_name, tenant_id, access_mode, description,
                      allowed_params, forbidden_params, param_constraints,
                      created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+                """
+
+        now = _iso_now()
+        for tool in _BUILTIN_TOOLS:
+            cur.execute(
+                seed_sql,
                 (
                     tool["tool_name"],
                     tool["tenant_id"],

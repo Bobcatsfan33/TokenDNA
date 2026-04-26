@@ -102,14 +102,23 @@ def init_db() -> None:
             )
             """
         )
-        # Non-destructive migration for DBs created before certificate lifecycle fields.
-        for ddl in (
-            "ALTER TABLE attestation_certificates ADD COLUMN signature_alg TEXT NOT NULL DEFAULT 'HS256'",
-            "ALTER TABLE attestation_certificates ADD COLUMN ca_key_id TEXT NOT NULL DEFAULT 'tokendna-ca-default'",
-            "ALTER TABLE attestation_certificates ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
-            "ALTER TABLE attestation_certificates ADD COLUMN revoked_at TEXT",
-            "ALTER TABLE attestation_certificates ADD COLUMN revocation_reason TEXT",
+        # Non-destructive migration for DBs created before certificate
+        # lifecycle fields.  SQLite has no ``ADD COLUMN IF NOT EXISTS`` so
+        # we swallow OperationalError on duplicate columns; Postgres aborts
+        # the entire transaction on a failed DDL, so we use ``IF NOT EXISTS``
+        # there to avoid poisoning subsequent CREATE TABLEs in the same
+        # alembic baseline transaction.
+        from modules.storage.db_backend import should_use_postgres
+
+        _if_not_exists = "IF NOT EXISTS " if should_use_postgres() else ""
+        for col_ddl in (
+            f"signature_alg TEXT NOT NULL DEFAULT 'HS256'",
+            f"ca_key_id TEXT NOT NULL DEFAULT 'tokendna-ca-default'",
+            f"status TEXT NOT NULL DEFAULT 'active'",
+            f"revoked_at TEXT",
+            f"revocation_reason TEXT",
         ):
+            ddl = f"ALTER TABLE attestation_certificates ADD COLUMN {_if_not_exists}{col_ddl}"
             try:
                 cur.execute(ddl)
             except Exception:
