@@ -1,5 +1,5 @@
 # TokenDNA — CLAUDE.md
-_Last updated: 2026-04-26 (post-FAT merge — Demo Suite + Shadow Mode sprint active)_
+_Last updated: 2026-04-26 (post-Demo+Shadow merge — engineering arc DONE)_
 
 ## What This Project Is
 
@@ -108,22 +108,21 @@ These existed before today's audit; CLAUDE.md previously listed them as "not sta
 - Demo Act 2 (scenes 8-10): handshake → cross-org BLOCK → cross-org ALLOW.
 - Coverage: `federation.py` 94%; full suite 1664/1664 pass.
 
-### What is NOT done yet
+### Demo Suite v2 + Shadow Mode trial (shipped 2026-04-26, PR #50)
 
-#### Demo Suite v2 + Shadow Mode trial (ACTIVE)
-Built per the data-sourcing strategy from the Sprint-B-end conversation. Turns TokenDNA from "demo arc with no backdrop" into "30-day operational environment a sales engineer can drive live."
+- `data/demo_fixtures/` — 4 committed JSON fixtures (no external API key dependencies): 15 MITRE ATT&CK techniques, 12 IP/ASN/geo samples, 7 Acme + 3 Beta agent archetypes, 6 multi-stage attack chain templates.
+- `scripts/demo_seed_v2.py` — idempotent seeder. Sample run produces 70 agents / 71,704 UIS events / 16 drift observations / 5 violations / 5 advisor suggestions / 8 honeytokens / 1 federation trust / 79 attack-chain trace events.
+- `modules/product/shadow_mode.py` — activation API (env var or programmatic, per-tenant overrides) + `FileTailJSONLConnector` + `generate_trial_report` + headline-finding builder.
+- `scripts/shadow_trial_report.py` — text or JSON CLI render of the trial report.
+- `docs/demo/RUN_DEMO.md` — full walkthrough for both paths (seeded demo and shadow trial).
+- Coverage: `shadow_mode.py` 96%; full suite 1687/1687 pass.
 
-- `scripts/demo_seed_v2.py` — generates ~30 days of patterned UIS history for ~50 Acme + ~20 Beta agents with realistic distributions: auth events with diverse IP/ASN, drift baselines, prior policy violations, honeytokens, intent_correlation matches, federation handshake established.
-- `data/demo_fixtures/` — committed curated samples (no external API key requirements): MITRE ATT&CK technique subset, IP geo samples (no MaxMind dep), agent archetype templates, multi-stage attack chain templates.
-- `modules/product/shadow_mode.py` (new) — observe-only mode toggle + connector framework + "what we found" report generator. Lets a prospect run TokenDNA against their real audit logs in pure observe mode for 14 days.
-- `scripts/shadow_trial_report.py` — CLI that renders the trial report from existing audit events + violations + drift alerts.
-- `docs/demo/RUN_DEMO.md` — pre-flight + step-by-step walkthrough for spinning up and running the demo.
-- Tests for everything new.
+### Engineering arc — ✅ COMPLETE
 
-**Done when:** `scripts/demo_seed_v2.py` produces a fresh deployment with 30 days of realistic operational history; `shadow_mode.py` ingests real audit-log JSONL without taking enforcement actions; `RUN_DEMO.md` walks a non-engineer through clone → install → seed → run; full suite green.
+The five-sprint engineering arc planned after the 2026-04-25 audit is done. Every shipped module is at or above the 7-item completeness bar. Next phase is non-engineering tracks (customer-facing dashboard rebuild, SOC 2 evidence collection, onboarding docs, GTM artifacts) plus the deferred **Reasoning Attestation** sprint (the next moat-widening feature: `WHO + WHAT + WHEN + WHY` signed bundles for every agent action, EU AI Act / GDPR Art. 22 / NIST AI RMF compliance prerequisite).
 
 #### Reasoning Attestation (DEFERRED — separate future feature)
-Identified during Sprint B as the #1 moat-widening opportunity. Captures `WHO + WHAT + WHEN + WHY` (prompt context, model identifier, reasoning trace) for every agent action as a signed bundle. Required for EU AI Act / GDPR Art. 22 / NIST AI RMF compliance. Will be its own sprint after Demo Suite + Shadow Mode lands.
+Identified during Sprint B as the #1 moat-widening opportunity after FAT. Captures `WHO + WHAT + WHEN + WHY` (prompt context, model identifier, reasoning trace) for every agent action as a signed bundle. Required for EU AI Act / GDPR Art. 22 / NIST AI RMF compliance. Will be its own sprint when work resumes.
 
 #### Modules deferred to post-customer (or lighter post-Sprint-B cycle)
 - `agent_lifecycle.py` — ghost-agent enforcement; needs trust_graph integration to be production-grade. Low moat cost (table-stakes feature).
@@ -151,18 +150,9 @@ All 4 items shipped (live blast radius enrichment, 5 new playbooks, 10-min demo 
 
 All 6 items shipped (federation module with handshake/accept/revoke, trust_graph crosses_org edge + anomaly, policy_guard CONST-06, federation audit events, ent.federation tier gate, demo Act 2 with scenes 8-10). 1664/1664 tests pass on `main`.
 
-### Demo Suite v2 + Shadow Mode trial — ACTIVE (started 2026-04-26 post FAT merge)
+### Demo Suite v2 + Shadow Mode trial — ✅ DONE (PR #50, merged 2026-04-26)
 
-Built per the data-sourcing strategy from the Sprint-B-end conversation: turn TokenDNA from "demo arc with no backdrop" into "30-day operational environment a sales engineer can drive live" + give prospects a way to point the platform at their real audit logs in observe-only mode.
-
-| # | Task | Est |
-|---|------|-----|
-| 1 | `data/demo_fixtures/` — curated MITRE techniques, IP geo samples, agent archetypes, attack chain templates (no external API keys) | 0.5 day |
-| 2 | `scripts/demo_seed_v2.py` — generates ~30 days of patterned UIS history for ~50 Acme + ~20 Beta agents, federation handshake, drift baselines, prior violations, honeytokens | 2 days |
-| 3 | `modules/product/shadow_mode.py` — observe-only toggle + connector framework + report generator | 1 day |
-| 4 | `scripts/shadow_trial_report.py` — CLI render of trial findings | 0.5 day |
-| 5 | `docs/demo/RUN_DEMO.md` — clone → install → seed → run walkthrough | 0.5 day |
-| 6 | Tests + buffer | 0.5 day |
+All 6 items shipped (4 curated fixtures, demo_seed_v2 producing 70 agents / 71,704 events, shadow_mode framework with FileTailJSONLConnector, trial report CLI, RUN_DEMO walkthrough, 23 new tests). 1687/1687 tests pass on `main`.
 
 ### Deferred (post-customer or future sprint cycle)
 
