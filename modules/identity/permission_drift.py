@@ -55,11 +55,35 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 
+from modules.security.audit_log import AuditEventType, AuditOutcome, log_event
 from modules.storage.ddl_runner import run_ddl
 from modules.storage.pg_connection import AdaptedCursor, get_db_conn
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def _emit_audit(
+    event_type: AuditEventType,
+    outcome: AuditOutcome,
+    *,
+    tenant_id: str,
+    subject: str,
+    resource: str,
+    detail: dict[str, Any],
+) -> None:
+    """Best-effort audit emission — never block the caller on logging failure."""
+    try:
+        log_event(
+            event_type,
+            outcome,
+            tenant_id=tenant_id,
+            subject=subject,
+            resource=resource,
+            detail=detail,
+        )
+    except Exception:
+        logger.exception("audit log emit failed for %s", event_type)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -257,8 +281,39 @@ def record_observation(
         metadata=metadata or {},
     )
 
+    _emit_audit(
+        AuditEventType.PERMISSION_DRIFT_OBSERVED,
+        AuditOutcome.SUCCESS,
+        tenant_id=tenant_id,
+        subject=changed_by or agent_id,
+        resource=policy_id,
+        detail={
+            "observation_id": obs_id,
+            "agent_id": agent_id,
+            "scope_size": len(scope),
+            "has_attestation": has_attestation,
+            "source_event": source_event,
+        },
+    )
+
     # Run drift detection after recording
-    _detect_drift(tenant_id=tenant_id, agent_id=agent_id, policy_id=policy_id)
+    alert = _detect_drift(tenant_id=tenant_id, agent_id=agent_id, policy_id=policy_id)
+    if alert is not None:
+        _emit_audit(
+            AuditEventType.PERMISSION_DRIFT_DETECTED,
+            AuditOutcome.FAILURE,
+            tenant_id=tenant_id,
+            subject=agent_id,
+            resource=policy_id,
+            detail={
+                "drift_id": alert.drift_id,
+                "growth_factor": alert.growth_factor,
+                "baseline_weight": alert.baseline_weight,
+                "current_weight": alert.current_weight,
+                "unattested_changes": alert.unattested_changes,
+                "observations_in_window": alert.observations_in_window,
+            },
+        )
 
     return obs
 
@@ -426,7 +481,21 @@ def approve_drift(
         """, (approved_by, now, note, drift_id, tenant_id))
         if cur.rowcount == 0:
             return None
-    return get_alert(drift_id, tenant_id)
+    final = get_alert(drift_id, tenant_id)
+    _emit_audit(
+        AuditEventType.PERMISSION_DRIFT_APPROVED,
+        AuditOutcome.SUCCESS,
+        tenant_id=tenant_id,
+        subject=approved_by,
+        resource=final.policy_id if final else drift_id,
+        detail={
+            "drift_id": drift_id,
+            "agent_id": final.agent_id if final else None,
+            "growth_factor": final.growth_factor if final else None,
+            "note": note,
+        },
+    )
+    return final
 
 
 def mark_remediated(drift_id: str, tenant_id: str, note: str = "") -> DriftAlert | None:

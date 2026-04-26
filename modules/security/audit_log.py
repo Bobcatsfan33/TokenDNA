@@ -68,6 +68,18 @@ class AuditEventType(str, Enum):
     ACCESS_DENIED       = "access.denied"
     PRIVILEGE_ESCALATION= "access.privilege_escalation"
 
+    # Policy enforcement & advisory (Phase 5)
+    POLICY_EVALUATED            = "policy.evaluated"
+    POLICY_VIOLATION_APPROVED   = "policy.violation.approved"
+    POLICY_VIOLATION_REJECTED   = "policy.violation.rejected"
+    POLICY_SUGGESTION_GENERATED = "policy.suggestion.generated"
+    POLICY_SUGGESTION_APPROVED  = "policy.suggestion.approved"
+    POLICY_SUGGESTION_REJECTED  = "policy.suggestion.rejected"
+    POLICY_AUTO_TIGHTENED       = "policy.auto_tightened"
+    PERMISSION_DRIFT_OBSERVED   = "permission.drift.observed"
+    PERMISSION_DRIFT_DETECTED   = "permission.drift.detected"
+    PERMISSION_DRIFT_APPROVED   = "permission.drift.approved"
+
     # Threat detection (TokenDNA)
     THREAT_IMPOSSIBLE_TRAVEL = "threat.impossible_travel"
     THREAT_TOR_EXIT          = "threat.tor_exit"
