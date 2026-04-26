@@ -327,17 +327,20 @@ def seed_agents_and_history(
         event_count = 0
         agent_labels: list[str] = []
         for arch in archetypes:
+            # Build the full event batch for THIS archetype, then bulk-insert
+            # in one transaction.  Per-event insert_event would be ~100x
+            # slower because each call opens its own transaction.
+            arch_events: list[dict] = []
             for n in range(1, arch["count"] + 1):
                 label = _agent_label(arch, n)
                 agent_labels.append(label)
                 agent_count += 1
-                # Generate ~mean_actions_per_day events across the window.
                 total_events = int(arch["mean_actions_per_day"] * days_back * random.uniform(0.6, 1.1))
                 for _ in range(total_events):
                     days_ago = random.uniform(0.1, days_back)
                     geo = _pick_geo(geo_samples, arch["geo_category_weights"])
                     technique = random.choice(techniques)
-                    event = _make_uis_event(
+                    arch_events.append(_make_uis_event(
                         tenant=tenant,
                         agent_label=label,
                         archetype=arch,
@@ -345,10 +348,15 @@ def seed_agents_and_history(
                         when=_backdated(days_ago, jitter_minutes=120),
                         mitre_id=technique["id"],
                         outcome="success",
-                    )
-                    if not dry_run:
-                        uis_store.insert_event(tenant, event)
-                    event_count += 1
+                    ))
+            if not dry_run and arch_events:
+                # skip_downstream=True — the seeder does its own attack-chain
+                # planting in Stage 6, and per-event trust_graph ingest on
+                # ~70k events is the original bottleneck we're eliminating.
+                uis_store.bulk_insert_events(
+                    tenant, arch_events, skip_downstream=True,
+                )
+            event_count += len(arch_events)
         return agent_count, event_count, agent_labels
 
     acme_archetypes = archetypes_doc["archetypes"]
@@ -528,6 +536,7 @@ def seed_agents_and_history(
     _print_section("Stage 6 — Historical attack chain traces")
 
     chain_traces = 0
+    chain_events: list[dict] = []
     for chain in chains:
         # Plant one trace per chain template.  Spread events across the
         # chain's ``spans_minutes`` window, backdated 7-21 days ago so they
@@ -540,7 +549,7 @@ def seed_agents_and_history(
                     technique_id = stage.get("mitre", "T1078")
                     label = random.choice(acme_labels)
                     geo = random.choice(geo_samples)
-                    event = _make_uis_event(
+                    chain_events.append(_make_uis_event(
                         tenant=ACME,
                         agent_label=label,
                         archetype=acme_archetypes[0],
@@ -549,13 +558,10 @@ def seed_agents_and_history(
                         mitre_id=technique_id,
                         outcome=stage.get("outcome", "success"),
                         auth_method_override=stage.get("auth_method"),
-                    )
-                    try:
-                        uis_store.insert_event(ACME, event)
-                    except Exception:
-                        # Some malformed-by-design events are expected here.
-                        pass
+                    ))
                 chain_traces += 1
+    if not dry_run and chain_events:
+        uis_store.bulk_insert_events(ACME, chain_events, skip_downstream=True)
     summary["attack_chain_traces"] = chain_traces
     _print_step(f"{chain_traces} attack-chain trace events planted across {len(chains)} chains")
 

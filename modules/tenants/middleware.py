@@ -20,13 +20,20 @@ logger = logging.getLogger(__name__)
 
 DEV_MODE = os.getenv("DEV_MODE", "false").lower() == "true"
 
+# DEV_MODE injects a synthetic tenant.  The tenant_id is configurable so
+# the seeded demo (which writes under ``acme`` / ``beta``) can point the
+# DEV_MODE-resolved request at the seeded tenant — otherwise the dashboard
+# would land on ``dev-tenant`` (empty) instead of ``acme`` (populated).
+_DEV_TENANT_ID   = os.getenv("DEV_TENANT_ID", "dev-tenant")
+_DEV_TENANT_NAME = os.getenv("DEV_TENANT_NAME", "Local Dev")
+
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 _bearer         = HTTPBearer(auto_error=False)
 
 # Synthetic tenant injected in DEV_MODE
 _DEV_TENANT = TenantContext(
-    tenant_id="dev-tenant",
-    tenant_name="Local Dev",
+    tenant_id=_DEV_TENANT_ID,
+    tenant_name=_DEV_TENANT_NAME,
     plan=Plan.ENTERPRISE,
     api_key_id="dev-key",
 )
