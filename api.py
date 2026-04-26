@@ -3274,11 +3274,19 @@ async def api_ztix_simulate(
     tenant: TenantContext = Depends(get_tenant),
 ):
     """
-    POST /api/ztix/simulate
+    POST /api/ztix/simulate — **DEMO ONLY**
 
-    Simulate a Zero-Trust Identity Exchange between two agents.
-    Normalizes a UIS event for agent_a and returns a mock ZTIX token
-    plus graph delta.
+    This endpoint is a hard-coded sales demo of the Zero-Trust Identity
+    Exchange flow. The returned ``ztix_token`` is **not** cryptographically
+    bound to anything — there is no signature, no DPoP JKT, no proof of
+    possession. Do not present it as a real bearer.
+
+    A real signed ZTIX token format will live at ``/api/ztix/token`` once
+    that endpoint ships. Until then, the response carries ``demo: true``
+    and a ``warning`` field so consumers cannot accidentally treat the
+    output as production. The ``proof_of_control`` module backs the *real*
+    ZTIX feature ("Periodic Proof of Control") that operates against
+    federation verifiers — see /api/federation/verifiers/proof-* routes.
 
     Request: { "agent_a": "agt-orchestrator", "agent_b": "agt-analyst" }
     """
@@ -3329,15 +3337,30 @@ async def api_ztix_simulate(
 
     now = datetime.datetime.now(datetime.timezone.utc)
     ztix_token = {
-        "ztix_id": f"ztix-{str(uuid.uuid4())[:8]}",
+        "ztix_id": f"ztix-demo-{str(uuid.uuid4())[:8]}",
         "bound_to": agent_a,
         "issued_at": now.isoformat(),
         "expires_in": 300,
         "scope": ["read:data", "execute:tools"],
         "trust_level": "verified",
+        # Make the demo nature explicit on the token itself — operators
+        # logging or persisting these tokens see the marker even if they
+        # miss the wrapping response field.
+        "demo": True,
+        "signature": None,
+        "binding": None,
     }
 
     return {
+        "demo": True,
+        "warning": (
+            "This is a sales-demo simulation of ZTIX, not a production "
+            "exchange. The returned ztix_token is not cryptographically "
+            "bound to any key and must not be presented as a real bearer. "
+            "A signed token format will ship at /api/ztix/token in a "
+            "future sprint."
+        ),
+        "production_endpoint": None,
         "event": uis_event,
         "ztix_token": ztix_token,
         "graph_delta": {
