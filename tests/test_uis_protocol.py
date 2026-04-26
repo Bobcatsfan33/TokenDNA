@@ -46,5 +46,9 @@ def test_normalize_with_adapter_for_mcp_yields_machine_identity():
     )
     assert event["identity"]["entity_type"] == "machine"
     assert event["identity"]["agent_id"] == "agent-1"
-    assert event["auth"]["protocol"] == "custom"
+    # MCP is now first-class in SUPPORTED_PROTOCOLS — previously it was
+    # silently downgraded to "custom" because the protocol was missing
+    # from the supported set even though uis_protocol.ADAPTER_INPUTS
+    # already shipped MCP claim handling.
+    assert event["auth"]["protocol"] == "mcp"
 

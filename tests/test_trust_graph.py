@@ -66,7 +66,7 @@ def _uis_event(
     risk_tier: str = "low",
 ) -> dict:
     return {
-        "uis_version": "1.1",
+        "uis_version": "1.0",
         "event_id": f"ev-{subject}-{time.time_ns()}",
         "event_timestamp": "2026-04-15T00:00:00+00:00",
         "identity": {
