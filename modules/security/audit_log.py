@@ -86,6 +86,15 @@ class AuditEventType(str, Enum):
     MCP_CHAIN_PATTERN_MATCHED   = "mcp.chain.pattern_matched"
     MCP_VIOLATION_RESOLVED      = "mcp.violation.resolved"
 
+    # Federated Agent Trust (Sprint FAT)
+    FEDERATION_HANDSHAKE_INITIATED = "federation.handshake.initiated"
+    FEDERATION_HANDSHAKE_ACCEPTED  = "federation.handshake.accepted"
+    FEDERATION_HANDSHAKE_REJECTED  = "federation.handshake.rejected"
+    FEDERATION_TRUST_ESTABLISHED   = "federation.trust.established"
+    FEDERATION_TRUST_REVOKED       = "federation.trust.revoked"
+    CROSS_ORG_ACTION_BLOCKED       = "federation.cross_org.blocked"
+    CROSS_ORG_ACTION_APPROVED      = "federation.cross_org.approved"
+
     # Threat detection (TokenDNA)
     THREAT_IMPOSSIBLE_TRAVEL = "threat.impossible_travel"
     THREAT_TOR_EXIT          = "threat.tor_exit"

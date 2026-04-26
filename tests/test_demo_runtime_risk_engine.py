@@ -30,6 +30,8 @@ def test_demo_script_imports_cleanly():
     for name in (
         "scene_baseline", "scene_drift", "scene_self_modification",
         "scene_mcp_chain", "scene_deception", "scene_blast", "scene_verdict",
+        # Act 2 — FAT cross-org
+        "scene_federation", "scene_cross_org_blocked", "scene_cross_org_approved",
     ):
         assert callable(getattr(mod, name)), f"missing or non-callable: {name}"
 
@@ -44,7 +46,7 @@ def test_demo_script_dry_run_completes():
     )
     assert result.returncode == 0, result.stderr
     out = result.stdout
-    # All seven scenes must appear in the dry-run transcript.
+    # All ten scenes (Act 1 + Act 2) must appear in the dry-run transcript.
     for scene in (
         "SCENE 1.  Baseline",
         "SCENE 2.  Permission Drift",
@@ -53,6 +55,9 @@ def test_demo_script_dry_run_completes():
         "SCENE 5.  Deception",
         "SCENE 6.  Blast Radius",
         "SCENE 7.  Verdict",
+        "SCENE 8.  Federation",
+        "SCENE 9.  Cross-org without trust",
+        "SCENE 10.  Cross-org WITH trust",
     ):
         assert scene in out, f"missing scene header: {scene}"
     assert "Demo arc complete." in out
