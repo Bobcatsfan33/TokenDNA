@@ -1,0 +1,138 @@
+{
+  "_about": "Templates for the agents the demo seeder populates. Each archetype defines naming, baseline scope, behavior pattern, and expected MCP tools. Demo realism comes from MIXING archetypes — a real enterprise has admins, services, user-proxies, and 1-2 anomalous agents that the demo arc later reveals.",
+  "archetypes": [
+    {
+      "key": "admin_bot",
+      "name_pattern": "admin-bot-{n}",
+      "tier": "admin",
+      "baseline_scope": ["iam:*", "policy:*", "audit:read"],
+      "auth_method": "spiffe",
+      "protocol": "x509-svid",
+      "mcp_tools_used": ["update_policy", "list_files", "execute_command"],
+      "mean_actions_per_day": 4.0,
+      "geo_category_weights": { "cloud_egress": 9, "office_network": 1 },
+      "should_attest": true,
+      "count": 5
+    },
+    {
+      "key": "finance_bot",
+      "name_pattern": "finance-bot-{n}",
+      "tier": "service",
+      "baseline_scope": ["s3:read:reports", "s3:read:logs"],
+      "auth_method": "oidc",
+      "protocol": "oidc",
+      "mcp_tools_used": ["read_file", "database_query"],
+      "mean_actions_per_day": 18.0,
+      "geo_category_weights": { "cloud_egress": 8, "office_network": 2 },
+      "should_attest": true,
+      "count": 8
+    },
+    {
+      "key": "data_loader",
+      "name_pattern": "data-loader-{n}",
+      "tier": "service",
+      "baseline_scope": ["s3:read:raw", "s3:write:processed"],
+      "auth_method": "oidc",
+      "protocol": "oidc",
+      "mcp_tools_used": ["read_file", "write_file", "database_query"],
+      "mean_actions_per_day": 32.0,
+      "geo_category_weights": { "cloud_egress": 10 },
+      "should_attest": true,
+      "count": 6
+    },
+    {
+      "key": "support_assistant",
+      "name_pattern": "support-asst-{n}",
+      "tier": "user_proxy",
+      "baseline_scope": ["crm:read", "kb:read", "ticket:write"],
+      "auth_method": "oidc",
+      "protocol": "oidc",
+      "mcp_tools_used": ["read_file", "send_email", "http_request"],
+      "mean_actions_per_day": 45.0,
+      "geo_category_weights": { "office_network": 7, "cloud_egress": 3 },
+      "should_attest": true,
+      "count": 12
+    },
+    {
+      "key": "engineering_assistant",
+      "name_pattern": "eng-asst-{n}",
+      "tier": "user_proxy",
+      "baseline_scope": ["github:read", "github:write:owned", "k8s:read"],
+      "auth_method": "oidc",
+      "protocol": "oidc",
+      "mcp_tools_used": ["read_file", "write_file", "execute_command", "http_request"],
+      "mean_actions_per_day": 60.0,
+      "geo_category_weights": { "office_network": 8, "cloud_egress": 2 },
+      "should_attest": true,
+      "count": 10
+    },
+    {
+      "key": "ops_runner",
+      "name_pattern": "ops-runner-{n}",
+      "tier": "service",
+      "baseline_scope": ["k8s:read", "metrics:read", "logs:read"],
+      "auth_method": "spiffe",
+      "protocol": "x509-svid",
+      "mcp_tools_used": ["execute_command", "read_file"],
+      "mean_actions_per_day": 120.0,
+      "geo_category_weights": { "cloud_egress": 10 },
+      "should_attest": true,
+      "count": 7
+    },
+    {
+      "key": "drifty_agent",
+      "name_pattern": "drifty-agent-{n}",
+      "tier": "service",
+      "baseline_scope": ["s3:read:reports"],
+      "auth_method": "oidc",
+      "protocol": "oidc",
+      "mcp_tools_used": ["read_file", "send_email"],
+      "mean_actions_per_day": 22.0,
+      "geo_category_weights": { "cloud_egress": 7, "office_network": 3 },
+      "should_attest": false,
+      "drift_pattern": "scope_grows_over_window",
+      "count": 2
+    }
+  ],
+  "remote_org_archetypes": [
+    {
+      "key": "logistics_bot",
+      "name_pattern": "logistics-bot-{n}",
+      "tier": "service",
+      "baseline_scope": ["api:read", "shipments:read"],
+      "auth_method": "oidc",
+      "protocol": "oidc",
+      "mcp_tools_used": ["read_file", "http_request"],
+      "mean_actions_per_day": 25.0,
+      "geo_category_weights": { "cloud_egress": 8, "office_network": 2 },
+      "should_attest": true,
+      "count": 12
+    },
+    {
+      "key": "logistics_admin",
+      "name_pattern": "logistics-admin-{n}",
+      "tier": "admin",
+      "baseline_scope": ["iam:*", "shipments:*"],
+      "auth_method": "spiffe",
+      "protocol": "x509-svid",
+      "mcp_tools_used": ["update_policy"],
+      "mean_actions_per_day": 3.0,
+      "geo_category_weights": { "cloud_egress": 9, "office_network": 1 },
+      "should_attest": true,
+      "count": 4
+    },
+    {
+      "key": "logistics_etl",
+      "name_pattern": "logistics-etl-{n}",
+      "tier": "service",
+      "baseline_scope": ["s3:read:raw", "warehouse:write"],
+      "auth_method": "oidc",
+      "protocol": "oidc",
+      "mcp_tools_used": ["read_file", "database_query"],
+      "mean_actions_per_day": 80.0,
+      "geo_category_weights": { "cloud_egress": 10 },
+      "should_attest": true,
+      "count": 4
+    }
+  ]
+}
