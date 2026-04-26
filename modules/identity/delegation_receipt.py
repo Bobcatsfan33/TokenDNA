@@ -29,6 +29,15 @@ glob rules:
     parent "ns:read"    covers only "ns:read"
 
 Empty child scopes are vacuously a subset.
+
+Backend
+-------
+Connections route through ``modules.storage.pg_connection.get_db_conn``,
+which transparently selects SQLite or Postgres based on
+``TOKENDNA_DB_BACKEND`` + ``TOKENDNA_PG_DSN``. SQL uses SQLite-style ``?``
+placeholders; ``adapt_sql`` (applied by ``AdaptedCursor``) converts to
+``%s`` for psycopg. The recursive-CTE used by cascade revocation is
+syntactically identical on SQLite 3.8+ and Postgres 8.4+.
 """
 
 from __future__ import annotations
@@ -37,35 +46,42 @@ import hashlib
 import hmac
 import json
 import os
-import sqlite3
-import threading
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from modules.storage import db_backend
+from modules.storage.pg_connection import AdaptedCursor, get_db_conn
 
 
 # ── Constants & helpers ───────────────────────────────────────────────────────
-
-_lock = threading.Lock()
 
 
 def _db_path() -> str:
     return os.getenv("DATA_DB_PATH", "/data/tokendna.db")
 
 
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+@contextmanager
+def _cursor():
+    """Yield an AdaptedCursor backed by the configured DB backend.
 
-
-def _use_pg() -> bool:
-    return db_backend.should_use_postgres()
+    ``get_db_conn`` selects SQLite or Postgres based on env config and
+    returns a connection whose .cursor()/.commit()/.close() shape matches
+    on both backends. AdaptedCursor auto-rewrites ``?`` placeholders to
+    ``%s`` when running against Postgres.
+    """
+    with get_db_conn(db_path=_db_path()) as conn:
+        cur = AdaptedCursor(conn.cursor())
+        try:
+            yield cur
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+            raise
 
 
 def _now() -> datetime:
@@ -95,45 +111,46 @@ def _secret() -> bytes:
 
 # ── Schema ────────────────────────────────────────────────────────────────────
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS delegation_receipts (
-    receipt_id           TEXT PRIMARY KEY,
-    tenant_id            TEXT NOT NULL,
-    delegator_id         TEXT NOT NULL,
-    delegatee_id         TEXT NOT NULL,
-    scope_json           TEXT NOT NULL,
-    ceiling_json         TEXT,
-    issued_at            TEXT NOT NULL,
-    expires_at           TEXT NOT NULL,
-    parent_receipt_id    TEXT,
-    human_principal_id   TEXT NOT NULL,
-    depth                INTEGER NOT NULL,
-    signature            TEXT NOT NULL,
-    revoked              INTEGER NOT NULL DEFAULT 0,
-    revoked_at           TEXT,
-    revoked_by           TEXT,
-    FOREIGN KEY(parent_receipt_id) REFERENCES delegation_receipts(receipt_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_delegation_receipts_tenant_delegatee
-    ON delegation_receipts(tenant_id, delegatee_id);
-CREATE INDEX IF NOT EXISTS idx_delegation_receipts_parent
-    ON delegation_receipts(parent_receipt_id);
-"""
+# Schema split into individual statements so the same definition works on
+# both SQLite (which has executescript) and Postgres (which doesn't).
+_DDL_STATEMENTS: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS delegation_receipts (
+        receipt_id           TEXT PRIMARY KEY,
+        tenant_id            TEXT NOT NULL,
+        delegator_id         TEXT NOT NULL,
+        delegatee_id         TEXT NOT NULL,
+        scope_json           TEXT NOT NULL,
+        ceiling_json         TEXT,
+        issued_at            TEXT NOT NULL,
+        expires_at           TEXT NOT NULL,
+        parent_receipt_id    TEXT,
+        human_principal_id   TEXT NOT NULL,
+        depth                INTEGER NOT NULL,
+        signature            TEXT NOT NULL,
+        revoked              INTEGER NOT NULL DEFAULT 0,
+        revoked_at           TEXT,
+        revoked_by           TEXT,
+        FOREIGN KEY(parent_receipt_id) REFERENCES delegation_receipts(receipt_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_delegation_receipts_tenant_delegatee
+        ON delegation_receipts(tenant_id, delegatee_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_delegation_receipts_parent
+        ON delegation_receipts(parent_receipt_id)
+    """,
+)
 
 
 def init_db() -> None:
-    if _use_pg():
-        return
-    db_path = _db_path()
-    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
-    with _lock:
-        conn = _get_conn()
-        try:
-            conn.executescript(_SCHEMA)
-            conn.commit()
-        finally:
-            conn.close()
+    """Idempotent table creation. Works on both SQLite and Postgres via
+    the unified ``get_db_conn`` abstraction."""
+    with _cursor() as cur:
+        for stmt in _DDL_STATEMENTS:
+            cur.execute(stmt)
 
 
 # ── Data classes ──────────────────────────────────────────────────────────────
@@ -256,7 +273,7 @@ def _is_subset(parent_scope: list[str], child_scope: list[str]) -> bool:
 
 # ── DB → dataclass ────────────────────────────────────────────────────────────
 
-def _row_to_receipt(row: sqlite3.Row) -> DelegationReceipt:
+def _row_to_receipt(row: Any) -> DelegationReceipt:
     return DelegationReceipt(
         receipt_id=row["receipt_id"],
         tenant_id=row["tenant_id"],
@@ -276,28 +293,23 @@ def _row_to_receipt(row: sqlite3.Row) -> DelegationReceipt:
     )
 
 
-def _fetch_receipt(conn: sqlite3.Connection, receipt_id: str) -> sqlite3.Row | None:
-    return conn.execute(
+def _fetch_receipt(cur: AdaptedCursor, receipt_id: str) -> Any | None:
+    cur.execute(
         "SELECT * FROM delegation_receipts WHERE receipt_id=?",
         (receipt_id,),
-    ).fetchone()
+    )
+    return cur.fetchone()
 
 
 def get_receipt(receipt_id: str, tenant_id: str | None = None) -> DelegationReceipt | None:
     """Look up a receipt by id. ``tenant_id`` enforces tenant isolation."""
-    if _use_pg():
-        return None
-    with _lock:
-        conn = _get_conn()
-        try:
-            row = _fetch_receipt(conn, receipt_id)
-            if not row:
-                return None
-            if tenant_id is not None and row["tenant_id"] != tenant_id:
-                return None
-            return _row_to_receipt(row)
-        finally:
-            conn.close()
+    with _cursor() as cur:
+        row = _fetch_receipt(cur, receipt_id)
+        if not row:
+            return None
+        if tenant_id is not None and row["tenant_id"] != tenant_id:
+            return None
+        return _row_to_receipt(row)
 
 
 # ── Issue ─────────────────────────────────────────────────────────────────────
@@ -333,8 +345,6 @@ def issue_receipt(
         raise DelegationError("scope_must_be_list_of_strings")
     if expires_in_seconds <= 0:
         raise DelegationError("expires_in_seconds_must_be_positive")
-    if _use_pg():
-        raise NotImplementedError("delegation_receipt PG path not implemented")
 
     issued_at_dt = _now()
     expires_at_dt = issued_at_dt + timedelta(seconds=expires_in_seconds)
@@ -342,86 +352,81 @@ def issue_receipt(
     expires_at = _iso(expires_at_dt)
     receipt_id = f"rcpt:{uuid.uuid4().hex}"
 
-    with _lock:
-        conn = _get_conn()
-        try:
-            if parent_receipt_id is None:
-                # Root receipt: delegator must be a human principal.
-                if not delegator_id.startswith("human:"):
-                    raise DelegationError("root_delegator_must_be_human")
-                human_principal_id = delegator_id
-                depth = 0
-            else:
-                parent_row = _fetch_receipt(conn, parent_receipt_id)
-                if parent_row is None:
-                    raise DelegationError("parent_not_found")
-                if parent_row["tenant_id"] != tenant_id:
-                    raise DelegationError("parent_cross_tenant")
-                if parent_row["revoked"]:
-                    raise DelegationError("parent_revoked")
-                if _parse_iso(parent_row["expires_at"]) <= issued_at_dt:
-                    raise DelegationError("parent_expired")
-                if parent_row["delegatee_id"] != delegator_id:
-                    # Only the agent the parent receipt was issued TO can
-                    # further delegate.
-                    raise DelegationError("delegator_not_parent_delegatee")
-                parent_scope: list[str] = json.loads(parent_row["scope_json"])
-                if not _is_subset(parent_scope, scope):
-                    raise DelegationError("scope_exceeds_parent")
-                # Child cannot outlive the parent.
-                if expires_at_dt > _parse_iso(parent_row["expires_at"]):
-                    expires_at_dt = _parse_iso(parent_row["expires_at"])
-                    expires_at = _iso(expires_at_dt)
-                human_principal_id = parent_row["human_principal_id"]
-                depth = int(parent_row["depth"]) + 1
+    with _cursor() as cur:
+        if parent_receipt_id is None:
+            # Root receipt: delegator must be a human principal.
+            if not delegator_id.startswith("human:"):
+                raise DelegationError("root_delegator_must_be_human")
+            human_principal_id = delegator_id
+            depth = 0
+        else:
+            parent_row = _fetch_receipt(cur, parent_receipt_id)
+            if parent_row is None:
+                raise DelegationError("parent_not_found")
+            if parent_row["tenant_id"] != tenant_id:
+                raise DelegationError("parent_cross_tenant")
+            if parent_row["revoked"]:
+                raise DelegationError("parent_revoked")
+            if _parse_iso(parent_row["expires_at"]) <= issued_at_dt:
+                raise DelegationError("parent_expired")
+            if parent_row["delegatee_id"] != delegator_id:
+                # Only the agent the parent receipt was issued TO can
+                # further delegate.
+                raise DelegationError("delegator_not_parent_delegatee")
+            parent_scope: list[str] = json.loads(parent_row["scope_json"])
+            if not _is_subset(parent_scope, scope):
+                raise DelegationError("scope_exceeds_parent")
+            # Child cannot outlive the parent.
+            if expires_at_dt > _parse_iso(parent_row["expires_at"]):
+                expires_at_dt = _parse_iso(parent_row["expires_at"])
+                expires_at = _iso(expires_at_dt)
+            human_principal_id = parent_row["human_principal_id"]
+            depth = int(parent_row["depth"]) + 1
 
-            signature = _sign(_signing_payload(
-                receipt_id=receipt_id,
-                tenant_id=tenant_id,
-                delegator_id=delegator_id,
-                delegatee_id=delegatee_id,
-                scope=scope,
-                issued_at=issued_at,
-                expires_at=expires_at,
-                parent_receipt_id=parent_receipt_id,
-            ))
+        signature = _sign(_signing_payload(
+            receipt_id=receipt_id,
+            tenant_id=tenant_id,
+            delegator_id=delegator_id,
+            delegatee_id=delegatee_id,
+            scope=scope,
+            issued_at=issued_at,
+            expires_at=expires_at,
+            parent_receipt_id=parent_receipt_id,
+        ))
 
-            conn.execute(
-                """
-                INSERT INTO delegation_receipts
-                    (receipt_id, tenant_id, delegator_id, delegatee_id,
-                     scope_json, ceiling_json, issued_at, expires_at,
-                     parent_receipt_id, human_principal_id, depth,
-                     signature, revoked)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-                """,
-                (
-                    receipt_id, tenant_id, delegator_id, delegatee_id,
-                    json.dumps(list(scope)),
-                    json.dumps(dict(ceiling)) if ceiling else None,
-                    issued_at, expires_at,
-                    parent_receipt_id, human_principal_id, depth,
-                    signature,
-                ),
-            )
-            conn.commit()
+        cur.execute(
+            """
+            INSERT INTO delegation_receipts
+                (receipt_id, tenant_id, delegator_id, delegatee_id,
+                 scope_json, ceiling_json, issued_at, expires_at,
+                 parent_receipt_id, human_principal_id, depth,
+                 signature, revoked)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            """,
+            (
+                receipt_id, tenant_id, delegator_id, delegatee_id,
+                json.dumps(list(scope)),
+                json.dumps(dict(ceiling)) if ceiling else None,
+                issued_at, expires_at,
+                parent_receipt_id, human_principal_id, depth,
+                signature,
+            ),
+        )
 
-            return DelegationReceipt(
-                receipt_id=receipt_id,
-                tenant_id=tenant_id,
-                delegator_id=delegator_id,
-                delegatee_id=delegatee_id,
-                scope=list(scope),
-                ceiling=dict(ceiling) if ceiling else None,
-                issued_at=issued_at,
-                expires_at=expires_at,
-                parent_receipt_id=parent_receipt_id,
-                human_principal_id=human_principal_id,
-                depth=depth,
-                signature=signature,
-            )
-        finally:
-            conn.close()
+        return DelegationReceipt(
+            receipt_id=receipt_id,
+            tenant_id=tenant_id,
+            delegator_id=delegator_id,
+            delegatee_id=delegatee_id,
+            scope=list(scope),
+            ceiling=dict(ceiling) if ceiling else None,
+            issued_at=issued_at,
+            expires_at=expires_at,
+            parent_receipt_id=parent_receipt_id,
+            human_principal_id=human_principal_id,
+            depth=depth,
+            signature=signature,
+        )
 
 
 # ── Verify ────────────────────────────────────────────────────────────────────
@@ -431,15 +436,8 @@ def verify_receipt(receipt_id: str, tenant_id: str | None = None) -> Verificatio
     Re-derive the signature and check expiry/revocation. Does not walk the
     chain — call ``export_chain_report`` if you need per-hop verification.
     """
-    if _use_pg():
-        return VerificationResult(valid=False, reason="pg_not_implemented",
-                                  receipt_id=receipt_id)
-    with _lock:
-        conn = _get_conn()
-        try:
-            row = _fetch_receipt(conn, receipt_id)
-        finally:
-            conn.close()
+    with _cursor() as cur:
+        row = _fetch_receipt(cur, receipt_id)
     if row is None:
         return VerificationResult(valid=False, reason="not_found", receipt_id=receipt_id)
     if tenant_id is not None and row["tenant_id"] != tenant_id:
@@ -472,35 +470,29 @@ def get_chain(receipt_id: str, tenant_id: str | None = None) -> list[DelegationR
     Walk parent links from the leaf back to the root. Returns the chain in
     root → leaf order. Empty list if the leaf is unknown or cross-tenant.
     """
-    if _use_pg():
-        return []
     chain_rev: list[DelegationReceipt] = []
     seen: set[str] = set()
-    with _lock:
-        conn = _get_conn()
-        try:
-            current_id: str | None = receipt_id
-            while current_id:
-                if current_id in seen:
-                    break  # defensive: should never happen with PK constraint
-                seen.add(current_id)
-                row = _fetch_receipt(conn, current_id)
-                if row is None:
-                    return []
-                if tenant_id is not None and row["tenant_id"] != tenant_id:
-                    return []
-                chain_rev.append(_row_to_receipt(row))
-                current_id = row["parent_receipt_id"]
-        finally:
-            conn.close()
+    with _cursor() as cur:
+        current_id: str | None = receipt_id
+        while current_id:
+            if current_id in seen:
+                break  # defensive: should never happen with PK constraint
+            seen.add(current_id)
+            row = _fetch_receipt(cur, current_id)
+            if row is None:
+                return []
+            if tenant_id is not None and row["tenant_id"] != tenant_id:
+                return []
+            chain_rev.append(_row_to_receipt(row))
+            current_id = row["parent_receipt_id"]
     chain_rev.reverse()
     return chain_rev
 
 
-def _descendant_ids(conn: sqlite3.Connection, root_id: str) -> list[str]:
+def _descendant_ids(cur: AdaptedCursor, root_id: str) -> list[str]:
     """All receipts that have ``root_id`` somewhere in their parent chain.
-    Uses a recursive CTE — same idiom as trust_graph delegation depth."""
-    rows = conn.execute(
+    Uses a recursive CTE — syntactically identical on SQLite 3.8+ and PG 8.4+."""
+    cur.execute(
         """
         WITH RECURSIVE descendants(receipt_id) AS (
             SELECT receipt_id FROM delegation_receipts WHERE parent_receipt_id = ?
@@ -512,8 +504,8 @@ def _descendant_ids(conn: sqlite3.Connection, root_id: str) -> list[str]:
         SELECT receipt_id FROM descendants
         """,
         (root_id,),
-    ).fetchall()
-    return [r["receipt_id"] for r in rows]
+    )
+    return [r["receipt_id"] for r in cur.fetchall()]
 
 
 # ── Revoke ────────────────────────────────────────────────────────────────────
@@ -533,38 +525,31 @@ def revoke_receipt(
     Returns ``{"revoked_ids": [...], "cascaded": bool}``. ``revoked_ids`` is
     the set of newly-revoked ids (not including those already revoked).
     """
-    if _use_pg():
-        return {"revoked_ids": [], "cascaded": cascade}
     now = _iso(_now())
-    with _lock:
-        conn = _get_conn()
-        try:
-            row = _fetch_receipt(conn, receipt_id)
-            if row is None:
-                raise DelegationError("not_found")
-            if tenant_id is not None and row["tenant_id"] != tenant_id:
-                raise DelegationError("cross_tenant")
+    with _cursor() as cur:
+        row = _fetch_receipt(cur, receipt_id)
+        if row is None:
+            raise DelegationError("not_found")
+        if tenant_id is not None and row["tenant_id"] != tenant_id:
+            raise DelegationError("cross_tenant")
 
-            target_ids: list[str] = [receipt_id]
-            if cascade:
-                target_ids.extend(_descendant_ids(conn, receipt_id))
+        target_ids: list[str] = [receipt_id]
+        if cascade:
+            target_ids.extend(_descendant_ids(cur, receipt_id))
 
-            newly_revoked: list[str] = []
-            for tid in target_ids:
-                cur = conn.execute(
-                    """
-                    UPDATE delegation_receipts
-                    SET revoked = 1, revoked_at = ?, revoked_by = ?
-                    WHERE receipt_id = ? AND revoked = 0
-                    """,
-                    (now, revoked_by, tid),
-                )
-                if cur.rowcount > 0:
-                    newly_revoked.append(tid)
-            conn.commit()
-            return {"revoked_ids": newly_revoked, "cascaded": cascade}
-        finally:
-            conn.close()
+        newly_revoked: list[str] = []
+        for tid in target_ids:
+            cur.execute(
+                """
+                UPDATE delegation_receipts
+                SET revoked = 1, revoked_at = ?, revoked_by = ?
+                WHERE receipt_id = ? AND revoked = 0
+                """,
+                (now, revoked_by, tid),
+            )
+            if cur.rowcount > 0:
+                newly_revoked.append(tid)
+        return {"revoked_ids": newly_revoked, "cascaded": cascade}
 
 
 # ── Receipts for an agent ─────────────────────────────────────────────────────
@@ -576,25 +561,19 @@ def get_receipts_for_agent(
 ) -> list[DelegationReceipt]:
     """All receipts where ``agent_id`` is the delegatee. Active by default
     (non-revoked, non-expired)."""
-    if _use_pg():
-        return []
     now_iso = _iso(_now())
-    with _lock:
-        conn = _get_conn()
-        try:
-            params: list[Any] = [tenant_id, agent_id]
-            sql = (
-                "SELECT * FROM delegation_receipts "
-                "WHERE tenant_id=? AND delegatee_id=?"
-            )
-            if not include_revoked:
-                sql += " AND revoked=0 AND expires_at > ?"
-                params.append(now_iso)
-            sql += " ORDER BY issued_at DESC"
-            rows = conn.execute(sql, tuple(params)).fetchall()
-            return [_row_to_receipt(r) for r in rows]
-        finally:
-            conn.close()
+    with _cursor() as cur:
+        params: list[Any] = [tenant_id, agent_id]
+        sql = (
+            "SELECT * FROM delegation_receipts "
+            "WHERE tenant_id=? AND delegatee_id=?"
+        )
+        if not include_revoked:
+            sql += " AND revoked=0 AND expires_at > ?"
+            params.append(now_iso)
+        sql += " ORDER BY issued_at DESC"
+        cur.execute(sql, tuple(params))
+        return [_row_to_receipt(r) for r in cur.fetchall()]
 
 
 # ── Liability / chain report ──────────────────────────────────────────────────
