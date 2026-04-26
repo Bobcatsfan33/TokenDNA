@@ -382,3 +382,269 @@ def test_high_severity_violation_high_risk(isolated_db):
     mi = isolated_db
     result = _inspect(mi, "read_file", params={"write": "bad"})
     assert result["risk_score"] >= 0.5
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MCP Sprint — chain pattern subsequence matching with bounded gaps
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestChainPatternSubsequence:
+    """
+    The pre-MCP-sprint matcher only accepted exact-suffix sequences.  The
+    new matcher allows up to CHAIN_PATTERN_MAX_GAP unrelated calls between
+    pattern steps so a pattern survives mild noise injection while still
+    requiring the LAST call to be the pattern's terminal step.
+    """
+
+    def test_exact_sequence_matches_with_max_confidence(self, isolated_db):
+        mi = isolated_db
+        ok, gap, positions = mi._find_subsequence_with_gap(
+            ["read", "exfil"], ["read", "exfil"], max_gap=3
+        )
+        assert ok
+        assert gap == 0
+        assert positions == [0, 1]
+
+    def test_subsequence_with_one_gap_matches(self, isolated_db):
+        mi = isolated_db
+        ok, gap, positions = mi._find_subsequence_with_gap(
+            ["read", "noise", "exfil"], ["read", "exfil"], max_gap=3
+        )
+        assert ok
+        assert gap == 1
+
+    def test_gap_exceeded_does_not_match(self, isolated_db):
+        mi = isolated_db
+        # Five noise calls between read and exfil; max_gap=3 forbids it.
+        ok, _, _ = mi._find_subsequence_with_gap(
+            ["read", "n", "n", "n", "n", "n", "exfil"], ["read", "exfil"], max_gap=3
+        )
+        assert not ok
+
+    def test_last_call_must_be_terminal_step(self, isolated_db):
+        """A pattern is only "happening now" when the most recent call is the
+        final pattern step.  An old chain that ended turns ago must not
+        re-fire on every subsequent call."""
+        mi = isolated_db
+        ok, _, _ = mi._find_subsequence_with_gap(
+            ["read", "exfil", "noise"], ["read", "exfil"], max_gap=3
+        )
+        assert not ok
+
+    def test_empty_inputs_return_no_match(self, isolated_db):
+        mi = isolated_db
+        assert not mi._find_subsequence_with_gap([], ["read", "exfil"], max_gap=3)[0]
+        assert not mi._find_subsequence_with_gap(["read"], [], max_gap=3)[0]
+
+    def test_pattern_match_carries_confidence_and_positions(self, isolated_db):
+        mi = isolated_db
+        matches = mi._match_chain_patterns(["read", "noise", "exfil"])
+        assert any(m["name"] == "read_then_exfil" for m in matches)
+        m = next(m for m in matches if m["name"] == "read_then_exfil")
+        assert "confidence" in m
+        assert 0.0 < m["confidence"] <= 1.0
+        assert m["positions"] == [0, 2]
+        assert m["gap"] == 1
+
+    def test_tighter_match_yields_higher_confidence(self, isolated_db):
+        mi = isolated_db
+        tight = mi._match_chain_patterns(["read", "exfil"])
+        loose = mi._match_chain_patterns(["read", "n", "n", "exfil"])
+        tight_conf = next(m for m in tight if m["name"] == "read_then_exfil")["confidence"]
+        loose_conf = next(m for m in loose if m["name"] == "read_then_exfil")["confidence"]
+        assert tight_conf > loose_conf
+
+
+class TestChainPatternViaInspectCall:
+    """Real-call integration: the matcher works when called through inspect_call."""
+
+    def test_noisy_session_still_detects_read_then_exfil(self, isolated_db):
+        mi = isolated_db
+        sid = _session()
+        # Realistic session: a read, then 2 unrelated calls, then exfil.
+        _inspect(mi, "read_file", params={"path": "/etc/secrets"}, session_id=sid)
+        _inspect(mi, "list_files", params={"path": "/tmp"}, session_id=sid)
+        _inspect(mi, "list_files", params={"path": "/tmp"}, session_id=sid)
+        result = _inspect(
+            mi, "send_email",
+            params={"to": "evil@elsewhere", "subject": "x", "body": "x"},
+            session_id=sid,
+        )
+        names = [p["name"] for p in result["chain_patterns"]]
+        assert "read_then_exfil" in names
+
+    def test_exact_chain_match_has_full_confidence(self, isolated_db):
+        mi = isolated_db
+        sid = _session()
+        _inspect(mi, "read_file", params={"path": "/etc/secrets"}, session_id=sid)
+        result = _inspect(
+            mi, "send_email",
+            params={"to": "x@y", "subject": "x", "body": "x"},
+            session_id=sid,
+        )
+        match = next(
+            p for p in result["chain_patterns"] if p["name"] == "read_then_exfil"
+        )
+        assert match["confidence"] == 1.0
+
+
+class TestChainPatternTimeWindow:
+    """Calls outside CHAIN_PATTERN_WINDOW_SECONDS must not chain."""
+
+    def test_old_calls_outside_window_do_not_chain(self, isolated_db):
+        mi = isolated_db
+        sid = _session()
+        # Backdate a "read" outside the 1-hour window (default 3600s).
+        from datetime import datetime, timedelta, timezone
+        old_ts = (
+            datetime.now(timezone.utc) - timedelta(seconds=mi.CHAIN_PATTERN_WINDOW_SECONDS + 60)
+        ).isoformat()
+        # Insert directly so we control the timestamp.
+        with mi._cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO mcp_call_log
+                    (call_id, session_id, tenant_id, agent_id, tool_name,
+                     params_json, access_mode, risk_score, recommendation,
+                     violations_json, chain_patterns, created_at)
+                VALUES (?, ?, ?, NULL, ?, '{}', ?, 0.0, 'allow', '[]', '[]', ?)
+                """,
+                (str(uuid.uuid4()), sid, TENANT, "read_file", "read", old_ts),
+            )
+        # Now exfil — the old read should NOT chain since it's out of window.
+        result = _inspect(
+            mi, "send_email",
+            params={"to": "x@y", "subject": "x", "body": "x"},
+            session_id=sid,
+        )
+        names = [p["name"] for p in result["chain_patterns"]]
+        assert "read_then_exfil" not in names
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Trust graph integration
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestTrustGraphIntegration:
+    """
+    Every inspect_call should leave an agent→tool edge in the trust_graph
+    so cross-module anomaly detectors can consume MCP usage.
+    """
+
+    def test_inspect_records_agent_tool_edge(self, isolated_db, tmp_path, monkeypatch):
+        mi = isolated_db
+        # Reload trust_graph against the same DB so it shares storage with mi.
+        import importlib
+        import modules.identity.trust_graph as tg
+        importlib.reload(tg)
+        tg.init_db()
+
+        sid = _session()
+        _inspect(
+            mi, "read_file",
+            params={"path": "/etc/x"},
+            session_id=sid, agent_id="agent-trustgraph-A",
+        )
+
+        # The trust_graph should now have an agent node + tool node + edge.
+        nid_agent = tg._node_id(TENANT, "agent", "agent-trustgraph-A")
+        nid_tool = tg._node_id(TENANT, "tool", "mcp:read_file")
+        eid = tg._edge_id(TENANT, nid_agent, nid_tool, "uses_tool")
+        conn = tg._get_conn()
+        try:
+            agent_row = conn.execute(
+                "SELECT * FROM tg_nodes WHERE node_id=?", (nid_agent,)
+            ).fetchone()
+            tool_row = conn.execute(
+                "SELECT * FROM tg_nodes WHERE node_id=?", (nid_tool,)
+            ).fetchone()
+            edge_row = conn.execute(
+                "SELECT * FROM tg_edges WHERE edge_id=?", (eid,)
+            ).fetchone()
+        finally:
+            conn.close()
+        assert agent_row is not None
+        assert tool_row is not None
+        assert edge_row is not None
+
+    def test_trust_graph_failure_does_not_block_inspection(self, isolated_db):
+        """
+        If trust_graph integration raises for any reason, inspect_call must
+        still return successfully — graph emission is best-effort enrichment.
+        """
+        mi = isolated_db
+        import unittest.mock as mock
+
+        with mock.patch.object(
+            mi, "_record_trust_graph_edge", side_effect=Exception("boom")
+        ):
+            with pytest.raises(Exception):
+                # Direct helper call propagates...
+                mi._record_trust_graph_edge(
+                    tenant_id=TENANT, agent_id="a", tool_name="x",
+                    access_mode="read",
+                )
+        # ...but inspect_call swallows it (the helper itself is wrapped in
+        # try/except in production code).  Verify the production path:
+        with mock.patch(
+            "modules.identity.trust_graph._upsert_nodes",
+            side_effect=Exception("graph unavailable"),
+        ):
+            result = _inspect(mi, "read_file", params={"path": "/x"}, agent_id="a-1")
+        assert result["call_id"]
+        assert "recommendation" in result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Audit emission
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestMCPAuditEmission:
+    def test_inspect_emits_call_inspected(self, isolated_db):
+        mi = isolated_db
+        import unittest.mock as mock
+        with mock.patch.object(mi, "log_event") as fake:
+            _inspect(mi, "read_file", params={"path": "/x"})
+        types = {c.args[0].value for c in fake.call_args_list}
+        assert "mcp.call.inspected" in types
+
+    def test_inspect_with_violation_emits_violation_detected(self, isolated_db):
+        mi = isolated_db
+        import unittest.mock as mock
+        with mock.patch.object(mi, "log_event") as fake:
+            _inspect(mi, "read_file", params={"write": "bad"})
+        types = {c.args[0].value for c in fake.call_args_list}
+        assert "mcp.violation.detected" in types
+
+    def test_inspect_with_chain_pattern_emits_pattern_matched(self, isolated_db):
+        mi = isolated_db
+        import unittest.mock as mock
+        sid = _session()
+        _inspect(mi, "read_file", params={"path": "/x"}, session_id=sid)
+        with mock.patch.object(mi, "log_event") as fake:
+            _inspect(
+                mi, "send_email",
+                params={"to": "x@y", "subject": "x", "body": "x"},
+                session_id=sid,
+            )
+        types = {c.args[0].value for c in fake.call_args_list}
+        assert "mcp.chain.pattern_matched" in types
+
+    def test_resolve_violation_emits_resolved(self, isolated_db):
+        mi = isolated_db
+        import unittest.mock as mock
+        # Create a violation first.
+        result = _inspect(mi, "read_file", params={"write": "bad"})
+        violations = mi.list_violations(tenant_id=TENANT)
+        assert violations, "test fixture should produce at least one violation"
+        with mock.patch.object(mi, "log_event") as fake:
+            mi.resolve_violation(
+                tenant_id=TENANT,
+                violation_id=violations[0]["violation_id"],
+                resolved_by="ops@example.com",
+            )
+        assert fake.called
+        assert fake.call_args.args[0].value == "mcp.violation.resolved"

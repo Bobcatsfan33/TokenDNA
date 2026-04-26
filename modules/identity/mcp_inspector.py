@@ -65,9 +65,70 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
+from modules.security.audit_log import AuditEventType, AuditOutcome, log_event
 from modules.storage.pg_connection import AdaptedCursor, get_db_conn
 
 log = logging.getLogger(__name__)
+
+
+def _emit_audit(
+    event_type: AuditEventType,
+    outcome: AuditOutcome,
+    *,
+    tenant_id: str,
+    subject: str,
+    resource: str,
+    detail: dict[str, Any],
+) -> None:
+    """Best-effort audit emission — never block the caller on logging failure."""
+    try:
+        log_event(
+            event_type,
+            outcome,
+            tenant_id=tenant_id,
+            subject=subject,
+            resource=resource,
+            detail=detail,
+        )
+    except Exception:
+        log.exception("audit log emit failed for %s", event_type)
+
+
+def _record_trust_graph_edge(
+    *,
+    tenant_id: str,
+    agent_id: str,
+    tool_name: str,
+    access_mode: str,
+) -> None:
+    """
+    Best-effort trust_graph edge emission.  Connects an agent → tool
+    relationship into the same graph used by policy_guard's anomaly
+    detections, so MCP calls that cross agent/tool boundaries surface in
+    the central trust graph rather than being siloed inside mcp_inspector.
+
+    Failures here MUST NOT break the call inspection path — trust_graph is
+    an enrichment, not a hard dependency.
+    """
+    if not agent_id:
+        return
+    try:
+        from datetime import datetime, timezone
+
+        from modules.identity import trust_graph
+
+        now = datetime.now(timezone.utc).isoformat()
+        nodes = [
+            ("agent", agent_id, "{}"),
+            ("tool", f"mcp:{tool_name}", json.dumps({"access_mode": access_mode})),
+        ]
+        edges = [
+            ("agent", agent_id, "tool", f"mcp:{tool_name}", "uses_tool"),
+        ]
+        trust_graph._upsert_nodes(tenant_id, nodes, now)
+        trust_graph._upsert_edges(tenant_id, edges, now)
+    except Exception:
+        log.exception("trust_graph edge emission failed for tool=%s", tool_name)
 
 _lock = threading.Lock()
 
@@ -75,6 +136,23 @@ _lock = threading.Lock()
 
 DRIFT_BLOCK_THRESHOLD = float(os.getenv("MCP_DRIFT_BLOCK_THRESHOLD", "0.8"))
 DRIFT_FLAG_THRESHOLD = float(os.getenv("MCP_DRIFT_FLAG_THRESHOLD", "0.5"))
+
+# Maximum number of unrelated calls allowed BETWEEN steps of an attack
+# pattern.  Pure-suffix matching (gap=0) is too brittle — a sophisticated
+# attacker injects benign calls between the real attack steps.  A bounded
+# gap captures the "intent within a session" without false-positive bloat.
+CHAIN_PATTERN_MAX_GAP = int(os.getenv("MCP_CHAIN_MAX_GAP", "3"))
+
+# Time window (seconds) within which prior calls are considered part of the
+# same chain.  Defaults to 1 hour — long enough for realistic exploit
+# sessions, short enough that yesterday's read isn't tied to today's exfil.
+CHAIN_PATTERN_WINDOW_SECONDS = int(os.getenv("MCP_CHAIN_WINDOW_SECONDS", "3600"))
+
+# How many recent calls to fetch when building the chain context.  Prior
+# implementation hard-coded LIMIT 10 which made longer attack windows
+# undetectable.  50 covers realistic noisy sessions while bounding the
+# query cost.
+CHAIN_LOOKBACK_CALL_LIMIT = int(os.getenv("MCP_CHAIN_LOOKBACK", "50"))
 
 # ── Known attack chain patterns ───────────────────────────────────────────────
 # Each pattern is a list of access_mode sequences to match against recent calls.
@@ -570,18 +648,87 @@ def _recommend(risk_score: float) -> str:
     return "allow"
 
 
+def _find_subsequence_with_gap(
+    haystack: list[str],
+    needle: list[str],
+    *,
+    max_gap: int,
+) -> tuple[bool, int, list[int]]:
+    """
+    Find ``needle`` as a (possibly non-contiguous) subsequence of ``haystack``,
+    with at most ``max_gap`` unrelated entries between consecutive needle
+    elements, and the LAST element of needle being the LAST element of
+    haystack (i.e. the most recent call must be the final pattern step —
+    otherwise the chain is "in the past" and not relevant to the current
+    decision).
+
+    Returns ``(matched, total_gap, positions)`` where:
+      * ``matched``     — True if a valid subsequence was found
+      * ``total_gap``   — sum of gaps between needle elements (used to score
+                          confidence — a tighter match is more concerning)
+      * ``positions``   — indices in haystack of each matched needle element
+    """
+    if not needle or not haystack:
+        return False, 0, []
+    # Anchor on the last call: it must equal needle[-1] for the pattern to be
+    # "happening now."
+    if haystack[-1] != needle[-1]:
+        return False, 0, []
+    # Walk needle in reverse, greedily pulling matches from haystack.
+    positions: list[int] = [len(haystack) - 1]
+    needle_idx = len(needle) - 2
+    haystack_idx = len(haystack) - 2
+    last_match_pos = len(haystack) - 1
+    while needle_idx >= 0 and haystack_idx >= 0:
+        gap = (last_match_pos - haystack_idx) - 1
+        if gap > max_gap:
+            return False, 0, []
+        if haystack[haystack_idx] == needle[needle_idx]:
+            positions.insert(0, haystack_idx)
+            last_match_pos = haystack_idx
+            needle_idx -= 1
+        haystack_idx -= 1
+    if needle_idx >= 0:
+        return False, 0, []
+    # Compute the total gap distance between consecutive matches.
+    total_gap = sum(
+        positions[i + 1] - positions[i] - 1 for i in range(len(positions) - 1)
+    )
+    return True, total_gap, positions
+
+
 def _match_chain_patterns(recent_modes: list[str]) -> list[dict[str, Any]]:
     """
-    Check the recent access_mode sequence against known attack patterns.
-    Returns matching patterns (empty = no match).
+    Check the recent access_mode sequence against known attack patterns
+    using bounded-gap subsequence matching.
+
+    A pattern matches when the last call in ``recent_modes`` is the final
+    step of the pattern AND every preceding step appears earlier in the
+    sequence with at most ``CHAIN_PATTERN_MAX_GAP`` unrelated calls between
+    consecutive steps.
+
+    Each match dict carries ``confidence`` (1.0 for tight matches, lower
+    for matches that required more gap to find) and ``positions`` (the
+    indices in ``recent_modes`` where each pattern step landed) so callers
+    can render or score the result.
     """
-    matched = []
+    matched: list[dict[str, Any]] = []
     for pattern in CHAIN_PATTERNS:
         seq = pattern["sequence"]
-        n = len(seq)
-        # Check if the last N modes match the pattern
-        if len(recent_modes) >= n and recent_modes[-n:] == seq:
-            matched.append(pattern)
+        ok, total_gap, positions = _find_subsequence_with_gap(
+            recent_modes, seq, max_gap=CHAIN_PATTERN_MAX_GAP
+        )
+        if not ok:
+            continue
+        # Confidence falls off with gap.  A pattern of length N has at most
+        # (N - 1) * max_gap extra entries; map that to [0, 1] and invert.
+        max_possible_gap = max(1, (len(seq) - 1) * CHAIN_PATTERN_MAX_GAP)
+        confidence = round(1.0 - (total_gap / max_possible_gap) * 0.5, 3)
+        match = dict(pattern)
+        match["confidence"] = confidence
+        match["positions"] = positions
+        match["gap"] = total_gap
+        matched.append(match)
     return matched
 
 
@@ -641,16 +788,24 @@ def inspect_call(
     param_violations = _inspect_params(params, profile)
     violations.extend(param_violations)
 
-    # 4. Chain analysis — fetch recent calls for this session
+    # 4. Chain analysis — fetch recent calls for this session within the
+    #    chain time window.  Window-gating prevents yesterday's read from
+    #    being chained to today's exfil; lookback limit caps query cost.
+    from datetime import timedelta
+
+    window_cutoff = (
+        datetime.now(timezone.utc) - timedelta(seconds=CHAIN_PATTERN_WINDOW_SECONDS)
+    ).isoformat()
     with _cursor() as cur:
         recent_rows = cur.execute(
             """
             SELECT access_mode FROM mcp_call_log
             WHERE session_id = ? AND tenant_id = ?
+              AND created_at >= ?
             ORDER BY created_at DESC
-            LIMIT 10
+            LIMIT ?
             """,
-            (session_id, tenant_id),
+            (session_id, tenant_id, window_cutoff, CHAIN_LOOKBACK_CALL_LIMIT),
         ).fetchall()
 
     recent_modes = [r["access_mode"] for r in reversed(recent_rows) if r["access_mode"]]
@@ -720,6 +875,70 @@ def inspect_call(
             tool_name=tool_name,
             chain_patterns=chain_patterns,
             risk_score=risk_score,
+        )
+
+    # 9. Trust graph integration — record the agent→tool edge so MCP usage
+    #    feeds the same anomaly detectors that policy_guard relies on.
+    _record_trust_graph_edge(
+        tenant_id=tenant_id,
+        agent_id=agent_id or session_id,
+        tool_name=tool_name,
+        access_mode=access_mode,
+    )
+
+    # 10. Audit emission — every inspection emits at least one event; chain
+    #     pattern matches and violations get their own dedicated events so
+    #     SOC 2 review can grep for the high-severity signals directly.
+    _emit_audit(
+        AuditEventType.MCP_CALL_INSPECTED,
+        AuditOutcome.SUCCESS if recommendation == "allow" else AuditOutcome.FAILURE,
+        tenant_id=tenant_id,
+        subject=agent_id or session_id,
+        resource=tool_name,
+        detail={
+            "call_id": call_id,
+            "session_id": session_id,
+            "access_mode": access_mode,
+            "risk_score": round(risk_score, 4),
+            "recommendation": recommendation,
+            "violation_count": len(violations),
+            "chain_pattern_count": len(chain_patterns),
+        },
+    )
+    if violations:
+        _emit_audit(
+            AuditEventType.MCP_VIOLATION_DETECTED,
+            AuditOutcome.FAILURE,
+            tenant_id=tenant_id,
+            subject=agent_id or session_id,
+            resource=tool_name,
+            detail={
+                "call_id": call_id,
+                "session_id": session_id,
+                "violations": [v["type"] for v in violations],
+                "risk_score": round(risk_score, 4),
+            },
+        )
+    if chain_patterns:
+        _emit_audit(
+            AuditEventType.MCP_CHAIN_PATTERN_MATCHED,
+            AuditOutcome.FAILURE,
+            tenant_id=tenant_id,
+            subject=agent_id or session_id,
+            resource=tool_name,
+            detail={
+                "call_id": call_id,
+                "session_id": session_id,
+                "patterns": [
+                    {
+                        "name": p["name"],
+                        "severity": p["severity"],
+                        "confidence": p.get("confidence", 1.0),
+                        "mitre_technique": p.get("mitre_technique"),
+                    }
+                    for p in chain_patterns
+                ],
+            },
         )
 
     allowed = recommendation == "allow"
@@ -869,7 +1088,21 @@ def resolve_violation(
             "SELECT * FROM mcp_violations WHERE violation_id = ?",
             (violation_id,),
         ).fetchone()
-    return _row_to_violation(updated)
+    final = _row_to_violation(updated)
+    _emit_audit(
+        AuditEventType.MCP_VIOLATION_RESOLVED,
+        AuditOutcome.SUCCESS,
+        tenant_id=tenant_id,
+        subject=resolved_by,
+        resource=final.get("tool_name", violation_id),
+        detail={
+            "violation_id": violation_id,
+            "violation_type": final.get("violation_type"),
+            "agent_id": final.get("agent_id"),
+            "session_id": final.get("session_id"),
+        },
+    )
+    return final
 
 
 def _row_to_violation(row: sqlite3.Row) -> dict[str, Any]:
