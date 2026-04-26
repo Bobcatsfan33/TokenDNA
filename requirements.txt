@@ -19,7 +19,7 @@ psycopg[binary]==3.3.3           # PostgreSQL backend for production data plane
 redis==7.3.0
 
 # ── ClickHouse ────────────────────────────────────────────────────────────────
-clickhouse-connect==0.7.16
+clickhouse-connect==0.15.1
 
 # ── AWS connector (optional — only needed when using AWS onboarding) ──────────
 boto3==1.34.100
