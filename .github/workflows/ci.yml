@@ -285,3 +285,193 @@ jobs:
 
       - name: Run policy regression gate tests
         run: python -m pytest -q tests/test_policy_regression_gate.py
+
+  # ── Production secret gate ────────────────────────────────────────────────
+  # Refuses to start when TOKENDNA_ENV=production and any HMAC secret is
+  # missing, weak, or matches a published dev default.
+  secret-gate:
+    name: Production Secret Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+
+      - name: Unit tests
+        run: python -m pytest -q tests/test_secret_gate.py
+
+      - name: Preflight (non-prod) — warns, does not fail
+        run: python scripts/preflight_prod.py --environment dev || true
+
+      - name: Preflight (production, no secrets) — must fail
+        run: |
+          set +e
+          python scripts/preflight_prod.py --environment production
+          rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "Preflight unexpectedly passed without secrets — gate is broken."
+            exit 1
+          fi
+          echo "Preflight failed as expected with rc=$rc"
+
+      - name: Preflight (production, strong secrets) — must pass
+        env:
+          DEV_MODE: "false"
+          OIDC_ISSUER: https://example.com
+          OIDC_AUDIENCE: ci
+          DNA_HMAC_KEY: ci-dna-hmac-key-32-bytes-aaaaaaaa
+          AUDIT_HMAC_KEY: ci-audit-hmac-key-32-bytes-aaaaaa
+          ATTESTATION_CA_KEY_ID: ci-key
+          ATTESTATION_CA_SECRET: ci-attestation-secret-32-bytes-aa
+        run: |
+          export TOKENDNA_DELEGATION_SECRET=$(openssl rand -hex 32)
+          export TOKENDNA_WORKFLOW_SECRET=$(openssl rand -hex 32)
+          export TOKENDNA_HONEYPOT_SECRET=$(openssl rand -hex 32)
+          export TOKENDNA_POSTURE_SECRET=$(openssl rand -hex 32)
+          python scripts/preflight_prod.py --environment production
+
+  # ── Postgres integration tests ────────────────────────────────────────────
+  # Spins up an ephemeral Postgres, applies the Alembic baseline, and runs
+  # the storage-layer test files against the real backend. Catches dialect
+  # divergence before the runtime path goes live in production.
+  postgres-integration:
+    name: Postgres Integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: tokendna
+          POSTGRES_PASSWORD: tokendna
+          POSTGRES_DB: tokendna
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tokendna -d tokendna"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TOKENDNA_DB_BACKEND: postgres
+      # `+psycopg` selects the psycopg v3 driver (we ship psycopg 3 in
+      # requirements.txt, not the legacy psycopg2 default that SQLAlchemy
+      # otherwise tries to import). Direct psycopg consumers normalise
+      # this back to a plain libpq URI via normalize_dsn_for_psycopg().
+      TOKENDNA_PG_DSN: postgresql+psycopg://tokendna:tokendna@localhost:5432/tokendna
+      # Modules not yet ported to Postgres (attestation_store, agent_lifecycle,
+      # mcp_inspector) fall back to SQLite. The default /data path isn't
+      # writable on the runner, so point them at /tmp.
+      DATA_DB_PATH: /tmp/tokendna-ci.db
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt -r requirements-prod.txt pytest
+
+      - name: Apply Alembic baseline
+        run: alembic upgrade head
+
+      - name: Run a representative slice against Postgres
+        run: |
+          python -m pytest -q \
+            tests/test_passport.py \
+            tests/test_uis_store.py \
+            tests/test_trust_graph.py \
+            tests/test_delegation_receipt.py \
+            tests/test_workflow_attestation.py \
+            tests/test_policy_guard.py \
+            tests/test_permission_drift.py
+
+  # ── Helm chart lint + template validation ─────────────────────────────────
+  helm-lint:
+    name: Helm Chart Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: helm lint
+        run: helm lint deploy/helm/tokendna
+
+      - name: helm template (default values)
+        run: helm template tokendna deploy/helm/tokendna > /tmp/rendered.yaml
+
+      - name: helm template (production overlay)
+        run: |
+          helm template tokendna deploy/helm/tokendna \
+            --set image.tag=ci-test \
+            --set ingress.enabled=true \
+            > /tmp/rendered-prod.yaml
+
+      - name: Validate against Kubernetes schema (kubeconform)
+        run: |
+          curl -sSL -o /tmp/kc.tgz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xzf /tmp/kc.tgz -C /tmp
+          /tmp/kubeconform -strict -summary /tmp/rendered.yaml /tmp/rendered-prod.yaml
+
+  # ── Stress-harness smoke run ──────────────────────────────────────────────
+  # Runs the stdlib stress driver against an in-process API for ~30s and
+  # gates against the smoke threshold profile. Catches latency regressions
+  # before they reach staging.
+  stress-smoke:
+    name: Stress Harness (smoke)
+    runs-on: ubuntu-latest
+    env:
+      DATA_DB_PATH: /tmp/tokendna-stress-smoke.db
+      DEV_MODE: "true"
+      ATTESTATION_CA_SECRET: ci-stress-smoke-secret
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Boot API in background
+        run: |
+          uvicorn api:app --host 127.0.0.1 --port 8000 --log-level warning &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/healthz >/dev/null 2>&1; then
+              echo "API up after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Smoke stress run (gated)
+        run: |
+          python scripts/stress_harness.py \
+            --base-url http://127.0.0.1:8000 \
+            --profile scripts/stress_profiles/smoke.json \
+            --duration 20 \
+            --concurrency 8 \
+            --gate scripts/stress_profiles/gate.smoke.json \
+            --out /tmp/stress-report.json
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stress-report
+          path: /tmp/stress-report.json
+          if-no-files-found: ignore

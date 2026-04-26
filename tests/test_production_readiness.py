@@ -486,3 +486,58 @@ class TestApiImportsOpenRateLimit:
         import api as api_mod
 
         assert asyncio.iscoroutinefunction(api_mod.check_rate_limit_open)
+
+
+# =============================================================================
+# 9. DSN normalization for psycopg (SQLAlchemy +driver suffix handling)
+# =============================================================================
+
+
+class TestNormalizeDsnForPsycopg:
+    """
+    Alembic / SQLAlchemy needs ``postgresql+psycopg://...`` to pin psycopg v3.
+    Raw psycopg's libpq parser does not understand the ``+driver`` suffix and
+    falls back to key=value parsing, which fails with ``missing "=" after ...``.
+    The normaliser strips the suffix so the same env var works for both.
+    """
+
+    def test_strips_psycopg_driver_suffix(self):
+        from modules.storage.pg_connection import normalize_dsn_for_psycopg
+
+        assert (
+            normalize_dsn_for_psycopg(
+                "postgresql+psycopg://u:p@host:5432/db"
+            )
+            == "postgresql://u:p@host:5432/db"
+        )
+
+    def test_strips_arbitrary_driver_suffix(self):
+        from modules.storage.pg_connection import normalize_dsn_for_psycopg
+
+        assert (
+            normalize_dsn_for_psycopg(
+                "postgres+asyncpg://u:p@host/db"
+            )
+            == "postgres://u:p@host/db"
+        )
+
+    def test_passes_through_plain_postgresql_url(self):
+        from modules.storage.pg_connection import normalize_dsn_for_psycopg
+
+        assert (
+            normalize_dsn_for_psycopg("postgresql://u:p@host:5432/db")
+            == "postgresql://u:p@host:5432/db"
+        )
+
+    def test_passes_through_keyvalue_conninfo(self):
+        from modules.storage.pg_connection import normalize_dsn_for_psycopg
+
+        kv = "host=localhost port=5432 dbname=tokendna user=u password=p"
+        assert normalize_dsn_for_psycopg(kv) == kv
+
+    def test_does_not_strip_for_non_postgres_scheme(self):
+        from modules.storage.pg_connection import normalize_dsn_for_psycopg
+
+        # Only postgres/postgresql schemes get the driver-suffix treatment.
+        weird = "mysql+pymysql://u:p@host/db"
+        assert normalize_dsn_for_psycopg(weird) == weird
