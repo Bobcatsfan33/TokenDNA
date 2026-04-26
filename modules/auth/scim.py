@@ -137,11 +137,26 @@ def delete_user(user_id: str, *, tenant_id: str) -> None:
         del _users[user_id]
 
 
-def list_users(*, tenant_id: str, start_index: int = 1, count: int = 100) -> dict[str, Any]:
+def list_users(
+    *,
+    tenant_id: str,
+    start_index: int = 1,
+    count: int = 100,
+    filter_expr: str | None = None,
+) -> dict[str, Any]:
     if start_index < 1 or count < 0:
         raise SCIMError(400, "Invalid startIndex/count", scimType="invalidValue")
     with _lock:
         all_records = [u for u in _users.values() if u["tenant_id"] == tenant_id]
+    if filter_expr:
+        from modules.auth.scim_filter import FilterError, UnsupportedFilter, parse
+        try:
+            predicate = parse(filter_expr)
+        except UnsupportedFilter as exc:
+            raise SCIMError(501, str(exc), scimType="invalidFilter")
+        except FilterError as exc:
+            raise SCIMError(400, str(exc), scimType="invalidFilter")
+        all_records = [r for r in all_records if predicate(_strip_internal(r))]
     total = len(all_records)
     page = all_records[start_index - 1 : start_index - 1 + count]
     return {
@@ -151,6 +166,30 @@ def list_users(*, tenant_id: str, start_index: int = 1, count: int = 100) -> dic
         "startIndex": start_index,
         "itemsPerPage": len(page),
     }
+
+
+def patch_user(user_id: str, patch_doc: dict[str, Any], *, tenant_id: str) -> dict[str, Any]:
+    """Apply a SCIM PatchOp document to a User resource."""
+    from modules.auth.scim_patch import PatchError, UnsupportedPatch, apply_patch
+
+    with _lock:
+        record = _users.get(user_id)
+        if not record or record["tenant_id"] != tenant_id:
+            raise SCIMError(404, "User not found")
+        # apply_patch operates on a copy; we then merge selected fields
+        # back so we never overwrite id / tenant_id from a malicious PATCH.
+        try:
+            patched = apply_patch(_strip_internal(record), patch_doc)
+        except UnsupportedPatch as exc:
+            raise SCIMError(501, str(exc), scimType="invalidPath")
+        except PatchError as exc:
+            raise SCIMError(400, str(exc), scimType="invalidValue")
+
+        for protected in ("id", "schemas", "meta"):
+            patched.pop(protected, None)
+        record.update(patched)
+        record["meta"]["lastModified"] = _now_iso()
+        return _strip_internal(record)
 
 
 # ── Group CRUD ────────────────────────────────────────────────────────────────
@@ -184,9 +223,18 @@ def get_group(group_id: str, *, tenant_id: str) -> dict[str, Any]:
         return _strip_internal(record)
 
 
-def list_groups(*, tenant_id: str) -> dict[str, Any]:
+def list_groups(*, tenant_id: str, filter_expr: str | None = None) -> dict[str, Any]:
     with _lock:
         records = [g for g in _groups.values() if g["tenant_id"] == tenant_id]
+    if filter_expr:
+        from modules.auth.scim_filter import FilterError, UnsupportedFilter, parse
+        try:
+            predicate = parse(filter_expr)
+        except UnsupportedFilter as exc:
+            raise SCIMError(501, str(exc), scimType="invalidFilter")
+        except FilterError as exc:
+            raise SCIMError(400, str(exc), scimType="invalidFilter")
+        records = [r for r in records if predicate(_strip_internal(r))]
     return {
         "schemas": [SCHEMA_LIST_RESPONSE],
         "totalResults": len(records),
@@ -194,6 +242,27 @@ def list_groups(*, tenant_id: str) -> dict[str, Any]:
         "startIndex": 1,
         "itemsPerPage": len(records),
     }
+
+
+def patch_group(group_id: str, patch_doc: dict[str, Any], *, tenant_id: str) -> dict[str, Any]:
+    """Apply a SCIM PatchOp document to a Group resource."""
+    from modules.auth.scim_patch import PatchError, UnsupportedPatch, apply_patch
+
+    with _lock:
+        record = _groups.get(group_id)
+        if not record or record["tenant_id"] != tenant_id:
+            raise SCIMError(404, "Group not found")
+        try:
+            patched = apply_patch(_strip_internal(record), patch_doc)
+        except UnsupportedPatch as exc:
+            raise SCIMError(501, str(exc), scimType="invalidPath")
+        except PatchError as exc:
+            raise SCIMError(400, str(exc), scimType="invalidValue")
+        for protected in ("id", "schemas", "meta"):
+            patched.pop(protected, None)
+        record.update(patched)
+        record["meta"]["lastModified"] = _now_iso()
+        return _strip_internal(record)
 
 
 def delete_group(group_id: str, *, tenant_id: str) -> None:
@@ -211,7 +280,7 @@ def service_provider_config() -> dict[str, Any]:
     return {
         "schemas": ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
         "documentationUri": "https://github.com/Bobcatsfan33/TokenDNA",
-        "patch": {"supported": False},
+        "patch": {"supported": True},
         "bulk": {"supported": False, "maxOperations": 0, "maxPayloadSize": 0},
         "filter": {"supported": True, "maxResults": 200},
         "changePassword": {"supported": False},
