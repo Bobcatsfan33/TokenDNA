@@ -1,0 +1,18 @@
+{
+  "_about": "Realistic IP / geo / ASN samples for the demo seed. Distributed to look like a real enterprise's auth log — primarily home regions plus a few legitimate cloud egress points and a few high-risk geos for adversarial scenarios. No MaxMind dependency — these are hand-curated representative samples.",
+  "_license": "These IPs are illustrative samples. Geo/ASN data sourced from public WHOIS records as of 2026-04. Do not use in production without licensed enrichment data.",
+  "samples": [
+    { "ip": "203.0.113.42",  "country": "US", "city": "San Francisco", "asn": 16509, "asn_org": "AMAZON-02",        "category": "cloud_egress", "weight": 22 },
+    { "ip": "198.51.100.17", "country": "US", "city": "Ashburn",       "asn": 14618, "asn_org": "AMAZON-AES",       "category": "cloud_egress", "weight": 18 },
+    { "ip": "192.0.2.108",   "country": "US", "city": "Seattle",       "asn": 8075,  "asn_org": "MICROSOFT-CORP",   "category": "cloud_egress", "weight": 15 },
+    { "ip": "203.0.113.201", "country": "US", "city": "New York",      "asn": 7922,  "asn_org": "COMCAST-7922",     "category": "office_network", "weight": 12 },
+    { "ip": "198.51.100.55", "country": "US", "city": "Austin",        "asn": 7018,  "asn_org": "ATT-INTERNET4",    "category": "office_network", "weight": 11 },
+    { "ip": "192.0.2.77",    "country": "GB", "city": "London",        "asn": 16509, "asn_org": "AMAZON-02",        "category": "cloud_egress", "weight": 7  },
+    { "ip": "203.0.113.88",  "country": "DE", "city": "Frankfurt",     "asn": 16509, "asn_org": "AMAZON-02",        "category": "cloud_egress", "weight": 5  },
+    { "ip": "198.51.100.99", "country": "IE", "city": "Dublin",        "asn": 8075,  "asn_org": "MICROSOFT-CORP",   "category": "cloud_egress", "weight": 4  },
+    { "ip": "192.0.2.199",   "country": "RU", "city": "Moscow",        "asn": 12389, "asn_org": "ROSTELECOM-AS",    "category": "high_risk_geo", "weight": 1  },
+    { "ip": "203.0.113.31",  "country": "KP", "city": "Pyongyang",     "asn": 131279,"asn_org": "STAR-AS",          "category": "high_risk_geo", "weight": 1  },
+    { "ip": "198.51.100.244","country": "CN", "city": "Shanghai",      "asn": 4134,  "asn_org": "CHINANET-BACKBONE","category": "high_risk_geo", "weight": 2  },
+    { "ip": "192.0.2.245",   "country": "IR", "city": "Tehran",        "asn": 12880, "asn_org": "DCI-AS",           "category": "high_risk_geo", "weight": 1  }
+  ]
+}

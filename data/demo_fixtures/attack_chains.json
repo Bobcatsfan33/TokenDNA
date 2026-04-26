@@ -1,0 +1,70 @@
+{
+  "_about": "Multi-stage attack chain templates the demo seeder uses to plant historical 'discovered attempts' in the dashboard before the live demo arc runs. Each chain covers a real adversary pattern from MITRE ATT&CK, scaled down for demo legibility.",
+  "chains": [
+    {
+      "name": "credential_stuffing_then_session",
+      "description": "Bot probes stolen tokens against agent identity endpoint, then establishes a session.",
+      "severity": "high",
+      "spans_minutes": 45,
+      "stages": [
+        { "category": "credential_abuse", "mitre": "T1110.004", "auth_method": "password", "outcome": "failure", "count": 42 },
+        { "category": "credential_abuse", "mitre": "T1110.004", "auth_method": "password", "outcome": "success", "count": 1 },
+        { "category": "auth_anomaly",     "mitre": "T1078",     "auth_method": "oauth_bearer", "outcome": "success", "count": 1 }
+      ]
+    },
+    {
+      "name": "drifty_scope_growth",
+      "description": "Agent's permission scope grows >2x over weeks without attestation — RSA Gap 2.",
+      "severity": "high",
+      "spans_minutes": 43200,
+      "stages": [
+        { "category": "scope_observation", "mitre": "T1098", "scope_size": 1, "has_attestation": true,  "count": 4 },
+        { "category": "scope_observation", "mitre": "T1098", "scope_size": 2, "has_attestation": false, "count": 6 },
+        { "category": "scope_observation", "mitre": "T1098", "scope_size": 4, "has_attestation": false, "count": 8 },
+        { "category": "scope_observation", "mitre": "T1098", "scope_size": 7, "has_attestation": false, "count": 5 }
+      ]
+    },
+    {
+      "name": "self_modification_then_exec",
+      "description": "Agent writes a policy expanding its own permission boundary, then executes — RSA Gap 1.",
+      "severity": "critical",
+      "spans_minutes": 12,
+      "stages": [
+        { "category": "policy_modification", "mitre": "T1098", "self_mod": true, "outcome": "blocked", "count": 1 },
+        { "category": "policy_modification", "mitre": "T1098", "self_mod": true, "outcome": "approved", "count": 1 },
+        { "category": "tool_call",           "mitre": "T1548", "tool": "execute_command", "count": 2 }
+      ]
+    },
+    {
+      "name": "mcp_read_then_exfil",
+      "description": "MCP read tool followed by exfil tool inside the chain window — bounded-gap subsequence match.",
+      "severity": "critical",
+      "spans_minutes": 8,
+      "stages": [
+        { "category": "tool_call", "mitre": "T1539", "tool": "read_file", "access_mode": "read",  "count": 1 },
+        { "category": "tool_call", "mitre": "T1074", "tool": "list_files", "access_mode": "read", "count": 2 },
+        { "category": "tool_call", "mitre": "T1048", "tool": "send_email", "access_mode": "exfil","count": 1 }
+      ]
+    },
+    {
+      "name": "lateral_via_alt_auth",
+      "description": "Compromised agent uses alternate auth material to pivot to a peer service.",
+      "severity": "high",
+      "spans_minutes": 90,
+      "stages": [
+        { "category": "credential_abuse",  "mitre": "T1528", "auth_method": "oauth_bearer", "outcome": "success", "count": 1 },
+        { "category": "lateral_movement",  "mitre": "T1550", "auth_method": "oauth_bearer", "outcome": "success", "count": 1 },
+        { "category": "privilege_escalation", "mitre": "T1548", "outcome": "success",       "count": 1 }
+      ]
+    },
+    {
+      "name": "cross_org_without_handshake",
+      "description": "Agent at Acme acts on Beta resource without an active federation trust — CONST-06 fires.",
+      "severity": "critical",
+      "spans_minutes": 5,
+      "stages": [
+        { "category": "cross_org_action", "mitre": "T1021", "remote_org": "beta", "trust_id": null, "outcome": "blocked", "count": 1 }
+      ]
+    }
+  ]
+}
