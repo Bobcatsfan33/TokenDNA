@@ -301,21 +301,76 @@ def _rule_unilateral_governance_change(action: PolicyAction) -> tuple[bool, str 
     return False, None
 
 
+def _rule_cross_org_without_dual_attestation(
+    action: PolicyAction,
+) -> tuple[bool, str | None]:
+    """
+    CONST-06 (FAT): Cross-organization agent action without an active
+    federation trust (dual attestation) is BLOCK by default.
+
+    Trigger: ``action.metadata`` contains a ``remote_org_id`` distinct
+    from ``action.tenant_id`` AND no ``federation_trust_id`` is supplied
+    OR the named trust does not resolve to an active mutual trust covering
+    the actor.
+    """
+    remote_org = action.metadata.get("remote_org_id") if action.metadata else None
+    if not remote_org or remote_org == action.tenant_id:
+        return False, None
+
+    trust_id = action.metadata.get("federation_trust_id")
+    if not trust_id:
+        return True, (
+            f"Cross-org action by '{action.actor_id}' against org "
+            f"'{remote_org}' has no federation_trust_id — dual "
+            "attestation required. [CONST-06]"
+        )
+
+    try:
+        from modules.identity import federation as _fed
+        trust = _fed.find_active_trust(
+            local_org_id=action.tenant_id,
+            remote_org_id=remote_org,
+            agent_label=action.actor_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        # Fail closed — if federation lookup fails for any reason, block.
+        return True, (
+            f"Cross-org action by '{action.actor_id}' could not be "
+            f"verified against the federation registry ({exc}). [CONST-06]"
+        )
+
+    if trust is None:
+        return True, (
+            f"Cross-org action by '{action.actor_id}' against org "
+            f"'{remote_org}' has no active federation trust covering "
+            "the agent's label. [CONST-06]"
+        )
+    if trust.trust_id != trust_id:
+        return True, (
+            f"federation_trust_id '{trust_id}' does not match the "
+            f"active trust between '{action.tenant_id}' and "
+            f"'{remote_org}'. [CONST-06]"
+        )
+    return False, None
+
+
 # Rule registry: (rule_fn, disposition_if_triggered)
 _CONSTITUTIONAL_RULES: list[tuple[Any, Disposition]] = [
-    (_rule_self_scope_expansion,        Disposition.BLOCK),
-    (_rule_self_restriction_removal,    Disposition.BLOCK),
-    (_rule_write_to_governing_policy,   Disposition.BLOCK),
-    (_rule_excessive_delegation,        Disposition.BLOCK),
-    (_rule_unilateral_governance_change, Disposition.FLAG),
+    (_rule_self_scope_expansion,            Disposition.BLOCK),
+    (_rule_self_restriction_removal,        Disposition.BLOCK),
+    (_rule_write_to_governing_policy,       Disposition.BLOCK),
+    (_rule_excessive_delegation,            Disposition.BLOCK),
+    (_rule_unilateral_governance_change,    Disposition.FLAG),
+    (_rule_cross_org_without_dual_attestation, Disposition.BLOCK),
 ]
 
 _RULE_NAMES = {
-    _rule_self_scope_expansion:         "CONST-01",
-    _rule_self_restriction_removal:     "CONST-02",
-    _rule_write_to_governing_policy:    "CONST-03",
-    _rule_excessive_delegation:         "CONST-04",
-    _rule_unilateral_governance_change: "CONST-05",
+    _rule_self_scope_expansion:                "CONST-01",
+    _rule_self_restriction_removal:            "CONST-02",
+    _rule_write_to_governing_policy:           "CONST-03",
+    _rule_excessive_delegation:                "CONST-04",
+    _rule_unilateral_governance_change:        "CONST-05",
+    _rule_cross_org_without_dual_attestation:  "CONST-06",
 }
 
 # ---------------------------------------------------------------------------

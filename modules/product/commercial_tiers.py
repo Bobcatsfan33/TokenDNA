@@ -160,6 +160,16 @@ COMMERCIAL_FEATURES: dict[str, FeatureGate] = {
                 "surface multi-step exploit intent."
             ),
         ),
+        FeatureGate(
+            key="ent.federation",
+            name="Federated Agent Trust",
+            min_tier=CommercialTier.ENTERPRISE,
+            description=(
+                "Cross-organization agent trust establishment, mutual "
+                "handshake, and dual-attestation policy enforcement for "
+                "agent actions that cross organizational boundaries."
+            ),
+        ),
     )
 }
 

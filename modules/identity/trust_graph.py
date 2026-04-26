@@ -628,6 +628,12 @@ def _check_delegation_depth(
 # "<modifier_agent> modified the policy granting permissions to <target_agent>".
 _POLICY_MOD_EDGE_TYPE = "modifies_policy_for"
 
+# Edge type used by record_cross_org_action (FAT) — represents
+# "<local_agent> performed an action <crosses_org> into the remote org's
+# resource".  The edge meta_json carries both orgs' policy IDs and the
+# federation trust_id (or None if no trust existed at action time).
+_CROSSES_ORG_EDGE_TYPE = "crosses_org"
+
 # Weight at which a (modifier → target) policy-mod edge is considered
 # "rapidly growing" for the PERMISSION_WEIGHT_DRIFT check.  Combined with the
 # PERMISSION_DRIFT_WINDOW_DAYS time gate and the absence-of-attestation gate,
@@ -728,6 +734,79 @@ def record_policy_modification(
     if drift is not None:
         anomalies.append(drift)
 
+    return anomalies
+
+
+def record_cross_org_action(
+    *,
+    local_org_id: str,
+    remote_org_id: str,
+    local_agent: str,
+    remote_resource: str,
+    action_type: str,
+    federation_trust_id: str | None = None,
+    now: str | None = None,
+) -> list[GraphAnomaly]:
+    """
+    Record a cross-organization agent action into the trust graph (FAT).
+
+    Adds a node for the remote resource (namespaced by remote org) and a
+    ``crosses_org`` edge from the local agent.  Detects
+    ``CROSS_ORG_ACTION_WITHOUT_HANDSHAKE`` (CRITICAL) when no federation
+    trust id is supplied — policy_guard's CONST-06 will independently
+    BLOCK such actions, but the graph signal also feeds blast_radius and
+    intent_correlation for visibility.
+    """
+    if not local_org_id or not remote_org_id or not local_agent:
+        raise ValueError(
+            "local_org_id, remote_org_id, local_agent are required"
+        )
+
+    when = now or _now()
+
+    # Namespace the remote resource by its org so the same label across
+    # different orgs does not collide in the graph.
+    remote_label = f"{remote_org_id}::{remote_resource or 'unknown_resource'}"
+    edge_meta = json.dumps(
+        {
+            "local_org_id": local_org_id,
+            "remote_org_id": remote_org_id,
+            "action_type": action_type,
+            "federation_trust_id": federation_trust_id,
+        }
+    )
+
+    nodes: list[tuple[str, str, str]] = [
+        ("agent", local_agent, "{}"),
+        ("workload", remote_label, edge_meta),
+    ]
+    edges: list[tuple[str, str, str, str, str]] = [
+        ("agent", local_agent, "workload", remote_label, _CROSSES_ORG_EDGE_TYPE),
+    ]
+    _upsert_nodes(local_org_id, nodes, when)
+    _upsert_edges(local_org_id, edges, when)
+
+    anomalies: list[GraphAnomaly] = []
+    if not federation_trust_id:
+        anomalies.append(
+            GraphAnomaly(
+                anomaly_type="CROSS_ORG_ACTION_WITHOUT_HANDSHAKE",
+                tenant_id=local_org_id,
+                detected_at=when,
+                subject_node=local_agent,
+                detail=(
+                    f"Agent '{local_agent}' acted on '{remote_resource}' "
+                    f"in org '{remote_org_id}' with no federation trust."
+                ),
+                severity="critical",
+                context={
+                    "local_org_id": local_org_id,
+                    "remote_org_id": remote_org_id,
+                    "remote_resource": remote_resource,
+                    "action_type": action_type,
+                },
+            )
+        )
     return anomalies
 
 

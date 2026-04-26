@@ -587,3 +587,171 @@ class TestPolicyGuardAPI:
         assert resp.status_code == 200
         data = resp.json()
         assert data["disposition"] == "flag"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FAT — CONST-06: Cross-org action requires dual attestation
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestCrossOrgDualAttestation:
+    """
+    CONST-06 (FAT): cross-org agent actions BLOCK by default unless an
+    active federation trust covering the actor exists.
+    """
+
+    def test_no_federation_trust_id_blocks(self, pg):
+        action = pg.PolicyAction(
+            request_id="r-fat-1",
+            actor_id="agent-acme-finance",
+            actor_type="agent",
+            action_type="read_resource",
+            target_policy_id="pol-x",
+            target_policy_name="cross-org-x",
+            tenant_id="acme",
+            metadata={"remote_org_id": "beta"},
+        )
+        result = pg.evaluate(action)
+        assert result.disposition == pg.Disposition.BLOCK
+        assert "CONST-06" in result.rules_triggered
+
+    def test_same_org_does_not_trigger_const06(self, pg):
+        # remote_org_id == tenant_id → not actually cross-org → no CONST-06.
+        action = pg.PolicyAction(
+            request_id="r-fat-2",
+            actor_id="agent-acme-1",
+            actor_type="agent",
+            action_type="read_resource",
+            target_policy_id="pol-x",
+            target_policy_name="self-policy",
+            tenant_id="acme",
+            metadata={"remote_org_id": "acme"},
+        )
+        result = pg.evaluate(action)
+        assert "CONST-06" not in result.rules_triggered
+
+    def test_with_active_federation_trust_passes_const06(self, pg, tmp_path, monkeypatch):
+        # Establish a real federation trust between "acme" (local) and
+        # "beta" (remote — relative to the actor's perspective).
+        # Note: in this test acme is the actor's tenant, beta is the
+        # remote.  policy_guard looks up trust for (local=acme, remote=beta).
+        monkeypatch.setenv("DATA_DB_PATH", str(tmp_path / "fed_smoke.db"))
+        import importlib
+        import modules.identity.federation as fed
+        importlib.reload(fed)
+        fed.init_db()
+
+        # The trust direction policy_guard cares about: an agent at
+        # "acme" calling into "beta" needs a trust with local="acme",
+        # remote="beta" listing acme's agent.  We seed both directions
+        # via the handshake protocol.
+        offer = fed.initiate_handshake(
+            local_org_id="beta",
+            remote_org_id="acme",
+            accepted_scope=["agent-acme-*"],
+        )
+        # acme accepts beta's offer — produces local="acme", remote="beta" trust.
+        trust = fed.accept_handshake(
+            handshake_id=offer.handshake_id,
+            accepting_org_id="acme",
+            remote_federation_key="acme-key",
+            accepted_by="ops@acme.com",
+        )
+
+        # Reload policy_guard against the same DB so it sees the trust.
+        import modules.identity.policy_guard as pg_local
+        importlib.reload(pg_local)
+        pg_local.init_db()
+
+        action = pg_local.PolicyAction(
+            request_id="r-fat-3",
+            actor_id="agent-acme-finance",
+            actor_type="agent",
+            action_type="read_resource",
+            target_policy_id="pol-x",
+            target_policy_name="cross-org-x",
+            tenant_id="acme",
+            metadata={
+                "remote_org_id": "beta",
+                "federation_trust_id": trust.trust_id,
+            },
+        )
+        result = pg_local.evaluate(action)
+        assert "CONST-06" not in result.rules_triggered
+
+    def test_wrong_trust_id_blocks(self, pg, tmp_path, monkeypatch):
+        # An actor presenting a trust_id that doesn't match the active trust
+        # for (acme, beta) must still be blocked — protects against stolen
+        # or stale trust references.
+        monkeypatch.setenv("DATA_DB_PATH", str(tmp_path / "fed_wrong.db"))
+        import importlib
+        import modules.identity.federation as fed
+        importlib.reload(fed)
+        fed.init_db()
+        offer = fed.initiate_handshake(
+            local_org_id="beta", remote_org_id="acme",
+            accepted_scope=["agent-acme-*"],
+        )
+        fed.accept_handshake(
+            handshake_id=offer.handshake_id,
+            accepting_org_id="acme",
+            remote_federation_key="acme-key",
+            accepted_by="ops",
+        )
+        import modules.identity.policy_guard as pg_local
+        importlib.reload(pg_local)
+        pg_local.init_db()
+
+        action = pg_local.PolicyAction(
+            request_id="r-fat-4",
+            actor_id="agent-acme-finance",
+            actor_type="agent",
+            action_type="read",
+            target_policy_id="p",
+            target_policy_name="cross",
+            tenant_id="acme",
+            metadata={
+                "remote_org_id": "beta",
+                "federation_trust_id": "this-is-not-the-real-trust-id",
+            },
+        )
+        result = pg_local.evaluate(action)
+        assert "CONST-06" in result.rules_triggered
+
+    def test_trust_outside_scope_blocks(self, pg, tmp_path, monkeypatch):
+        # Trust covers only "agent-acme-finance-*"; an agent outside that
+        # scope must still be blocked.
+        monkeypatch.setenv("DATA_DB_PATH", str(tmp_path / "fed_scope.db"))
+        import importlib
+        import modules.identity.federation as fed
+        importlib.reload(fed)
+        fed.init_db()
+        offer = fed.initiate_handshake(
+            local_org_id="beta", remote_org_id="acme",
+            accepted_scope=["agent-acme-finance-*"],  # narrow
+        )
+        trust = fed.accept_handshake(
+            handshake_id=offer.handshake_id,
+            accepting_org_id="acme",
+            remote_federation_key="acme-key",
+            accepted_by="ops",
+        )
+        import modules.identity.policy_guard as pg_local
+        importlib.reload(pg_local)
+        pg_local.init_db()
+
+        action = pg_local.PolicyAction(
+            request_id="r-fat-5",
+            actor_id="agent-acme-engineering-1",   # NOT in finance scope
+            actor_type="agent",
+            action_type="read",
+            target_policy_id="p",
+            target_policy_name="cross",
+            tenant_id="acme",
+            metadata={
+                "remote_org_id": "beta",
+                "federation_trust_id": trust.trust_id,
+            },
+        )
+        result = pg_local.evaluate(action)
+        assert "CONST-06" in result.rules_triggered

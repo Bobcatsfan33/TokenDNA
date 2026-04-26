@@ -58,6 +58,8 @@ PHASE5_GATES = [
     "ent.behavioral_dna",
     "ent.blast_radius",
     "ent.intent_correlation",
+    # Sprint FAT addition
+    "ent.federation",
 ]
 
 

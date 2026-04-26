@@ -790,3 +790,105 @@ class TestPermissionWeightDriftAnomaly:
             policy_id="pol-q-2",
         )
         assert isinstance(anomalies, list)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FAT — record_cross_org_action + crosses_org edge type
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestCrossOrgAction:
+    def test_records_crosses_org_edge(self, tg):
+        tg.record_cross_org_action(
+            local_org_id=TENANT,
+            remote_org_id="beta",
+            local_agent="agt-finance",
+            remote_resource="invoice-svc",
+            action_type="read_resource",
+            federation_trust_id="trust-123",
+        )
+        # Verify the edge exists with the right edge_type.
+        agent_id = tg._node_id(TENANT, "agent", "agt-finance")
+        resource_id = tg._node_id(TENANT, "workload", "beta::invoice-svc")
+        eid = tg._edge_id(TENANT, agent_id, resource_id, tg._CROSSES_ORG_EDGE_TYPE)
+        conn = tg._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT edge_type FROM tg_edges WHERE edge_id=?",
+                (eid,),
+            ).fetchone()
+        finally:
+            conn.close()
+        assert row is not None
+        assert row["edge_type"] == "crosses_org"
+
+    def test_no_handshake_fires_critical_anomaly(self, tg):
+        anomalies = tg.record_cross_org_action(
+            local_org_id=TENANT,
+            remote_org_id="beta",
+            local_agent="agt-finance",
+            remote_resource="invoice-svc",
+            action_type="read_resource",
+            federation_trust_id=None,
+        )
+        types = [a.anomaly_type for a in anomalies]
+        assert "CROSS_ORG_ACTION_WITHOUT_HANDSHAKE" in types
+        anomaly = next(
+            a for a in anomalies
+            if a.anomaly_type == "CROSS_ORG_ACTION_WITHOUT_HANDSHAKE"
+        )
+        assert anomaly.severity == "critical"
+        assert anomaly.context["remote_org_id"] == "beta"
+
+    def test_with_trust_id_fires_no_anomaly(self, tg):
+        anomalies = tg.record_cross_org_action(
+            local_org_id=TENANT,
+            remote_org_id="beta",
+            local_agent="agt-finance",
+            remote_resource="invoice-svc",
+            action_type="read_resource",
+            federation_trust_id="trust-456",
+        )
+        assert all(
+            a.anomaly_type != "CROSS_ORG_ACTION_WITHOUT_HANDSHAKE"
+            for a in anomalies
+        )
+
+    def test_remote_resource_namespaced_by_org(self, tg):
+        """Same resource label in different orgs must not collide."""
+        tg.record_cross_org_action(
+            local_org_id=TENANT,
+            remote_org_id="beta",
+            local_agent="agt-A",
+            remote_resource="db",
+            action_type="read",
+            federation_trust_id="t1",
+        )
+        tg.record_cross_org_action(
+            local_org_id=TENANT,
+            remote_org_id="gamma",
+            local_agent="agt-A",
+            remote_resource="db",  # same name, different org
+            action_type="read",
+            federation_trust_id="t2",
+        )
+        beta_id = tg._node_id(TENANT, "workload", "beta::db")
+        gamma_id = tg._node_id(TENANT, "workload", "gamma::db")
+        assert beta_id != gamma_id
+
+    def test_required_args_validated(self, tg):
+        with pytest.raises(ValueError):
+            tg.record_cross_org_action(
+                local_org_id="", remote_org_id="b", local_agent="a",
+                remote_resource="r", action_type="x",
+            )
+        with pytest.raises(ValueError):
+            tg.record_cross_org_action(
+                local_org_id="a", remote_org_id="", local_agent="a",
+                remote_resource="r", action_type="x",
+            )
+        with pytest.raises(ValueError):
+            tg.record_cross_org_action(
+                local_org_id="a", remote_org_id="b", local_agent="",
+                remote_resource="r", action_type="x",
+            )

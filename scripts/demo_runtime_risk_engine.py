@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-TokenDNA Runtime Risk Engine — 10-minute live demo arc
+TokenDNA Runtime Risk Engine — live demo arc (Act 1 intra-org + Act 2 cross-org)
 
 The narrative customers see in a sales meeting:
 
+    ── ACT 1 — Intra-org Runtime Risk Engine ───────────────────────────
     SCENE 1.  Baseline    — innocuous activity from a legitimate agent
     SCENE 2.  Drift       — agent's permission scope grows >2x without
                             attestation; PERMISSION_WEIGHT_DRIFT fires
@@ -19,6 +20,16 @@ The narrative customers see in a sales meeting:
     SCENE 7.  Verdict     — policy_guard rejects the next attempted action;
                             policy_advisor surfaces a tightening suggestion;
                             operator approves it
+
+    ── ACT 2 — Federated Agent Trust (cross-org) ───────────────────────
+    SCENE 8.  Federation  — Acme initiates a federation handshake to Beta;
+                            Beta accepts; mutual trust is established
+    SCENE 9.  Cross-org   — agent at Acme attempts an action against Beta
+                            WITHOUT a federation_trust_id → CONST-06 BLOCKs
+                            the action and CROSS_ORG_ACTION_WITHOUT_HANDSHAKE
+                            fires in Acme's trust graph
+    SCENE 10. Approved    — same action retried WITH the trust_id passes
+                            CONST-06 cleanly
 
 Run against a live TokenDNA instance:
 
@@ -37,6 +48,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -240,6 +252,71 @@ def scene_blast(dry_run: bool) -> None:
                   f" (risk={v.get('risk_score'):.2f})")
 
 
+def scene_federation(dry_run: bool) -> dict[str, Any]:
+    _scene(8, "Federation — Acme ↔ Beta mutual trust handshake")
+    if dry_run:
+        print("  [DRY] federation.initiate_handshake(local=acme, remote=beta, scope=['agent-acme-*'])")
+        print("  [DRY] federation.accept_handshake(handshake_id=..., accepting_org=acme, ...)")
+        return {"trust_id": "trust-stub"}
+    # Federation bootstrap is a server-side op; run it in-process so the
+    # demo proves the full trust path even before HTTP routes for FAT ship.
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from modules.identity import federation as _fed
+    _fed.init_db()
+    offer = _fed.initiate_handshake(
+        local_org_id="beta",        # Beta offers federation to Acme
+        remote_org_id="acme",
+        accepted_scope=["finance-bot-*"],
+        policy_summary={"soc2": True, "iso27001": True},
+    )
+    _step(f"Beta initiated handshake to Acme  handshake_id={offer.handshake_id[:8]}")
+    trust = _fed.accept_handshake(
+        handshake_id=offer.handshake_id,
+        accepting_org_id="acme",
+        remote_federation_key="acme-key-" + RUN_TAG,
+        accepted_by="ops@acme.com",
+    )
+    _step(f"Acme accepted   trust_id={trust.trust_id[:8]}  scope={trust.accepted_scope}")
+    return {"trust_id": trust.trust_id}
+
+
+def scene_cross_org_blocked(dry_run: bool) -> None:
+    _scene(9, "Cross-org without trust — CONST-06 BLOCKs")
+    r = _req("POST", "/api/policy/guard/evaluate", {
+        "request_id": f"req-{RUN_TAG}-xorg-blocked",
+        "actor_id": AGENT,
+        "actor_type": "agent",
+        "action_type": "read_resource",
+        "target_policy_id": "beta/pol-invoice",
+        "target_policy_name": "beta-cross-org-policy",
+        "tenant_id": "acme",
+        "metadata": {
+            "remote_org_id": "beta",
+            # No federation_trust_id — CONST-06 must BLOCK
+        },
+    }, dry_run=dry_run)
+    _step("policy_guard.evaluate (no trust_id) → expect BLOCK", r)
+
+
+def scene_cross_org_approved(dry_run: bool, trust_id: str) -> None:
+    _scene(10, "Cross-org WITH trust — CONST-06 passes")
+    r = _req("POST", "/api/policy/guard/evaluate", {
+        "request_id": f"req-{RUN_TAG}-xorg-approved",
+        "actor_id": AGENT,
+        "actor_type": "agent",
+        "action_type": "read_resource",
+        "target_policy_id": "beta/pol-invoice",
+        "target_policy_name": "beta-cross-org-policy",
+        "tenant_id": "acme",
+        "metadata": {
+            "remote_org_id": "beta",
+            "federation_trust_id": trust_id,
+        },
+    }, dry_run=dry_run)
+    _step("policy_guard.evaluate (with trust_id) → expect ALLOW", r)
+
+
 def scene_verdict(dry_run: bool) -> None:
     _scene(7, "Verdict — policy_guard rejects, advisor recommends, operator approves")
     # Generate a fresh suggestion based on the recent violations.
@@ -285,6 +362,7 @@ def main() -> int:
     if not wait_for_api(dry_run=args.dry_run):
         return 1
 
+    # Act 1 — intra-org Runtime Risk Engine
     scene_baseline(args.dry_run)
     scene_drift(args.dry_run)
     scene_self_modification(args.dry_run)
@@ -292,6 +370,11 @@ def main() -> int:
     scene_deception(args.dry_run)
     scene_blast(args.dry_run)
     scene_verdict(args.dry_run)
+
+    # Act 2 — Federated Agent Trust (cross-org)
+    fed_state = scene_federation(args.dry_run)
+    scene_cross_org_blocked(args.dry_run)
+    scene_cross_org_approved(args.dry_run, trust_id=fed_state["trust_id"])
 
     print()
     print("=" * 72)
