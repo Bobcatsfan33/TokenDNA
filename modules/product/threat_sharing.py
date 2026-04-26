@@ -32,30 +32,38 @@ Plus three additive columns on ``intent_playbooks``:
   ``network_playbook_id``  back-reference to ``network_playbooks``
   ``shared``               0/1 — 1 once the local playbook has been published
 
-PG vs SQLite
-------------
-SQL is written against SQLite first (the dev/test backend) and uses idioms
-that also work on PG 13+ — recursive CTEs are not needed here, ``ALTER TABLE
-ADD COLUMN`` is wrapped in try/except for the non-destructive migration. The
-PG branch mirrors the SQLite branch where ``db_backend.should_use_postgres``
-returns true.
+Backend
+-------
+Connections route through ``modules.storage.pg_connection.get_db_conn``,
+which transparently selects SQLite or Postgres based on
+``TOKENDNA_DB_BACKEND`` + ``TOKENDNA_PG_DSN``. SQL uses SQLite-style ``?``
+placeholders; ``adapt_sql`` (applied automatically by ``AdaptedCursor``)
+converts to ``%s`` for psycopg.
+
+Caveat: this module's ``intent_playbooks`` ALTER TABLE migrations only
+apply when ``intent_correlation.init_db()`` has actually created the
+table. ``intent_correlation`` is still SQLite-only — running threat
+sharing on Postgres requires migrating ``intent_correlation`` first.
+This module's PG schema and operations are themselves backend-clean.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
-import sqlite3
-import threading
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 from modules.identity import intent_correlation
-from modules.storage import db_backend
+from modules.storage.pg_connection import AdaptedCursor, get_db_conn
+
+logger = logging.getLogger(__name__)
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -115,8 +123,6 @@ _DROP_FIELDS: frozenset[str] = frozenset({
 _IPV4_RE = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 _EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
 
-_lock = threading.Lock()
-
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
@@ -124,16 +130,26 @@ def _db_path() -> str:
     return os.getenv("DATA_DB_PATH", "/data/tokendna.db")
 
 
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+@contextmanager
+def _cursor():
+    """Yield an AdaptedCursor backed by the configured DB backend.
 
-
-def _use_pg() -> bool:
-    return db_backend.should_use_postgres()
+    ``get_db_conn`` selects SQLite or Postgres based on env config and
+    returns a connection with the same .cursor()/.commit()/.close() shape
+    for both backends. The AdaptedCursor wrapper auto-converts ``?``
+    placeholders to ``%s`` when running against Postgres.
+    """
+    with get_db_conn(db_path=_db_path()) as conn:
+        cur = AdaptedCursor(conn.cursor())
+        try:
+            yield cur
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+            raise
 
 
 def _now_iso() -> str:
@@ -146,46 +162,57 @@ def _hash_tenant(tenant_id: str) -> str:
 
 
 # ── Schema ────────────────────────────────────────────────────────────────────
+#
+# Each statement executed individually so the same definition works on PG
+# (which does not support sqlite3.executescript). Both backends accept this
+# DDL as-is — TEXT / INTEGER are universal, the UNIQUE constraint syntax is
+# compatible, and CREATE INDEX IF NOT EXISTS works on PG 9.5+.
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS threat_sharing_tenants (
-    tenant_id        TEXT PRIMARY KEY,
-    opted_in         INTEGER NOT NULL DEFAULT 0,
-    opted_in_at      TEXT,
-    opted_out_at     TEXT,
-    published_count  INTEGER NOT NULL DEFAULT 0,
-    received_count   INTEGER NOT NULL DEFAULT 0,
-    created_at       TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS network_playbooks (
-    network_playbook_id  TEXT PRIMARY KEY,
-    source_tenant_hash   TEXT NOT NULL,
-    source_playbook_id   TEXT NOT NULL,
-    name                 TEXT NOT NULL,
-    description          TEXT NOT NULL,
-    severity             TEXT NOT NULL,
-    steps_json           TEXT NOT NULL,
-    window_seconds       INTEGER NOT NULL,
-    published_at         TEXT NOT NULL,
-    revoked              INTEGER NOT NULL DEFAULT 0,
-    UNIQUE(source_tenant_hash, source_playbook_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_network_playbooks_published
-    ON network_playbooks(published_at DESC, revoked);
-
-CREATE TABLE IF NOT EXISTS network_propagations (
-    tenant_id            TEXT NOT NULL,
-    network_playbook_id  TEXT NOT NULL,
-    propagated_at        TEXT NOT NULL,
-    local_playbook_id    TEXT NOT NULL,
-    PRIMARY KEY (tenant_id, network_playbook_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_network_propagations_tenant
-    ON network_propagations(tenant_id);
-"""
+_DDL_STATEMENTS: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS threat_sharing_tenants (
+        tenant_id        TEXT PRIMARY KEY,
+        opted_in         INTEGER NOT NULL DEFAULT 0,
+        opted_in_at      TEXT,
+        opted_out_at     TEXT,
+        published_count  INTEGER NOT NULL DEFAULT 0,
+        received_count   INTEGER NOT NULL DEFAULT 0,
+        created_at       TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS network_playbooks (
+        network_playbook_id  TEXT PRIMARY KEY,
+        source_tenant_hash   TEXT NOT NULL,
+        source_playbook_id   TEXT NOT NULL,
+        name                 TEXT NOT NULL,
+        description          TEXT NOT NULL,
+        severity             TEXT NOT NULL,
+        steps_json           TEXT NOT NULL,
+        window_seconds       INTEGER NOT NULL,
+        published_at         TEXT NOT NULL,
+        revoked              INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(source_tenant_hash, source_playbook_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_network_playbooks_published
+        ON network_playbooks(published_at, revoked)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS network_propagations (
+        tenant_id            TEXT NOT NULL,
+        network_playbook_id  TEXT NOT NULL,
+        propagated_at        TEXT NOT NULL,
+        local_playbook_id    TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, network_playbook_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_network_propagations_tenant
+        ON network_propagations(tenant_id)
+    """,
+)
 
 _INTENT_PLAYBOOK_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE intent_playbooks ADD COLUMN source TEXT NOT NULL DEFAULT 'local'",
@@ -195,27 +222,25 @@ _INTENT_PLAYBOOK_MIGRATIONS: tuple[str, ...] = (
 
 
 def init_db() -> None:
-    """Create tables and run the additive migration on intent_playbooks."""
-    if _use_pg():
-        return  # PG path mirrors SQLite — left as a stub for parity.
-    # intent_playbooks must exist before we ALTER it.
+    """Create tables and run the additive migration on intent_playbooks.
+
+    Idempotent. The ALTER statements are wrapped in per-statement
+    try/except because both SQLite and Postgres reject re-adding an
+    existing column — they just raise different exceptions, and a
+    catch-all keeps the migration path simple."""
+    # intent_playbooks must exist before we ALTER it. intent_correlation
+    # is still SQLite-only; on Postgres this is a no-op and the ALTERs
+    # below will silently skip until that module is migrated.
     intent_correlation.init_db()
 
-    db_path = _db_path()
-    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
-    with _lock:
-        conn = _get_conn()
-        try:
-            conn.executescript(_SCHEMA)
-            for ddl in _INTENT_PLAYBOOK_MIGRATIONS:
-                try:
-                    conn.execute(ddl)
-                except sqlite3.OperationalError:
-                    # Column already present from a prior init_db() — ignore.
-                    pass
-            conn.commit()
-        finally:
-            conn.close()
+    with _cursor() as cur:
+        for stmt in _DDL_STATEMENTS:
+            cur.execute(stmt)
+        for ddl in _INTENT_PLAYBOOK_MIGRATIONS:
+            try:
+                cur.execute(ddl)
+            except Exception:  # noqa: BLE001 — column already present, both backends.
+                pass
 
 
 # ── Data classes ──────────────────────────────────────────────────────────────
@@ -328,13 +353,19 @@ def anonymize_playbook(playbook: dict[str, Any]) -> dict[str, Any]:
 
 
 # ── Opt-in registry ───────────────────────────────────────────────────────────
+#
+# Note: ``INSERT ... ON CONFLICT(col) DO NOTHING`` is used in lieu of
+# SQLite's ``INSERT OR IGNORE`` because the former works on both backends
+# (SQLite 3.24+ and Postgres 9.5+). Neither feature ports cleanly the other
+# direction.
 
-def _ensure_row(conn: sqlite3.Connection, tenant_id: str) -> None:
-    conn.execute(
+def _ensure_row(cur: AdaptedCursor, tenant_id: str) -> None:
+    cur.execute(
         """
-        INSERT OR IGNORE INTO threat_sharing_tenants
+        INSERT INTO threat_sharing_tenants
             (tenant_id, opted_in, published_count, received_count, created_at)
         VALUES (?, 0, 0, 0, ?)
+        ON CONFLICT(tenant_id) DO NOTHING
         """,
         (tenant_id, _now_iso()),
     )
@@ -342,70 +373,57 @@ def _ensure_row(conn: sqlite3.Connection, tenant_id: str) -> None:
 
 def opt_in(tenant_id: str) -> dict[str, Any]:
     """Mark a tenant as opted in. Idempotent."""
-    if _use_pg():
-        return {"tenant_id": tenant_id, "opted_in": True, "opted_in_at": _now_iso()}
     now = _now_iso()
-    with _lock:
-        conn = _get_conn()
-        try:
-            _ensure_row(conn, tenant_id)
-            conn.execute(
-                """
-                UPDATE threat_sharing_tenants
-                SET opted_in=1, opted_in_at=?, opted_out_at=NULL
-                WHERE tenant_id=?
-                """,
-                (now, tenant_id),
-            )
-            conn.commit()
-        finally:
-            conn.close()
+    with _cursor() as cur:
+        _ensure_row(cur, tenant_id)
+        cur.execute(
+            """
+            UPDATE threat_sharing_tenants
+            SET opted_in=1, opted_in_at=?, opted_out_at=NULL
+            WHERE tenant_id=?
+            """,
+            (now, tenant_id),
+        )
     return get_status(tenant_id)
 
 
 def opt_out(tenant_id: str) -> dict[str, Any]:
     """Mark a tenant as opted out. Past propagations are retained — only
     future sync calls are blocked. Idempotent."""
-    if _use_pg():
-        return {"tenant_id": tenant_id, "opted_in": False, "opted_out_at": _now_iso()}
     now = _now_iso()
-    with _lock:
-        conn = _get_conn()
-        try:
-            _ensure_row(conn, tenant_id)
-            conn.execute(
-                """
-                UPDATE threat_sharing_tenants
-                SET opted_in=0, opted_out_at=?
-                WHERE tenant_id=?
-                """,
-                (now, tenant_id),
-            )
-            conn.commit()
-        finally:
-            conn.close()
+    with _cursor() as cur:
+        _ensure_row(cur, tenant_id)
+        cur.execute(
+            """
+            UPDATE threat_sharing_tenants
+            SET opted_in=0, opted_out_at=?
+            WHERE tenant_id=?
+            """,
+            (now, tenant_id),
+        )
     return get_status(tenant_id)
 
 
 def is_opted_in(tenant_id: str) -> bool:
-    if _use_pg():
-        return False
-    with _lock:
-        conn = _get_conn()
-        try:
-            row = conn.execute(
-                "SELECT opted_in FROM threat_sharing_tenants WHERE tenant_id=?",
-                (tenant_id,),
-            ).fetchone()
-            return bool(row and row["opted_in"])
-        finally:
-            conn.close()
+    with _cursor() as cur:
+        cur.execute(
+            "SELECT opted_in FROM threat_sharing_tenants WHERE tenant_id=?",
+            (tenant_id,),
+        )
+        row = cur.fetchone()
+    return bool(row and row["opted_in"])
 
 
 def get_status(tenant_id: str) -> dict[str, Any]:
     """Return opt-in status + counters for the tenant. Tenants that have
     never interacted with the network get a synthetic 'never opted in' view."""
-    if _use_pg():
+    with _cursor() as cur:
+        cur.execute(
+            "SELECT * FROM threat_sharing_tenants WHERE tenant_id=?",
+            (tenant_id,),
+        )
+        row = cur.fetchone()
+    if not row:
         return {
             "tenant_id": tenant_id,
             "opted_in": False,
@@ -414,32 +432,14 @@ def get_status(tenant_id: str) -> dict[str, Any]:
             "published_count": 0,
             "received_count": 0,
         }
-    with _lock:
-        conn = _get_conn()
-        try:
-            row = conn.execute(
-                "SELECT * FROM threat_sharing_tenants WHERE tenant_id=?",
-                (tenant_id,),
-            ).fetchone()
-            if not row:
-                return {
-                    "tenant_id": tenant_id,
-                    "opted_in": False,
-                    "opted_in_at": None,
-                    "opted_out_at": None,
-                    "published_count": 0,
-                    "received_count": 0,
-                }
-            return {
-                "tenant_id": row["tenant_id"],
-                "opted_in": bool(row["opted_in"]),
-                "opted_in_at": row["opted_in_at"],
-                "opted_out_at": row["opted_out_at"],
-                "published_count": row["published_count"],
-                "received_count": row["received_count"],
-            }
-        finally:
-            conn.close()
+    return {
+        "tenant_id": row["tenant_id"],
+        "opted_in": bool(row["opted_in"]),
+        "opted_in_at": row["opted_in_at"],
+        "opted_out_at": row["opted_out_at"],
+        "published_count": row["published_count"],
+        "received_count": row["received_count"],
+    }
 
 
 # ── Publish ───────────────────────────────────────────────────────────────────
@@ -458,107 +458,101 @@ def publish_playbook(tenant_id: str, playbook_id: str) -> dict[str, Any]:
     Idempotent on (source_tenant_hash, source_playbook_id) — re-publishing
     returns the existing receipt with ``deduplicated=True``.
     """
-    if _use_pg():
-        raise NotImplementedError("threat_sharing PG path not implemented")
-
     if not is_opted_in(tenant_id):
         raise ValueError("not_opted_in")
 
     now = _now_iso()
     src_hash = _hash_tenant(tenant_id)
 
-    with _lock:
-        conn = _get_conn()
-        try:
-            row = conn.execute(
-                "SELECT * FROM intent_playbooks WHERE playbook_id=? AND tenant_id=?",
-                (playbook_id, tenant_id),
-            ).fetchone()
-            if not row:
-                raise ValueError("not_found")
-            if row["builtin"]:
-                raise ValueError("builtin_blocked")
+    with _cursor() as cur:
+        cur.execute(
+            "SELECT * FROM intent_playbooks WHERE playbook_id=? AND tenant_id=?",
+            (playbook_id, tenant_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise ValueError("not_found")
+        if row["builtin"]:
+            raise ValueError("builtin_blocked")
 
-            # Dedup on (source_tenant_hash, source_playbook_id).
-            existing = conn.execute(
-                """
-                SELECT network_playbook_id, name, severity, published_at
-                FROM network_playbooks
-                WHERE source_tenant_hash=? AND source_playbook_id=?
-                """,
-                (src_hash, playbook_id),
-            ).fetchone()
-            if existing:
-                return PublishReceipt(
-                    network_playbook_id=existing["network_playbook_id"],
-                    source_playbook_id=playbook_id,
-                    tenant_id=tenant_id,
-                    name=existing["name"],
-                    severity=existing["severity"],
-                    published_at=existing["published_at"],
-                    deduplicated=True,
-                ).as_dict()
-
-            local_view = {
-                "name": row["name"],
-                "description": row["description"],
-                "severity": row["severity"],
-                "steps": json.loads(row["steps_json"]),
-                "window_seconds": row["window_seconds"],
-            }
-            anon = anonymize_playbook(local_view)
-
-            net_id = f"net:{uuid.uuid4().hex[:24]}"
-            conn.execute(
-                """
-                INSERT INTO network_playbooks
-                    (network_playbook_id, source_tenant_hash, source_playbook_id,
-                     name, description, severity, steps_json, window_seconds,
-                     published_at, revoked)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-                """,
-                (
-                    net_id,
-                    src_hash,
-                    playbook_id,
-                    anon["name"],
-                    anon["description"],
-                    anon["severity"],
-                    json.dumps(anon["steps"]),
-                    int(anon.get("window_seconds") or row["window_seconds"]),
-                    now,
-                ),
-            )
-            conn.execute(
-                "UPDATE intent_playbooks SET shared=1, updated_at=? WHERE playbook_id=?",
-                (now, playbook_id),
-            )
-            _ensure_row(conn, tenant_id)
-            conn.execute(
-                """
-                UPDATE threat_sharing_tenants
-                SET published_count = published_count + 1
-                WHERE tenant_id=?
-                """,
-                (tenant_id,),
-            )
-            conn.commit()
+        # Dedup on (source_tenant_hash, source_playbook_id).
+        cur.execute(
+            """
+            SELECT network_playbook_id, name, severity, published_at
+            FROM network_playbooks
+            WHERE source_tenant_hash=? AND source_playbook_id=?
+            """,
+            (src_hash, playbook_id),
+        )
+        existing = cur.fetchone()
+        if existing:
             return PublishReceipt(
-                network_playbook_id=net_id,
+                network_playbook_id=existing["network_playbook_id"],
                 source_playbook_id=playbook_id,
                 tenant_id=tenant_id,
-                name=anon["name"],
-                severity=anon["severity"],
-                published_at=now,
-                deduplicated=False,
+                name=existing["name"],
+                severity=existing["severity"],
+                published_at=existing["published_at"],
+                deduplicated=True,
             ).as_dict()
-        finally:
-            conn.close()
+
+        local_view = {
+            "name": row["name"],
+            "description": row["description"],
+            "severity": row["severity"],
+            "steps": json.loads(row["steps_json"]),
+            "window_seconds": row["window_seconds"],
+        }
+        anon = anonymize_playbook(local_view)
+
+        net_id = f"net:{uuid.uuid4().hex[:24]}"
+        cur.execute(
+            """
+            INSERT INTO network_playbooks
+                (network_playbook_id, source_tenant_hash, source_playbook_id,
+                 name, description, severity, steps_json, window_seconds,
+                 published_at, revoked)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            """,
+            (
+                net_id,
+                src_hash,
+                playbook_id,
+                anon["name"],
+                anon["description"],
+                anon["severity"],
+                json.dumps(anon["steps"]),
+                int(anon.get("window_seconds") or row["window_seconds"]),
+                now,
+            ),
+        )
+        cur.execute(
+            "UPDATE intent_playbooks SET shared=1, updated_at=? WHERE playbook_id=?",
+            (now, playbook_id),
+        )
+        _ensure_row(cur, tenant_id)
+        cur.execute(
+            """
+            UPDATE threat_sharing_tenants
+            SET published_count = published_count + 1
+            WHERE tenant_id=?
+            """,
+            (tenant_id,),
+        )
+        return PublishReceipt(
+            network_playbook_id=net_id,
+            source_playbook_id=playbook_id,
+            tenant_id=tenant_id,
+            name=anon["name"],
+            severity=anon["severity"],
+            published_at=now,
+            deduplicated=False,
+        ).as_dict()
 
 
 # ── Propagate / sync ──────────────────────────────────────────────────────────
 
-def _network_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+def _network_row_to_dict(row: Any) -> dict[str, Any]:
     return {
         "network_playbook_id": row["network_playbook_id"],
         "name": row["name"],
@@ -574,24 +568,19 @@ def _network_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
 def list_network_playbooks(limit: int = 100) -> list[dict[str, Any]]:
     """Browse the shared catalog. The view is identical for every tenant —
     nothing here ties a network playbook back to its publisher."""
-    if _use_pg():
-        return []
     limit = max(1, min(int(limit), 500))
-    with _lock:
-        conn = _get_conn()
-        try:
-            rows = conn.execute(
-                """
-                SELECT * FROM network_playbooks
-                WHERE revoked=0
-                ORDER BY published_at DESC
-                LIMIT ?
-                """,
-                (limit,),
-            ).fetchall()
-            return [_network_row_to_dict(r) for r in rows]
-        finally:
-            conn.close()
+    with _cursor() as cur:
+        cur.execute(
+            """
+            SELECT * FROM network_playbooks
+            WHERE revoked=0
+            ORDER BY published_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+    return [_network_row_to_dict(r) for r in rows]
 
 
 def propagate_to_tenant(
@@ -605,79 +594,74 @@ def propagate_to_tenant(
     short-circuits subsequent calls. Returns the propagation record on
     success, or ``None`` if the network playbook does not exist / is revoked.
     """
-    if _use_pg():
-        return None
     now = _now_iso()
-    with _lock:
-        conn = _get_conn()
-        try:
-            existing = conn.execute(
-                """
-                SELECT propagated_at, local_playbook_id
-                FROM network_propagations
-                WHERE tenant_id=? AND network_playbook_id=?
-                """,
-                (tenant_id, network_playbook_id),
-            ).fetchone()
-            if existing:
-                return {
-                    "tenant_id": tenant_id,
-                    "network_playbook_id": network_playbook_id,
-                    "local_playbook_id": existing["local_playbook_id"],
-                    "propagated_at": existing["propagated_at"],
-                    "deduplicated": True,
-                }
-
-            net = conn.execute(
-                "SELECT * FROM network_playbooks WHERE network_playbook_id=? AND revoked=0",
-                (network_playbook_id,),
-            ).fetchone()
-            if not net:
-                return None
-
-            local_pid = f"network:{uuid.uuid4().hex[:16]}"
-            conn.execute(
-                """
-                INSERT INTO intent_playbooks
-                    (playbook_id, tenant_id, name, description, severity,
-                     steps_json, window_seconds, enabled, builtin,
-                     created_at, updated_at,
-                     source, network_playbook_id, shared)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, 'network', ?, 0)
-                """,
-                (
-                    local_pid, tenant_id, net["name"], net["description"],
-                    net["severity"], net["steps_json"], net["window_seconds"],
-                    now, now, network_playbook_id,
-                ),
-            )
-            conn.execute(
-                """
-                INSERT INTO network_propagations
-                    (tenant_id, network_playbook_id, propagated_at, local_playbook_id)
-                VALUES (?, ?, ?, ?)
-                """,
-                (tenant_id, network_playbook_id, now, local_pid),
-            )
-            _ensure_row(conn, tenant_id)
-            conn.execute(
-                """
-                UPDATE threat_sharing_tenants
-                SET received_count = received_count + 1
-                WHERE tenant_id=?
-                """,
-                (tenant_id,),
-            )
-            conn.commit()
+    with _cursor() as cur:
+        cur.execute(
+            """
+            SELECT propagated_at, local_playbook_id
+            FROM network_propagations
+            WHERE tenant_id=? AND network_playbook_id=?
+            """,
+            (tenant_id, network_playbook_id),
+        )
+        existing = cur.fetchone()
+        if existing:
             return {
                 "tenant_id": tenant_id,
                 "network_playbook_id": network_playbook_id,
-                "local_playbook_id": local_pid,
-                "propagated_at": now,
-                "deduplicated": False,
+                "local_playbook_id": existing["local_playbook_id"],
+                "propagated_at": existing["propagated_at"],
+                "deduplicated": True,
             }
-        finally:
-            conn.close()
+
+        cur.execute(
+            "SELECT * FROM network_playbooks WHERE network_playbook_id=? AND revoked=0",
+            (network_playbook_id,),
+        )
+        net = cur.fetchone()
+        if not net:
+            return None
+
+        local_pid = f"network:{uuid.uuid4().hex[:16]}"
+        cur.execute(
+            """
+            INSERT INTO intent_playbooks
+                (playbook_id, tenant_id, name, description, severity,
+                 steps_json, window_seconds, enabled, builtin,
+                 created_at, updated_at,
+                 source, network_playbook_id, shared)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, 'network', ?, 0)
+            """,
+            (
+                local_pid, tenant_id, net["name"], net["description"],
+                net["severity"], net["steps_json"], net["window_seconds"],
+                now, now, network_playbook_id,
+            ),
+        )
+        cur.execute(
+            """
+            INSERT INTO network_propagations
+                (tenant_id, network_playbook_id, propagated_at, local_playbook_id)
+            VALUES (?, ?, ?, ?)
+            """,
+            (tenant_id, network_playbook_id, now, local_pid),
+        )
+        _ensure_row(cur, tenant_id)
+        cur.execute(
+            """
+            UPDATE threat_sharing_tenants
+            SET received_count = received_count + 1
+            WHERE tenant_id=?
+            """,
+            (tenant_id,),
+        )
+        return {
+            "tenant_id": tenant_id,
+            "network_playbook_id": network_playbook_id,
+            "local_playbook_id": local_pid,
+            "propagated_at": now,
+            "deduplicated": False,
+        }
 
 
 def sync_network_playbooks(tenant_id: str) -> int:
@@ -687,30 +671,24 @@ def sync_network_playbooks(tenant_id: str) -> int:
 
     Returns the count of newly propagated playbooks.
     """
-    if _use_pg():
-        return 0
     if not is_opted_in(tenant_id):
         return 0
 
-    with _lock:
-        conn = _get_conn()
-        try:
-            pending = conn.execute(
-                """
-                SELECT np.network_playbook_id
-                FROM network_playbooks np
-                LEFT JOIN network_propagations p
-                    ON p.network_playbook_id = np.network_playbook_id
-                   AND p.tenant_id = ?
-                WHERE p.network_playbook_id IS NULL
-                  AND np.revoked = 0
-                ORDER BY np.published_at ASC
-                """,
-                (tenant_id,),
-            ).fetchall()
-            ids = [r["network_playbook_id"] for r in pending]
-        finally:
-            conn.close()
+    with _cursor() as cur:
+        cur.execute(
+            """
+            SELECT np.network_playbook_id
+            FROM network_playbooks np
+            LEFT JOIN network_propagations p
+                ON p.network_playbook_id = np.network_playbook_id
+               AND p.tenant_id = ?
+            WHERE p.network_playbook_id IS NULL
+              AND np.revoked = 0
+            ORDER BY np.published_at ASC
+            """,
+            (tenant_id,),
+        )
+        ids = [r["network_playbook_id"] for r in cur.fetchall()]
 
     added = 0
     for nid in ids:
