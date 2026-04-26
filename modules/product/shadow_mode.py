@@ -60,9 +60,6 @@ import logging
 import os
 import pathlib
 import threading
-import time
-import uuid
-from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable
@@ -404,6 +401,9 @@ def generate_trial_report(
                         "reach": row["reach"],
                     })
         except sqlite3.OperationalError:
+            # Trust graph tables may not exist yet on a brand-new trial
+            # database — leave high_blast empty rather than failing the
+            # whole report.
             pass
 
         top_findings = _build_top_findings(

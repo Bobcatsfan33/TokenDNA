@@ -347,7 +347,7 @@ def seed_agents_and_history(
                         outcome="success",
                     )
                     if not dry_run:
-                        uis_store.insert_event(event)
+                        uis_store.insert_event(tenant, event)
                     event_count += 1
         return agent_count, event_count, agent_labels
 
@@ -551,9 +551,10 @@ def seed_agents_and_history(
                         auth_method_override=stage.get("auth_method"),
                     )
                     try:
-                        uis_store.insert_event(event)
+                        uis_store.insert_event(ACME, event)
                     except Exception:
-                        pass  # Some malformed-by-design events are expected
+                        # Some malformed-by-design events are expected here.
+                        pass
                 chain_traces += 1
     summary["attack_chain_traces"] = chain_traces
     _print_step(f"{chain_traces} attack-chain trace events planted across {len(chains)} chains")

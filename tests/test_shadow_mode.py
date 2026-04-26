@@ -15,11 +15,6 @@ from __future__ import annotations
 
 import importlib
 import json
-import os
-import sqlite3
-from datetime import datetime, timezone
-from pathlib import Path
-from unittest import mock
 
 import pytest
 
@@ -207,7 +202,8 @@ class TestTrialReport:
         for m in (uis_store, trust_graph, policy_guard, policy_advisor,
                   permission_drift, honeypot_mesh, intent_correlation,
                   mcp_inspector, federation):
-            importlib.reload(m); m.init_db()
+            importlib.reload(m)
+            m.init_db()
         # Drive a self-modification via the trust graph so the report
         # has at least one POLICY_SCOPE_MODIFICATION row.
         anomalies = trust_graph.record_policy_modification(
