@@ -18,7 +18,7 @@ jobs:
     name: Lint & Import Verification
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v6
         with:
@@ -59,7 +59,7 @@ jobs:
     name: Dependency Security Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v6
         with:
@@ -89,7 +89,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
@@ -110,7 +110,7 @@ jobs:
     name: Secret Detection
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0      # full history for git log scanning
 
@@ -127,7 +127,7 @@ jobs:
     name: Docker Build Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Build Docker image
         run: docker build --no-cache -t aegis-tokendna:ci .
@@ -154,7 +154,7 @@ jobs:
     name: Runtime Readiness Gates
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v6
         with:
@@ -197,7 +197,7 @@ jobs:
     name: Adversarial Security Harness
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v6
         with:
@@ -221,7 +221,7 @@ jobs:
       DATA_DB_PATH: /tmp/tokendna-policy-regression-ci.db
       ATTESTATION_CA_SECRET: policy-regression-ci-secret
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v6
         with:
@@ -293,7 +293,7 @@ jobs:
     name: Production Secret Gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v6
         with:
@@ -369,7 +369,7 @@ jobs:
       # writable on the runner, so point them at /tmp.
       DATA_DB_PATH: /tmp/tokendna-ci.db
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v6
         with:
@@ -399,7 +399,7 @@ jobs:
     name: Helm Chart Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: azure/setup-helm@v4
         with:
@@ -437,7 +437,7 @@ jobs:
       DEV_MODE: "true"
       ATTESTATION_CA_SECRET: ci-stress-smoke-secret
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v6
         with:
