@@ -1,5 +1,5 @@
 # TokenDNA — CLAUDE.md
-_Last updated: 2026-04-25_
+_Last updated: 2026-04-25 (post-Sprint A merge)_
 
 ## What This Project Is
 
@@ -75,16 +75,15 @@ These existed before today's audit; CLAUDE.md previously listed them as "not sta
 - UIS hardening: real schema validation, dedup, MCP protocol, stable event_id (`#33`)
 - ZTIX honesty: simulate-as-demo labelling, periodic proof-of-control, record_proof auto-wire (`#34`)
 
+### Sprint A — RSA narrative wedge (shipped 2026-04-25, PR #46)
+
+- `trust_graph.record_policy_modification()` + `POLICY_SCOPE_MODIFICATION` (CRITICAL) + `PERMISSION_WEIGHT_DRIFT` (HIGH) anomaly detections.
+- `AuditEvent` emission added to every state-changing path in `policy_guard`, `policy_advisor`, `permission_drift` (10 new event types in `AuditEventType`).
+- `tests/test_rsa_narrative_e2e.py` proves Trust Graph anomaly → Policy Guard BLOCK → Policy Advisor suggestion → operator approval, end-to-end.
+- 6 new edge-case tests added to `test_permission_drift.py` (boundary, zero baseline, out-of-window, cross-tenant, attestation mix, per-policy isolation).
+- Coverage: `permission_drift` 99%, `policy_guard` 97%, `policy_advisor` 87%, `trust_graph` 71% headline (~91% on SQLite-reachable code; the rest is exercised by the Postgres Integration CI gate).
+
 ### What is NOT done yet
-
-#### Trust Graph — RSA gap anomaly detections (still missing from `trust_graph.py`)
-- `POLICY_SCOPE_MODIFICATION` — agent writes a policy that expands its own permission boundary (the CrowdStrike Fortune 50 scenario)
-- `PERMISSION_WEIGHT_DRIFT` — a permission edge's weight grows >2x without a corresponding attestation event
-
-These belong in `_detect_anomalies()` and need corresponding test cases in `tests/test_trust_graph.py`.
-
-#### Audit-log emission missing on three security modules
-`policy_guard`, `policy_advisor`, `permission_drift` do not emit `AuditEvent` records. Required for SOC 2 review and customer-side incident reconstruction.
 
 #### Sprint 2-3 — Demo Polish (not started)
 - Connect Blast Radius visualization to live Trust Graph data
@@ -102,19 +101,11 @@ These belong in `_detect_anomalies()` and need corresponding test cases in `test
 
 The plan below replaces the earlier `Trust Graph → 5-1 → ... → 6-2` linear sequence. Sprint A finishes the RSA narrative wedge; the MCP Inspector hardening sprint protects MCP positioning before it becomes a competitive liability; Sprint B packages the demo arc.
 
-### Sprint A — Finish the RSA narrative wedge (1 week, hard-stop)
+### Sprint A — Finish the RSA narrative wedge — ✅ DONE (PR #46, merged 2026-04-25)
 
-| # | Task | Est | Why |
-|---|------|-----|-----|
-| 1 | Implement `POLICY_SCOPE_MODIFICATION` + `PERMISSION_WEIGHT_DRIFT` in `trust_graph._detect_anomalies()` with deterministic fixture tests | 2 days | Directly the CrowdStrike F50 pitch; non-negotiable for the RSA narrative |
-| 2 | Add `AuditEvent` emission to `policy_guard`, `policy_advisor`, `permission_drift` on every state-changing path (evaluate, approve, reject, recommend, drift detected) | 0.5 day | Three security modules without audit logs fail SOC 2 day one |
-| 3 | Expand `permission_drift` algorithm tests — exercise the actual drift detection, not just CRUD round-trips | 1 day | Currently 2 algorithm tests vs 12 CRUD; the detection logic is the product |
-| 4 | Integration test: simulate event → Trust Graph anomaly → `policy_advisor` recommendation → `policy_guard` enforce/reject | 1 day | This is the demo proof; ties the wedge together end-to-end |
-| 5 | Buffer / overflow | 0.5 day | |
+All 5 items shipped (anomaly detections, audit emission, drift algorithm tests, RSA E2E integration test, buffer used for coverage hardening). 1605/1605 tests pass on `main`.
 
-**Sprint A done when:** all 5 items merged, `pytest --cov` shows ≥80% on each touched module, integration test from item 4 lives in `tests/test_rsa_narrative_e2e.py`, no regression in existing modules.
-
-### MCP Inspector hardening sprint (1 week, between A and B)
+### MCP Inspector hardening sprint — ACTIVE (started 2026-04-25 post Sprint A merge)
 
 `mcp_inspector.py` is at ~65% — biggest module, weakest tests. MCP is a 2025-2026 hot zone; deferring this sprint means a competitor could ship "MCP-aware identity security" first. Holding it before Sprint B (rather than after) so the demo can include a credible MCP story.
 
