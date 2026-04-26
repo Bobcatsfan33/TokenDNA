@@ -51,9 +51,10 @@ def isolated_db(tmp_path):
         from modules.storage.db_backend import should_use_postgres
 
         if should_use_postgres():
+            # Alembic baseline created the tables before pytest started; just
+            # purge state so this test sees an empty store.
             from modules.storage.pg_connection import get_db_conn
 
-            pm.init_db()
             with get_db_conn() as conn:
                 conn.execute("TRUNCATE TABLE passport_evidence, passports CASCADE")
                 conn.commit()
