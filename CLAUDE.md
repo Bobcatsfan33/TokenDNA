@@ -1,5 +1,5 @@
 # TokenDNA — CLAUDE.md
-_Last updated: 2026-04-25 (post-Sprint A merge)_
+_Last updated: 2026-04-26 (post-MCP-Sprint merge)_
 
 ## What This Project Is
 
@@ -53,12 +53,12 @@ These existed before today's audit; CLAUDE.md previously listed them as "not sta
 
 | Module | Lines | Tests | Routes | Gate | Status | Gaps |
 |---|---|---|---|---|---|---|
-| `policy_guard.py` | 569 | 48 / 102 asserts | 11 | `ent.enforcement_plane` | **~90%** | no audit-log emission |
-| `policy_advisor.py` | 990 | 48 / 90 asserts | 11 | `ent.enforcement_plane` | **~85%** | no audit-log emission |
-| `permission_drift.py` | 641 | 44 / 87 asserts | 13 | `ent.behavioral_dna` | **~80%** | thin algorithm test coverage (2 algo / 12 CRUD); no audit-log |
-| `agent_lifecycle.py` | 679 | 30 / 37 asserts | 19 | `ent.behavioral_dna` | **~70%** | no trust_graph integration; thin tests |
-| `mcp_inspector.py` | 907 | 33 / 50 asserts | 8 | `ent.mcp_gateway` | **~65%** | no trust_graph integration; chain pattern detection thin; no audit-log; biggest module / weakest tests |
-| `cert_dashboard.py` | 659 | 28 / 37 asserts | 17 refs | `ent.enforcement_plane` | **~55%** | essentially CRUD; lifecycle automation missing; only 1 algorithm-test |
+| `policy_guard.py` | 569 | 48 / 102 asserts | 11 | `ent.enforcement_plane` | ✅ **shipped** Sprint A | — |
+| `policy_advisor.py` | 990 | 48 / 90 asserts | 11 | `ent.enforcement_plane` | ✅ **shipped** Sprint A | — |
+| `permission_drift.py` | 641 | 50 / ~115 asserts | 13 | `ent.behavioral_dna` | ✅ **shipped** Sprint A | — |
+| `agent_lifecycle.py` | 679 | 30 / 37 asserts | 19 | `ent.behavioral_dna` | **~70%** *(deferred)* | no trust_graph integration; thin tests |
+| `mcp_inspector.py` | 907 | 49 / ~150 asserts | 8 | `ent.mcp_gateway` | ✅ **shipped** MCP Sprint | — |
+| `cert_dashboard.py` | 659 | 28 / 37 asserts | 17 refs | `ent.enforcement_plane` | **~55%** *(deferred)* | essentially CRUD; lifecycle automation missing |
 
 ### Production hardening — shipped (last 24 hrs)
 
@@ -80,15 +80,23 @@ These existed before today's audit; CLAUDE.md previously listed them as "not sta
 - `trust_graph.record_policy_modification()` + `POLICY_SCOPE_MODIFICATION` (CRITICAL) + `PERMISSION_WEIGHT_DRIFT` (HIGH) anomaly detections.
 - `AuditEvent` emission added to every state-changing path in `policy_guard`, `policy_advisor`, `permission_drift` (10 new event types in `AuditEventType`).
 - `tests/test_rsa_narrative_e2e.py` proves Trust Graph anomaly → Policy Guard BLOCK → Policy Advisor suggestion → operator approval, end-to-end.
-- 6 new edge-case tests added to `test_permission_drift.py` (boundary, zero baseline, out-of-window, cross-tenant, attestation mix, per-policy isolation).
-- Coverage: `permission_drift` 99%, `policy_guard` 97%, `policy_advisor` 87%, `trust_graph` 71% headline (~91% on SQLite-reachable code; the rest is exercised by the Postgres Integration CI gate).
+- 6 new edge-case tests added to `test_permission_drift.py`.
+- Coverage on touched modules: `permission_drift` 99%, `policy_guard` 97%, `policy_advisor` 87%.
+
+### MCP Inspector hardening sprint (shipped 2026-04-26, PR #47)
+
+- `_find_subsequence_with_gap` — bounded-gap subsequence chain matcher with `CHAIN_PATTERN_MAX_GAP=3` + time-window gating via `CHAIN_PATTERN_WINDOW_SECONDS=3600`. Patterns carry confidence scores + matched positions.
+- `_record_trust_graph_edge` — every `inspect_call` records an agent→tool edge into the central trust graph (best-effort; failures don't block inspection).
+- `MCP_CALL_INSPECTED`, `MCP_VIOLATION_DETECTED`, `MCP_CHAIN_PATTERN_MATCHED`, `MCP_VIOLATION_RESOLVED` audit events emitted on every state-changing path.
+- 16 new tests covering subsequence matcher, time-window gating, trust_graph integration, audit emission.
+- Coverage: `mcp_inspector` 97% (up from ~65% baseline).
 
 ### What is NOT done yet
 
-#### Sprint 2-3 — Demo Polish (not started)
+#### Sprint B — Demo Polish + Runtime Risk Engine packaging (ACTIVE)
 - Connect Blast Radius visualization to live Trust Graph data
 - Seed Intent Correlation with sample playbook library
-- 10-minute demo arc: Blast Radius → Intent Feed → Deception Mesh catch
+- 10-minute demo arc: Blast Radius → Intent Feed → Deception Mesh catch → MCP violation → policy_guard reject
 - Update README, API spec, docs — package as "TokenDNA Runtime Risk Engine"
 
 #### Modules deferred to post-customer (or lighter post-Sprint-B cycle)
@@ -105,21 +113,11 @@ The plan below replaces the earlier `Trust Graph → 5-1 → ... → 6-2` linear
 
 All 5 items shipped (anomaly detections, audit emission, drift algorithm tests, RSA E2E integration test, buffer used for coverage hardening). 1605/1605 tests pass on `main`.
 
-### MCP Inspector hardening sprint — ACTIVE (started 2026-04-25 post Sprint A merge)
+### MCP Inspector hardening sprint — ✅ DONE (PR #47, merged 2026-04-26)
 
-`mcp_inspector.py` is at ~65% — biggest module, weakest tests. MCP is a 2025-2026 hot zone; deferring this sprint means a competitor could ship "MCP-aware identity security" first. Holding it before Sprint B (rather than after) so the demo can include a credible MCP story.
+All 5 items shipped (chain pattern matcher with bounded-gap subsequence matching + confidence scoring, trust_graph agent→tool edge emission, MCP_* audit events, 16 new tests bringing coverage to 97%).
 
-| # | Task | Est |
-|---|------|-----|
-| 1 | Add chain pattern detection — multi-call sequences that imply a forbidden composite operation | 2 days |
-| 2 | Wire trust_graph integration — emit graph edges when MCP calls cross agent boundaries | 1 day |
-| 3 | Add `AuditEvent` emission on every MCP call inspection + violation | 0.5 day |
-| 4 | Test coverage to 80% — currently 33 tests / 50 asserts on a 907-line module | 1 day |
-| 5 | Buffer | 0.5 day |
-
-**Done when:** mcp_inspector reaches the same 7-item completeness bar as policy_guard.
-
-### Sprint B — Demo polish + RSA Runtime Risk Engine packaging (1 week)
+### Sprint B — Demo polish + RSA Runtime Risk Engine packaging — ACTIVE (started 2026-04-26 post-MCP merge)
 
 | # | Task | Est |
 |---|------|-----|
