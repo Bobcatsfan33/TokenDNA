@@ -327,6 +327,93 @@ BUILTIN_PLAYBOOKS: list[dict[str, Any]] = [
             {"category": "exfiltration", "min_confidence": 0.3},
         ],
     },
+    # ── Sprint B additions — exercises Sprint A + MCP signals ────────────────
+    # 16. RSA Gap 1 — agent self-modification → tool execution
+    {
+        "name": "Agent Self-Modification → Tool Execution",
+        "description": (
+            "Agent modifies a policy that affects its own permission boundary, "
+            "then immediately exercises an elevated tool — the CrowdStrike "
+            "Fortune-50 self-elevation pattern (RSA gap 1)."
+        ),
+        "severity": "critical",
+        "window_seconds": 1800,
+        "steps": [
+            {"category": "auth_anomaly",
+             "objective": "policy_scope_modification",
+             "min_confidence": 0.6},
+            {"category": "mcp_intent_violation", "min_confidence": 0.4},
+        ],
+    },
+    # 17. RSA Gap 2 — permission drift → exfiltration
+    {
+        "name": "Permission Drift → Exfiltration",
+        "description": (
+            "Agent's permission scope grows >2x without attestation, then "
+            "exercises an exfil-class tool (RSA gap 2)."
+        ),
+        "severity": "critical",
+        "window_seconds": 86400,
+        "steps": [
+            {"category": "auth_anomaly",
+             "objective": "permission_weight_drift",
+             "min_confidence": 0.5},
+            {"category": "exfiltration", "min_confidence": 0.4},
+        ],
+    },
+    # 18. MCP attack chain — read → exfil via tool
+    {
+        "name": "MCP Tool Chain: Read → Exfil",
+        "description": (
+            "MCP-aware: an agent reads sensitive data via one tool then "
+            "ships it out via another (mcp_inspector chain pattern match)."
+        ),
+        "severity": "critical",
+        "window_seconds": 3600,
+        "steps": [
+            {"category": "mcp_intent_violation",
+             "pivot": "mcp_chain_pattern",
+             "min_confidence": 0.5},
+            {"category": "exfiltration", "min_confidence": 0.3},
+        ],
+    },
+    # 19. MCP privilege ladder — read → write → execute
+    {
+        "name": "MCP Privilege Ladder",
+        "description": (
+            "MCP chain pattern: read → write → execute progression "
+            "indicating agent escalation through tool access modes."
+        ),
+        "severity": "high",
+        "window_seconds": 1800,
+        "steps": [
+            {"category": "mcp_intent_violation",
+             "mitre_technique": "T1078",
+             "min_confidence": 0.5},
+            {"category": "privilege_escalation", "min_confidence": 0.4},
+        ],
+    },
+    # 20. Multi-vector grand finale — drift + self-mod + MCP exfil
+    {
+        "name": "Multi-Vector: Drift + Self-Mod + MCP Exfil",
+        "description": (
+            "Three Sprint-A/MCP signals chain in one session — permission "
+            "drift, self-modification, MCP exfiltration via tool. "
+            "The demo grand finale: every TokenDNA detector fires."
+        ),
+        "severity": "critical",
+        "window_seconds": 7200,
+        "steps": [
+            {"category": "auth_anomaly",
+             "objective": "permission_weight_drift",
+             "min_confidence": 0.4},
+            {"category": "auth_anomaly",
+             "objective": "policy_scope_modification",
+             "min_confidence": 0.5},
+            {"category": "mcp_intent_violation", "min_confidence": 0.4},
+            {"category": "exfiltration", "min_confidence": 0.3},
+        ],
+    },
 ]
 
 

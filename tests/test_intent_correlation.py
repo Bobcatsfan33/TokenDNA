@@ -103,14 +103,23 @@ class TestInitDB:
     def test_builtin_playbooks_seeded(self, ice):
         playbooks = ice.get_playbooks()
         builtins = [p for p in playbooks if p["builtin"]]
-        assert len(builtins) == 15
+        assert len(builtins) == 20  # 15 original + 5 Sprint B additions
 
     def test_init_idempotent(self, ice):
         """Calling init_db() twice does not duplicate built-in playbooks."""
         ice.init_db()
         playbooks = ice.get_playbooks()
         builtins = [p for p in playbooks if p["builtin"]]
-        assert len(builtins) == 15  # Still exactly 15
+        assert len(builtins) == 20  # idempotent — still 20
+
+    def test_sprint_b_rsa_playbooks_present(self, ice):
+        """Sprint B added playbooks tying RSA Gap 1/2 + MCP signals together."""
+        names = {p["name"] for p in ice.get_playbooks() if p["builtin"]}
+        assert "Agent Self-Modification → Tool Execution" in names
+        assert "Permission Drift → Exfiltration" in names
+        assert "MCP Tool Chain: Read → Exfil" in names
+        assert "MCP Privilege Ladder" in names
+        assert "Multi-Vector: Drift + Self-Mod + MCP Exfil" in names  # Still exactly 15
 
     def test_builtin_playbooks_have_required_fields(self, ice):
         for pb in ice.get_playbooks():

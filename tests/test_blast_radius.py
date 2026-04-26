@@ -323,3 +323,98 @@ class TestTenantIsolation:
                     entity_type="machine")
         result = br.simulate_blast_radius("tenant-B", "agt-isolated-a")
         assert result.error is not None  # not found in tenant-B
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sprint B — live anomaly + MCP violation enrichment
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestSprintBLiveEnrichment:
+    """
+    The Sprint B wedge: a single blast_radius call now surfaces the live
+    Trust Graph anomalies AND open MCP violations that touch any node in
+    the blast — turning the simulation from "what could happen" into
+    "what is happening, right now."
+    """
+
+    def test_recent_anomalies_appear_in_blast(self, tg, br):
+        # Seed an agent so it exists in the trust graph.
+        _seed_event(tg, subject="finance@svc", agent_id="agt-finance",
+                    entity_type="machine")
+        # Trigger a real anomaly — agent self-modifying its own policy.
+        anomalies = tg.record_policy_modification(
+            tenant_id=TENANT,
+            target_agent="agt-finance",
+            modified_by="agt-finance",
+            policy_id="pol-finance",
+            scope=["s3:write:*"],
+        )
+        # Persist it through the trust_graph store API so the blast radius
+        # query can find it.
+        for a in anomalies:
+            tg.store_anomaly(a)
+
+        result = br.simulate_blast_radius(TENANT, "agt-finance")
+        types = [a["anomaly_type"] for a in result.recent_anomalies_in_blast]
+        assert "POLICY_SCOPE_MODIFICATION" in types
+        # The anomaly subject must be inside the blast radius.
+        for a in result.recent_anomalies_in_blast:
+            assert a["subject_node"] == "agt-finance"
+
+    def test_recent_mcp_violations_appear_in_blast(self, tg, br):
+        _seed_event(tg, subject="data@svc", agent_id="agt-data",
+                    entity_type="machine")
+        # Run an MCP inspection that produces a violation against this agent.
+        import importlib
+        import modules.identity.mcp_inspector as mi
+        importlib.reload(mi)
+        mi.init_db()
+        mi.inspect_call(
+            tenant_id=TENANT,
+            session_id="sess-1",
+            tool_name="read_file",
+            params={"write": "bad"},  # forbidden param triggers a violation
+            agent_id="agt-data",
+        )
+
+        result = br.simulate_blast_radius(TENANT, "agt-data")
+        assert any(
+            v["agent_id"] == "agt-data"
+            for v in result.recent_mcp_violations_in_blast
+        )
+
+    def test_anomalies_outside_blast_are_excluded(self, tg, br):
+        # Two unrelated agents in the same tenant.
+        _seed_event(tg, subject="a@svc", agent_id="agt-A",
+                    entity_type="machine")
+        _seed_event(tg, subject="b@svc", agent_id="agt-B",
+                    entity_type="machine")
+        # Anomaly on agt-B
+        anomalies = tg.record_policy_modification(
+            tenant_id=TENANT,
+            target_agent="agt-B",
+            modified_by="agt-B",
+            policy_id="pol-B",
+        )
+        for a in anomalies:
+            tg.store_anomaly(a)
+
+        # Simulate against agt-A — agt-B's anomaly must NOT appear unless
+        # agt-A's blast radius actually reaches agt-B.
+        result_a = br.simulate_blast_radius(TENANT, "agt-A")
+        if not any(n.label == "agt-B" for n in result_a.reachable_nodes):
+            assert all(
+                a["subject_node"] != "agt-B"
+                for a in result_a.recent_anomalies_in_blast
+            )
+
+    def test_serialization_includes_new_fields(self, tg, br):
+        _seed_event(tg, subject="ord@svc", agent_id="agt-ord",
+                    entity_type="machine")
+        result = br.simulate_blast_radius(TENANT, "agt-ord")
+        d = result.as_dict()
+        assert "recent_anomalies_in_blast" in d
+        assert "recent_mcp_violations_in_blast" in d
+        assert isinstance(d["recent_anomalies_in_blast"], list)
+        assert isinstance(d["recent_mcp_violations_in_blast"], list)

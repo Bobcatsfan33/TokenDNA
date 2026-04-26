@@ -6,11 +6,63 @@
 [![Security: FedRAMP-aligned](https://img.shields.io/badge/Security-FedRAMP%20High%20%7C%20IL6%20aligned-red)](SECURITY.md)
 [![PRs: owner approval required](https://img.shields.io/badge/PRs-owner%20approval%20required-yellow)](CONTRIBUTING.md)
 
-> **v2.2.0** — Security hardening release: RBAC, immutable audit log, security headers middleware, HMAC-SHA256 IP fingerprinting, secrets manager backend, CIS Docker hardening.
+> **v3.0.0 — Runtime Risk Engine.** Closes the three RSA 2026 gaps no major vendor addressed: (1) agent self-modification of policy, (2) silent permission drift, (3) MCP intent-aware inspection. End-to-end demo arc shippable in 10 minutes against a fresh deployment.
+
+## TokenDNA Runtime Risk Engine
+
+**The first integrated runtime risk engine for AI agents in the enterprise.**
+
+OAuth tells you *who* called a tool. TokenDNA tells you *whether the call is what it claims to be, whether the agent is allowed to make it, and what happens to your blast radius if it turns out it isn't.*
+
+### What it catches that nobody else does
+
+| Gap (RSA 2026) | Detection | Severity |
+|---|---|---|
+| Agent self-modification of governing policy (CrowdStrike F50 incident) | `POLICY_SCOPE_MODIFICATION` in trust graph + `policy_guard` BLOCK | CRITICAL |
+| Silent permission drift — scope grows without attestation | `PERMISSION_WEIGHT_DRIFT` in trust graph + `permission_drift` alert | HIGH |
+| MCP intent-aware tool inspection — chain pattern detection | `mcp_inspector` bounded-gap subsequence matcher with confidence scoring | CRITICAL |
+
+### The integrated runtime loop
+
+```
+   UIS event   →   trust_graph     →   anomaly fires
+                          │                    │
+                          ▼                    ▼
+                  blast_radius           policy_guard
+                  (live signals          (BLOCK)
+                   on the blast)              │
+                          │                    ▼
+                          │            policy_advisor
+                          │            (tightening
+                          │             suggestion)
+                          ▼                    │
+                  intent_correlation    operator approves
+                  (chain to MITRE)       in dashboard
+```
+
+Every state-changing operation in every security module emits an `AuditEvent`
+into a tamper-evident hash-chained log — SOC 2 review-ready on day one.
+
+### 10-minute demo
+
+```bash
+DEV_MODE=true uvicorn api:app --port 8000 &
+python scripts/demo_runtime_risk_engine.py
+```
+
+Walks through baseline → drift → self-modification → MCP chain → deception trip → blast radius (with live signals attached) → policy_guard verdict → policy_advisor recommendation → operator approval. Idempotent, replay-safe.
+
+### Commercial tiers
+
+`ent.blast_radius`, `ent.intent_correlation`, `ent.enforcement_plane` (policy_guard + policy_advisor + cert_dashboard), `ent.behavioral_dna` (permission_drift + agent_lifecycle), `ent.mcp_gateway` (mcp_inspector + mcp_gateway). Defined in `modules/product/commercial_tiers.py`; gated via `require_feature("ent.<key>")`.
+
+---
+
+> **Underlying platform** — v2.2.0 hardening: RBAC, immutable audit log, security headers middleware, HMAC-SHA256 IP fingerprinting, secrets manager backend, CIS Docker hardening, Postgres + Helm + Grafana + SAML/SCIM all production-ready.
 
 **Zero-Trust token integrity and session behavioral analytics.**
 
-TokenDNA detects stolen JWT/Bearer tokens in real time by building a behavioral "DNA" fingerprint for each user — device, IP, geolocation, ASN, browser, OS — and flagging anomalies like impossible travel, session branching, Tor/VPN usage, and known-malicious IPs. Every request is scored and responded to adaptively: allow, step-up MFA, block, or auto-revoke.
+TokenDNA's identity primitives originated as a stolen-JWT detector that built a behavioral "DNA" fingerprint for each user — device, IP, geolocation, ASN, browser, OS — and flagged anomalies like impossible travel, session branching, Tor/VPN usage, and known-malicious IPs. Every request is scored and responded to adaptively: allow, step-up MFA, block, or auto-revoke. Those primitives are the foundation the Runtime Risk Engine sits on top of.
 
 ---
 

@@ -113,6 +113,12 @@ class BlastRadiusResult:
     impact_score: int = 0
     risk_tier: str = "low"
     policies_containing_blast: list[str] = field(default_factory=list)
+    # Sprint B enrichment — surface Trust Graph anomalies and recent MCP
+    # chain-pattern matches that touch nodes inside the blast radius.  These
+    # turn the simulation from "what could happen" into "what IS happening,
+    # right now, against this agent" — the live demo wedge.
+    recent_anomalies_in_blast: list[dict[str, Any]] = field(default_factory=list)
+    recent_mcp_violations_in_blast: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
@@ -125,6 +131,8 @@ class BlastRadiusResult:
             "risk_tier": self.risk_tier,
             "reachable_nodes": [n.as_dict() for n in self.reachable_nodes],
             "policies_containing_blast": self.policies_containing_blast,
+            "recent_anomalies_in_blast": self.recent_anomalies_in_blast,
+            "recent_mcp_violations_in_blast": self.recent_mcp_violations_in_blast,
             "error": self.error,
         }
 
@@ -187,7 +195,12 @@ def simulate_blast_radius(
     impact_score = min(raw_score, MAX_IMPACT_SCORE)
 
     # Find overlapping policy bundles
-    policy_ids = _policies_in_blast(tenant_id, [n.label for n in reachable])
+    blast_labels = [n.label for n in reachable] + [agent_label]
+    policy_ids = _policies_in_blast(tenant_id, blast_labels)
+
+    # Sprint B — surface the live signals that touch this blast radius.
+    anomalies = _recent_anomalies_in_blast(tenant_id, blast_labels)
+    mcp_violations = _recent_mcp_violations_in_blast(tenant_id, blast_labels)
 
     return BlastRadiusResult(
         agent_label=agent_label,
@@ -198,7 +211,99 @@ def simulate_blast_radius(
         impact_score=impact_score,
         risk_tier=_risk_tier(impact_score),
         policies_containing_blast=policy_ids,
+        recent_anomalies_in_blast=anomalies,
+        recent_mcp_violations_in_blast=mcp_violations,
     )
+
+
+def _recent_anomalies_in_blast(
+    tenant_id: str,
+    blast_labels: list[str],
+    *,
+    limit: int = 25,
+) -> list[dict[str, Any]]:
+    """
+    Pull recent Trust Graph anomalies whose subject_node is inside the blast
+    radius.  Best-effort: missing tables (e.g. on a fresh test DB without
+    anomaly history) return an empty list rather than raising.
+    """
+    if not blast_labels:
+        return []
+    label_set = set(blast_labels)
+    with _lock:
+        conn = _get_conn()
+        try:
+            rows = conn.execute(
+                """
+                SELECT anomaly_type, severity, subject_node, detected_at, detail
+                FROM tg_anomalies
+                WHERE tenant_id = ?
+                ORDER BY detected_at DESC
+                LIMIT ?
+                """,
+                (tenant_id, limit * 4),
+            ).fetchall()
+            return [
+                {
+                    "anomaly_type": r["anomaly_type"],
+                    "severity": r["severity"],
+                    "subject_node": r["subject_node"],
+                    "detected_at": r["detected_at"],
+                    "detail": r["detail"],
+                }
+                for r in rows
+                if r["subject_node"] in label_set
+            ][:limit]
+        except sqlite3.OperationalError:
+            return []
+        finally:
+            conn.close()
+
+
+def _recent_mcp_violations_in_blast(
+    tenant_id: str,
+    blast_labels: list[str],
+    *,
+    limit: int = 25,
+) -> list[dict[str, Any]]:
+    """
+    Pull recent MCP violations whose agent_id is inside the blast radius.
+    Best-effort: returns empty if the mcp_violations table doesn't exist.
+    """
+    if not blast_labels:
+        return []
+    label_set = set(blast_labels)
+    with _lock:
+        conn = _get_conn()
+        try:
+            rows = conn.execute(
+                """
+                SELECT violation_id, agent_id, tool_name, violation_type,
+                       detail, risk_score, created_at
+                FROM mcp_violations
+                WHERE tenant_id = ? AND resolved = 0
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (tenant_id, limit * 4),
+            ).fetchall()
+            return [
+                {
+                    "violation_id": r["violation_id"],
+                    "agent_id": r["agent_id"],
+                    "tool_name": r["tool_name"],
+                    "violation_type": r["violation_type"],
+                    "detail": r["detail"],
+                    "risk_score": r["risk_score"],
+                    "created_at": r["created_at"],
+                }
+                for r in rows
+                if r["agent_id"] and r["agent_id"] in label_set
+            ][:limit]
+        except sqlite3.OperationalError:
+            return []
+        finally:
+            conn.close()
 
 
 def _node_exists(tenant_id: str, node_id: str) -> bool:
