@@ -1,5 +1,5 @@
 # TokenDNA — CLAUDE.md
-_Last updated: 2026-04-26 (post-Demo+Shadow merge — engineering arc DONE)_
+_Last updated: 2026-04-27 (post-PR #51 — seed perf + demo dashboard polish merged)_
 
 ## What This Project Is
 
@@ -116,6 +116,22 @@ These existed before today's audit; CLAUDE.md previously listed them as "not sta
 - `scripts/shadow_trial_report.py` — text or JSON CLI render of the trial report.
 - `docs/demo/RUN_DEMO.md` — full walkthrough for both paths (seeded demo and shadow trial).
 - Coverage: `shadow_mode.py` 96%; full suite 1687/1687 pass.
+
+### Demo seed perf + dashboard polish (shipped 2026-04-27, PR #51)
+
+Follow-on to Demo Suite v2 — packs the seeded demo with everything the dashboard widgets need, fixes a tenant-mismatch that left widgets empty, and corrects four broken collectors in `compliance_posture`.
+
+- `uis_store.bulk_insert_events()` — single-transaction bulk write replaces per-event inserts. Full 30-day seed runs in **~2.7s** (was ~4-5 min); `~78,150` UIS events seeded.
+- `scripts/demo_seed_v2.py` extended with stages 7-10:
+  * **Stage 7** — tenant industry tag (`finance`), 4 workflow attestations, 4 compliance posture statements (`soc2`, `iso42001`, `nist_ai_rmf`, `eu_ai_act`). Calls each module's `init_db()` plus `delegation_receipt` / `agent_lifecycle` / `cert_dashboard` so posture collectors find their tables.
+  * **Stage 8** — 8 blast-radius simulations stored against varied agents.
+  * **Stage 9** — 6 MCP inspections (clean reads + forbidden param + read→exfil chain + privilege escalation).
+  * **Stage 10** — 6 honeypot trips across multiple decoys.
+  * Sampled-downstream pattern: 4 events per archetype get re-ingested through `trust_graph` + `intent_correlation` so the graph + detection state are populated without reprocessing all 78k bulk events. Chain events get full downstream so anomaly + intent widgets pop.
+- `compliance_posture.py` — four collectors (`_collect_drift`, `_collect_policy_violations`, `_collect_cert_anomalies`, `_collect_agent_inventory`) had been calling non-existent sibling functions (`get_drift_alerts` / `get_violations` / `get_anomalies` / `get_inventory`). Now call the real APIs (`list_alerts` / `list_violations` / `list_anomalies` / `list_inventory`) with required `tenant_id` + correct kwargs. `_as_dict()` helper coerces `DriftAlert` / `PolicyViolation` dataclass results into plain dicts. `_METRIC_COLLECTORS` now maps metric → collector NAME and resolves via `getattr(sys.modules[__name__], …)` at call time so monkey-patches in tests actually take effect.
+- `modules/tenants/middleware.py` — `DEV_TENANT_ID` default flipped from `dev-tenant` to `acme` to match the seeder. Without this, every dashboard widget queried an empty tenant on first land. `RUN_DEMO.md` + `demo_launch.sh` updated; troubleshooting row added.
+- `_seed_warn()` helper prints to stderr unconditionally so silent module failures during seed are now visible.
+- Full suite 1690/1690 pass.
 
 ### Engineering arc — ✅ COMPLETE
 
