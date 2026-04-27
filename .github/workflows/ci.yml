@@ -133,7 +133,7 @@ jobs:
         run: docker build --no-cache -t aegis-tokendna:ci .
 
       - name: Trivy container scan
-        uses: aquasecurity/trivy-action@0.35.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: "aegis-tokendna:ci"
           format: "sarif"
