@@ -39,7 +39,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 TENANT = "tenant-poc"
-API_TENANT = "dev-tenant"
+API_TENANT = "acme"  # default DEV_TENANT_ID injected by DEV_MODE middleware
 
 
 # ---------------------------------------------------------------------------

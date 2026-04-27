@@ -72,6 +72,9 @@ Output ends with a summary similar to:
 export DATA_DB_PATH=/tmp/tokendna-demo.db
 export DEV_MODE=true                 # bypasses auth for demo simplicity
 export ATTESTATION_CA_SECRET=demo-secret-for-attestation-bundle-32b
+# DEV_TENANT_ID defaults to "acme" (the seeded tenant).  Override only if you
+# point the API at a different tenant's data.
+# export DEV_TENANT_ID=acme
 uvicorn api:app --host 127.0.0.1 --port 8000
 ```
 
@@ -254,6 +257,7 @@ That report is the closing artifact. It comes back to the prospect with: "Here a
 | `ModuleNotFoundError` on import | venv not active | `source .venv/bin/activate` |
 | `OSError: Read-only file system: '/data'` | `DATA_DB_PATH` not set; default is `/data/tokendna.db` | `export DATA_DB_PATH=/tmp/tokendna-demo.db` |
 | Empty dashboard after seed | API booted before seeder finished, or different DB path | Verify `DATA_DB_PATH` matches in seeder + uvicorn shells; restart uvicorn |
+| Dashboard widgets all show 0 / empty arrays even after seed | API resolved request to a tenant other than the seeded `acme` (e.g. `DEV_TENANT_ID` was set to `dev-tenant` from a previous shell) | `unset DEV_TENANT_ID` (default is `acme`) and restart uvicorn |
 | `ATTESTATION_CA_SECRET not set` | Missing required env var | `export ATTESTATION_CA_SECRET=demo-secret-32-bytes-aaaaaaaaa` |
 | Demo arc hits HTTP 401 | `DEV_MODE` not set, auth required | `export DEV_MODE=true` and restart uvicorn |
 | Federation scene errors with "module not found" | demo arc imports federation directly; venv missing repo path | confirm `pip install -r requirements.txt` ran inside the venv |
