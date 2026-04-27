@@ -46,8 +46,10 @@ import json
 import logging
 import os
 import sqlite3
+import sys
 import threading
 import uuid
+import dataclasses
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -248,25 +250,35 @@ def _safe_call(fn, label: str) -> dict[str, Any]:
         return {"collector_error": True, "label": label, "reason": str(exc)}
 
 
+def _as_dict(obj: Any) -> dict[str, Any]:
+    """Coerce a dataclass / dict into a plain dict."""
+    if isinstance(obj, dict):
+        return obj
+    if dataclasses.is_dataclass(obj):
+        return dataclasses.asdict(obj)
+    return getattr(obj, "__dict__", {}) or {}
+
+
 def _collect_drift(tenant_id: str) -> dict[str, Any]:
     def _go():
         from modules.identity import permission_drift  # noqa: PLC0415
-        alerts = permission_drift.get_drift_alerts() or []
-        return {"unreviewed_alerts": len(alerts), "items": alerts[:10]}
+        alerts = permission_drift.list_alerts(tenant_id, status="open", limit=200) or []
+        return {"unreviewed_alerts": len(alerts), "items": [_as_dict(a) for a in alerts[:10]]}
     return _safe_call(_go, "drift")
 
 
 def _collect_policy_violations(tenant_id: str) -> dict[str, Any]:
     def _go():
         from modules.identity import policy_guard  # noqa: PLC0415
-        v = policy_guard.get_violations(limit=200) or []
+        v = policy_guard.list_violations(tenant_id, limit=200) or []
+        as_dicts = [_as_dict(x) for x in v]
         # Filter for self-modification class if metadata exposes it.
         self_mod = [
-            x for x in v
+            x for x in as_dicts
             if "self" in str(x.get("violation_type") or "").lower()
             or "self" in str(x.get("rule_id") or "").lower()
         ]
-        return {"total_violations": len(v), "self_modification_violations": len(self_mod)}
+        return {"total_violations": len(as_dicts), "self_modification_violations": len(self_mod)}
     return _safe_call(_go, "policy_violations")
 
 
@@ -281,7 +293,9 @@ def _collect_intent_matches(tenant_id: str) -> dict[str, Any]:
 def _collect_cert_anomalies(tenant_id: str) -> dict[str, Any]:
     def _go():
         from modules.identity import cert_dashboard  # noqa: PLC0415
-        anomalies = cert_dashboard.get_anomalies(tenant_id) or []
+        anomalies = cert_dashboard.list_anomalies(
+            tenant_id=tenant_id, resolved=False, limit=200,
+        ) or []
         return {"unresolved_anomalies": len(anomalies), "items": anomalies[:10]}
     return _safe_call(_go, "cert_anomalies")
 
@@ -350,10 +364,9 @@ def _collect_delegation_health(tenant_id: str) -> dict[str, Any]:
 def _collect_agent_inventory(tenant_id: str) -> dict[str, Any]:
     def _go():
         from modules.identity import agent_lifecycle  # noqa: PLC0415
-        try:
-            inv = agent_lifecycle.get_inventory(state="active") or []
-        except TypeError:
-            inv = agent_lifecycle.get_inventory() or []
+        inv = agent_lifecycle.list_inventory(
+            tenant_id=tenant_id, status="active", limit=500,
+        ) or []
         return {"active_agents": len(inv) if isinstance(inv, list) else 0}
     return _safe_call(_go, "agent_inventory")
 
@@ -389,16 +402,26 @@ def _predicate(metric_name: str, metric: dict[str, Any]) -> tuple[bool, str]:
 
 # ── Posture statement generation ──────────────────────────────────────────────
 
-_METRIC_COLLECTORS = {
-    "drift_alerts": _collect_drift,
-    "policy_guard_violations": _collect_policy_violations,
-    "critical_intent_matches": _collect_intent_matches,
-    "cert_anomalies": _collect_cert_anomalies,
-    "workflow_drift": _collect_workflow_drift,
-    "workflow_replay_integrity": _collect_workflow_replay,
-    "delegation_chain_health": _collect_delegation_health,
-    "agent_inventory_coverage": _collect_agent_inventory,
+# Maps metric name → name of the module-level collector function.
+# Resolved at call time via ``getattr(sys.modules[__name__], ...)`` so that
+# tests can monkey-patch a collector and have the change picked up.
+_METRIC_COLLECTORS: dict[str, str] = {
+    "drift_alerts": "_collect_drift",
+    "policy_guard_violations": "_collect_policy_violations",
+    "critical_intent_matches": "_collect_intent_matches",
+    "cert_anomalies": "_collect_cert_anomalies",
+    "workflow_drift": "_collect_workflow_drift",
+    "workflow_replay_integrity": "_collect_workflow_replay",
+    "delegation_chain_health": "_collect_delegation_health",
+    "agent_inventory_coverage": "_collect_agent_inventory",
 }
+
+
+def _resolve_collector(metric_name: str):
+    name = _METRIC_COLLECTORS.get(metric_name)
+    if not name:
+        return None
+    return getattr(sys.modules[__name__], name, None)
 
 
 def _digest(payload: dict[str, Any]) -> str:
@@ -434,7 +457,7 @@ def generate_posture_statement(
     overall = True
     for control_id, spec in controls_meta.items():
         metric_name = spec["metric"]
-        collector = _METRIC_COLLECTORS.get(metric_name)
+        collector = _resolve_collector(metric_name)
         metric = collector(tenant_id) if collector else {"collector_error": True,
                                                           "reason": "no_collector"}
         passed, reason = _predicate(metric_name, metric)
@@ -647,15 +670,21 @@ def incident_reconstruction(
         "modules.identity.blast_radius", fromlist=["list_simulations"],
     ).list_simulations(tenant_id=tenant_id, agent_label=agent_id, limit=1) or []))
 
-    sections.append(_section("drift_events", lambda: [
-        d for d in __import__(
-            "modules.identity.permission_drift", fromlist=["get_drift_alerts"],
-        ).get_drift_alerts() if str(d.get("agent_id") or "") == agent_id
-    ]))
+    def _drift_for_agent():
+        from modules.identity import permission_drift  # noqa: PLC0415
+        alerts = permission_drift.list_alerts(
+            tenant_id, status=None, agent_id=agent_id, limit=500,
+        ) or []
+        return [_as_dict(a) for a in alerts]
+    sections.append(_section("drift_events", _drift_for_agent))
 
-    sections.append(_section("policy_guard_violations", lambda: __import__(
-        "modules.identity.policy_guard", fromlist=["get_violations"],
-    ).get_violations(agent_id=agent_id, limit=500) or []))
+    def _violations_for_agent():
+        from modules.identity import policy_guard  # noqa: PLC0415
+        viols = policy_guard.list_violations(
+            tenant_id, actor_id=agent_id, limit=500,
+        ) or []
+        return [_as_dict(v) for v in viols]
+    sections.append(_section("policy_guard_violations", _violations_for_agent))
 
     body = {
         "tenant_id": tenant_id,

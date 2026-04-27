@@ -108,7 +108,7 @@ def client(isolated_db):
 
 
 TENANT = "tenant-adv"
-API_TENANT = "dev-tenant"  # injected by DEV_MODE middleware
+API_TENANT = "acme"  # injected by DEV_MODE middleware
 
 
 # ---------------------------------------------------------------------------
