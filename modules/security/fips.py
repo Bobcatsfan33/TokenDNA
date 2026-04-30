@@ -1,5 +1,5 @@
 """
-Aegis Security — FIPS 140-2 Enforcement Module  (v2.4.0)
+Aegis Security — FIPS 140-2 Enforcement Module  (v2.2.0)
 
 SC-13: Cryptographic Protection
   All cryptographic operations MUST use NIST-approved, FIPS 140-2 validated
