@@ -4,11 +4,11 @@
 # ── Web framework ─────────────────────────────────────────────────────────────
 fastapi==0.115.6
 uvicorn[standard]==0.29.0
-python-multipart==0.0.22
+python-multipart==0.0.26
 
 # ── JWT / OIDC ────────────────────────────────────────────────────────────────
 python-jose[cryptography]==3.4.0
-cryptography==46.0.6
+cryptography==46.0.7
 
 # ── HTTP client (JWKS fetch, webhooks, AbuseIPDB, ip-api) ────────────────────
 requests==2.33.0
@@ -36,5 +36,5 @@ numpy==1.26.4                    # lightweight — used for profile distance mat
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
 pydantic==2.13.3                  # FastAPI model validation (v2 API)
-python-dotenv==1.2.1             # load .env in development
+python-dotenv==1.2.2             # load .env in development
 eval_type_backport>=0.2.0   # Python 3.9 compat for PEP 604 type unions
