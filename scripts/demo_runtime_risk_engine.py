@@ -264,6 +264,17 @@ def scene_federation(dry_run: bool) -> dict[str, Any]:
     _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from modules.identity import federation as _fed
     _fed.init_db()
+    # Idempotent: if a federation trust between acme↔beta already exists
+    # (e.g. seeded by demo_seed_v2.py), reuse it instead of crashing on
+    # the UNIQUE(local_org_id, remote_org_id) constraint.
+    existing = _fed.find_active_trust(
+        local_org_id="acme", remote_org_id="beta",
+        agent_label="finance-bot-01",
+    )
+    if existing is not None:
+        _step(f"reusing existing federation trust  trust_id={existing.trust_id[:8]}")
+        return {"trust_id": existing.trust_id}
+
     offer = _fed.initiate_handshake(
         local_org_id="beta",        # Beta offers federation to Acme
         remote_org_id="acme",

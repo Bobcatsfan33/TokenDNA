@@ -47,6 +47,7 @@ fi
 # Start API server
 echo "Starting API on :$PORT ..."
 DEV_MODE=true \
+  DEV_TENANT_ID="${DEV_TENANT_ID:-acme}" \
   DATA_DB_PATH="$DB_PATH" \
   AUDIT_LOG_PATH="/tmp/tokendna-demo-audit.jsonl" \
   python3 -m uvicorn api:app --host 127.0.0.1 --port "$PORT" \
