@@ -8,7 +8,7 @@ python-multipart==0.0.22
 
 # ── JWT / OIDC ────────────────────────────────────────────────────────────────
 python-jose[cryptography]==3.4.0
-cryptography==46.0.6
+cryptography==46.0.7
 
 # ── HTTP client (JWKS fetch, webhooks, AbuseIPDB, ip-api) ────────────────────
 requests==2.33.0
