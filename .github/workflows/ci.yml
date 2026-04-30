@@ -74,7 +74,7 @@ jobs:
           pip-audit -r requirements.txt || echo "::warning::pip-audit found vulnerabilities — review pip-audit-results.json artifact"
 
       - name: Upload audit results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: pip-audit-results
@@ -470,7 +470,7 @@ jobs:
 
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: stress-report
           path: /tmp/stress-report.json
