@@ -13,6 +13,13 @@ compatibility_date = "2024-04-01"
 # Switch to "bundled" if you need sub-millisecond cold starts on very simple workers
 workers_dev = true
 
+# ── Scheduled triggers ───────────────────────────────────────────────────────
+# Refresh the edge-side KV caches (cert revocation + drift snapshot) every
+# 60 seconds. Authenticates to the backend via the EDGE_SYNC_TOKEN secret:
+#   wrangler secret put EDGE_SYNC_TOKEN
+[triggers]
+crons = ["* * * * *"]
+
 # ── KV namespace ─────────────────────────────────────────────────────────────
 # Stores: revocation list (revoked:{jti}) and DPoP nonces (dpop_nonce:{jti})
 #

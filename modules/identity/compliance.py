@@ -200,7 +200,13 @@ def store_evidence_package(package: dict[str, Any]) -> None:
         )
 
 
-def list_evidence_packages(tenant_id: str, framework: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+def list_evidence_packages(
+    tenant_id: str,
+    framework: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    off = max(int(offset), 0)
     with _cursor() as cur:
         if framework:
             rows = cur.execute(
@@ -209,9 +215,9 @@ def list_evidence_packages(tenant_id: str, framework: str | None = None, limit: 
                 FROM compliance_evidence_packages
                 WHERE tenant_id = ? AND framework = ?
                 ORDER BY generated_at DESC
-                LIMIT ?
+                LIMIT ? OFFSET ?
                 """,
-                (tenant_id, framework.lower(), limit),
+                (tenant_id, framework.lower(), limit, off),
             ).fetchall()
         else:
             rows = cur.execute(
@@ -220,9 +226,9 @@ def list_evidence_packages(tenant_id: str, framework: str | None = None, limit: 
                 FROM compliance_evidence_packages
                 WHERE tenant_id = ?
                 ORDER BY generated_at DESC
-                LIMIT ?
+                LIMIT ? OFFSET ?
                 """,
-                (tenant_id, limit),
+                (tenant_id, limit, off),
             ).fetchall()
 
     return [

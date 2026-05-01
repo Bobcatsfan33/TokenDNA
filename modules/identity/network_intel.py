@@ -396,6 +396,7 @@ def record_signal(
 def get_feed(
     *,
     limit: int = 100,
+    offset: int = 0,
     min_tenant_count: int = 2,
     min_confidence: float = 0.6,
 ) -> list[dict[str, Any]]:
@@ -407,9 +408,9 @@ def get_feed(
             FROM network_intel_signals
             WHERE tenant_count >= ? AND confidence >= ?
             ORDER BY tenant_count DESC, confidence DESC, last_seen DESC
-            LIMIT ?
+            LIMIT ? OFFSET ?
             """,
-            (min_tenant_count, float(min_confidence), limit),
+            (min_tenant_count, float(min_confidence), limit, max(int(offset), 0)),
         ).fetchall()
     return [
         {

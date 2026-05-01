@@ -946,17 +946,26 @@ async def api_verify_agent_certificate(
 
 @app.get("/api/threat-intel/feed")
 async def api_threat_intel_feed(
-    limit: int = 100,
+    limit: int = 50,
+    cursor: str | None = None,
     min_tenant_count: int = 2,
     min_confidence: float = 0.6,
     tenant: TenantContext = Depends(get_tenant),
 ):
-    rows = network_intel.get_feed(
-        limit=min(max(limit, 1), 500),
-        min_tenant_count=max(min_tenant_count, 1),
-        min_confidence=max(min(min_confidence, 1.0), 0.0),
+    """Cursor-paginated threat-intel feed.  ?limit=N (default 50, max 200)
+    + ?cursor=<opaque>; response includes ``next_cursor`` (null when
+    exhausted)."""
+    from modules.storage.pagination import paginate_offset  # noqa: PLC0415
+    page = paginate_offset(
+        lambda offset, lim: network_intel.get_feed(
+            limit=lim, offset=offset,
+            min_tenant_count=max(min_tenant_count, 1),
+            min_confidence=max(min(min_confidence, 1.0), 0.0),
+        ),
+        cursor=cursor,
+        limit=limit,
     )
-    return {"tenant_id": tenant.tenant_id, "count": len(rows), "signals": rows}
+    return page.as_response("signals", extra={"tenant_id": tenant.tenant_id})
 
 
 @app.get("/api/uis/spec")
@@ -1333,14 +1342,22 @@ async def api_ca_keyring_preview(
 
 @app.get("/api/agent/certificates/transparency-log")
 async def api_certificate_transparency_log(
-    limit: int = 100,
+    limit: int = 50,
+    cursor: str | None = None,
     tenant: TenantContext = Depends(get_tenant),
 ):
-    rows = ct_log.list_log_entries(
-        tenant_id=tenant.tenant_id,
-        limit=min(max(limit, 1), 500),
+    """Cursor-paginated transparency log.  ?limit=N (default 50, max 200)
+    + ?cursor=<opaque>; response includes ``next_cursor`` (null when
+    exhausted)."""
+    from modules.storage.pagination import paginate_offset  # noqa: PLC0415
+    page = paginate_offset(
+        lambda offset, lim: ct_log.list_log_entries(
+            tenant_id=tenant.tenant_id, limit=lim, offset=offset,
+        ),
+        cursor=cursor,
+        limit=limit,
     )
-    return {"tenant_id": tenant.tenant_id, "count": len(rows), "entries": rows}
+    return page.as_response("entries", extra={"tenant_id": tenant.tenant_id})
 
 
 @app.get("/api/agent/certificates/transparency-log/verify")
@@ -2270,14 +2287,23 @@ async def api_generate_compliance_evidence(
 async def api_list_compliance_evidence_packages(
     framework: str | None = None,
     limit: int = 50,
+    cursor: str | None = None,
     tenant: TenantContext = Depends(get_tenant),
 ):
-    rows = compliance.list_evidence_packages(
-        tenant_id=tenant.tenant_id,
-        framework=framework.lower() if framework else None,
-        limit=min(max(limit, 1), 200),
+    """Cursor-paginated evidence packages.  ?limit=N (default 50, max 200)
+    + ?cursor=<opaque>; response includes ``next_cursor`` (null when
+    exhausted)."""
+    from modules.storage.pagination import paginate_offset  # noqa: PLC0415
+    page = paginate_offset(
+        lambda offset, lim: compliance.list_evidence_packages(
+            tenant_id=tenant.tenant_id,
+            framework=framework.lower() if framework else None,
+            limit=lim, offset=offset,
+        ),
+        cursor=cursor,
+        limit=limit,
     )
-    return {"tenant_id": tenant.tenant_id, "count": len(rows), "packages": rows}
+    return page.as_response("packages", extra={"tenant_id": tenant.tenant_id})
 
 
 @app.post("/api/compliance/evidence/snapshot")
@@ -6850,4 +6876,56 @@ async def api_staged_list_for_feature(
         "feature_key": feature_key,
         "count": len(items),
         "grants": [g.as_dict() for g in items],
+    }
+
+
+# ── Edge enforcement parity (Cloudflare Worker snapshot endpoints) ────────────
+#
+# Pulled by edge/index.js scheduled() handler every 60s and cached in KV so
+# the request-path edge checks (cert revocation + drift score gating) are
+# O(1) and never block on the backend.  Authenticates via a shared
+# X-Edge-Sync-Token header (set as a Cloudflare Worker secret).
+
+import hmac as _edge_hmac  # noqa: E402
+
+def _edge_sync_authorized(request: Request) -> bool:
+    expected = (os.getenv("EDGE_SYNC_TOKEN") or "").strip()
+    if not expected:
+        return False
+    presented = (request.headers.get("X-Edge-Sync-Token") or "").strip()
+    return bool(presented) and _edge_hmac.compare_digest(presented, expected)
+
+
+@app.get("/api/edge/revoked-certs")
+async def api_edge_revoked_certs(request: Request):
+    """Return every currently revoked attestation cert id for the worker
+    to mirror into KV."""
+    if not _edge_sync_authorized(request):
+        raise HTTPException(status_code=401, detail="X-Edge-Sync-Token missing or invalid")
+    from modules.identity import attestation_store  # noqa: PLC0415
+    items = attestation_store.list_revoked_certs(limit=10_000)
+    return {
+        "generated_at": datetime.datetime.utcnow().isoformat() + "Z",
+        "count": len(items),
+        "certs": [
+            {"cert_id": it["certificate_id"],
+             "reason": it.get("revocation_reason") or "revoked",
+             "revoked_at": it.get("revoked_at")}
+            for it in items
+        ],
+    }
+
+
+@app.get("/api/edge/drift-snapshot")
+async def api_edge_drift_snapshot(request: Request):
+    """Return the current drift tier + score for every agent, for the
+    worker to mirror into KV and reject high-drift requests at the edge."""
+    if not _edge_sync_authorized(request):
+        raise HTTPException(status_code=401, detail="X-Edge-Sync-Token missing or invalid")
+    from modules.identity import permission_drift  # noqa: PLC0415
+    snapshot = permission_drift.edge_drift_snapshot(limit=10_000)
+    return {
+        "generated_at": datetime.datetime.utcnow().isoformat() + "Z",
+        "count": len(snapshot),
+        "agents": snapshot,
     }
