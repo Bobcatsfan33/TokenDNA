@@ -240,7 +240,10 @@ class AWSKMSTrustSigner(TrustSigner):
                 SigningAlgorithm=self.SIGNING_ALGORITHM,
             )
         except Exception as exc:
-            logger.error("KMS sign failed for key_id=%s: %s", self._key_id, exc)
+            # Log via exc_info to preserve the traceback without flowing
+            # exception text or key_id through the log format string
+            # (avoids log-injection / sensitive-data CodeQL findings).
+            logger.error("KMS sign failed", exc_info=True)
             raise TrustSignerError(f"kms_sign_failed:{exc}") from exc
         signature = resp.get("Signature")
         if not signature:
@@ -262,9 +265,10 @@ class AWSKMSTrustSigner(TrustSigner):
                 SigningAlgorithm=self.SIGNING_ALGORITHM,
             )
             return bool(resp.get("SignatureValid"))
-        except Exception as exc:
+        except Exception:
             # KMS raises on signature mismatch; treat as a verify failure.
-            logger.debug("KMS verify failed for key_id=%s: %s", self._key_id, exc)
+            # Log via exc_info to keep the traceback off the format string.
+            logger.debug("KMS verify failed", exc_info=True)
             return False
 
 
