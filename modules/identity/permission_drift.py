@@ -581,6 +581,56 @@ def agent_drift_report(
 
 
 # ---------------------------------------------------------------------------
+# Edge-cache snapshot
+# ---------------------------------------------------------------------------
+
+def edge_drift_snapshot(limit: int = 10_000) -> list[dict[str, Any]]:
+    """
+    Cross-tenant per-agent drift snapshot for the Cloudflare Worker KV
+    cache.  Returns the highest-growth-factor open alert per agent, mapped
+    to a coarse tier the worker can compare against without re-running the
+    detector:
+
+      growth_factor >= 3.0  → tier=BLOCK   score=min(1.0, growth_factor/5)
+      growth_factor >= 2.0  → tier=STEP_UP score=growth_factor/4
+      otherwise             → tier=ALLOW   score=growth_factor/4
+
+    Agents with no open alert are omitted from the snapshot so the worker
+    does not block them at the edge.
+    """
+    init_db()
+    with _cursor() as cur:
+        cur.execute(
+            """
+            SELECT agent_id, MAX(growth_factor) AS gf, MIN(detected_at) AS first_seen
+            FROM drift_alerts
+            WHERE status = 'open'
+            GROUP BY agent_id
+            ORDER BY gf DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        gf = float(r["gf"] or 0.0)
+        if gf >= 3.0:
+            tier, score = "BLOCK", min(1.0, gf / 5.0)
+        elif gf >= 2.0:
+            tier, score = "STEP_UP", min(0.99, gf / 4.0)
+        else:
+            tier, score = "ALLOW", min(0.5, gf / 4.0)
+        out.append({
+            "agent_id": r["agent_id"],
+            "score": round(score, 3),
+            "tier": tier,
+            "reason": f"growth_factor={gf:.2f}",
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Tenant-level summary
 # ---------------------------------------------------------------------------
 

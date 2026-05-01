@@ -207,7 +207,7 @@ def append_log_entry(
     }
 
 
-def list_log_entries(tenant_id: str, limit: int = 100) -> list[dict[str, Any]]:
+def list_log_entries(tenant_id: str, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
     with _cursor() as cur:
         rows = cur.execute(
             """
@@ -216,9 +216,9 @@ def list_log_entries(tenant_id: str, limit: int = 100) -> list[dict[str, Any]]:
             FROM certificate_transparency_log
             WHERE tenant_id = ?
             ORDER BY log_index DESC
-            LIMIT ?
+            LIMIT ? OFFSET ?
             """,
-            (tenant_id, limit),
+            (tenant_id, limit, max(int(offset), 0)),
         ).fetchall()
     return [
         {

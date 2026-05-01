@@ -344,6 +344,48 @@ export default {
         });
       }
 
+      // ── Attestation certificate revocation ──────────────────────────────────
+      // The JWT carries the issuing cert id in the `cid` claim; if missing the
+      // request is not bound to a TokenDNA-issued certificate and we skip the
+      // check. The KV is populated by the scheduled() handler below; entries
+      // are written with a 1-hour TTL so they survive worker restarts and
+      // self-expire if the backend snapshot pipeline goes silent.
+      const cert_id = jwt_payload.cid;
+      if (cert_id) {
+        const revoked_cert = await TOKEN_KV.get(`cert_revoked:${cert_id}`);
+        if (revoked_cert) {
+          await trigger_alert('cert_revoked_at_edge', jwt_payload.sub, jwt_payload.jti);
+          return new Response(JSON.stringify({
+            error: 'Attestation certificate revoked',
+            cert_id,
+            risk_tier: 'BLOCK',
+            reason: revoked_cert,
+          }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+        }
+      }
+
+      // ── Drift score gating ──────────────────────────────────────────────────
+      // The scheduled() handler refreshes the per-agent drift snapshot every
+      // 60s. We block requests where the agent's drift score crosses the BLOCK
+      // threshold instead of letting them consume backend resources first.
+      const agent_id = jwt_payload.sub;
+      const drift_raw = agent_id ? await TOKEN_KV.get(`drift:${agent_id}`) : null;
+      if (drift_raw) {
+        try {
+          const drift = JSON.parse(drift_raw);
+          if (drift.tier === 'BLOCK' || (typeof drift.score === 'number' && drift.score >= 0.9)) {
+            await trigger_alert('drift_block_at_edge', agent_id, jwt_payload.jti);
+            return new Response(JSON.stringify({
+              error: 'Agent permission drift exceeds BLOCK threshold',
+              agent_id,
+              risk_tier: 'BLOCK',
+              drift_score: drift.score,
+              reason: drift.reason || 'permission_scope_growth',
+            }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+          }
+        } catch { /* malformed entry — fall through, backend will re-evaluate */ }
+      }
+
       // ── ML risk score ───────────────────────────────────────────────────────
       const ml = await get_ml_score(jwt_payload.sub, {
         country: request.cf?.country || 'XX',
@@ -384,5 +426,57 @@ export default {
         status: 500, headers: { 'Content-Type': 'application/json' },
       });
     }
+  },
+
+  // ── Scheduled handler — KV cache refresh ──────────────────────────────────
+  //
+  // Triggered by the cron schedule in wrangler.toml. Pulls the current
+  // revocation list and per-agent drift snapshot from the backend and writes
+  // each entry to KV with a 1h TTL. KV reads in the request path are O(1)
+  // and never block on the backend.
+  //
+  // Backend endpoints (added in api.py):
+  //   GET /api/edge/revoked-certs   → { certs: [{cert_id, reason, revoked_at}, ...] }
+  //   GET /api/edge/drift-snapshot  → { agents: [{agent_id, score, tier, reason}, ...] }
+  //
+  // Both endpoints require X-Edge-Sync-Token (set as a worker secret) so the
+  // refresh path can't be probed by arbitrary clients.
+  async scheduled(_event, env, _ctx) {
+    const sync_token = env.EDGE_SYNC_TOKEN;
+    if (!sync_token) {
+      console.warn('EDGE_SYNC_TOKEN secret not set; skipping snapshot refresh');
+      return;
+    }
+    const headers = { 'X-Edge-Sync-Token': sync_token };
+
+    // Revoked certs — write each cert_id; TTL keeps stale entries from
+    // pinning forever if the backend silently stops shipping them.
+    try {
+      const r = await fetch(`${BACKEND_API}/api/edge/revoked-certs`, { headers });
+      if (r.ok) {
+        const body = await r.json();
+        for (const c of (body.certs || [])) {
+          await TOKEN_KV.put(`cert_revoked:${c.cert_id}`, c.reason || 'revoked',
+            { expirationTtl: 3600 });
+        }
+      } else {
+        console.warn(`revoked-certs sync HTTP ${r.status}`);
+      }
+    } catch (err) { console.error('revoked-certs sync failed', err); }
+
+    // Drift snapshot — write per-agent scores/tier as a single JSON blob.
+    try {
+      const r = await fetch(`${BACKEND_API}/api/edge/drift-snapshot`, { headers });
+      if (r.ok) {
+        const body = await r.json();
+        for (const a of (body.agents || [])) {
+          await TOKEN_KV.put(`drift:${a.agent_id}`, JSON.stringify({
+            score: a.score, tier: a.tier, reason: a.reason || '',
+          }), { expirationTtl: 3600 });
+        }
+      } else {
+        console.warn(`drift-snapshot sync HTTP ${r.status}`);
+      }
+    } catch (err) { console.error('drift-snapshot sync failed', err); }
   },
 };

@@ -539,6 +539,39 @@ def list_certificates(
     return [json.loads(row["certificate_json"]) for row in rows]
 
 
+def list_revoked_certs(limit: int = 10_000) -> list[dict[str, Any]]:
+    """
+    Cross-tenant list of currently-revoked certificates for the edge worker
+    snapshot endpoint.  Returns the minimum fields the worker needs:
+    certificate_id, revocation_reason, revoked_at.
+
+    The result is intentionally small per row — the worker writes one KV
+    entry per cert and the size of every entry matters under Cloudflare's
+    per-namespace storage limits.
+    """
+    init_db()
+    with _cursor() as cur:
+        rows = cur.execute(
+            """
+            SELECT certificate_json
+            FROM attestation_certificates
+            WHERE status = 'revoked'
+            ORDER BY revoked_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        cert = json.loads(row["certificate_json"])
+        out.append({
+            "certificate_id": cert.get("certificate_id"),
+            "revocation_reason": cert.get("revocation_reason"),
+            "revoked_at": cert.get("revoked_at"),
+        })
+    return out
+
+
 def list_certificates_paginated(
     tenant_id: str,
     *,
