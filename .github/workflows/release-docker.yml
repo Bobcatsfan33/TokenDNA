@@ -1,0 +1,161 @@
+name: Release — Publish container image to GHCR
+
+# Build a multi-arch (linux/amd64 + linux/arm64) image, sign it with cosign
+# (keyless OIDC), generate an SPDX SBOM as an attestation, and push to GHCR.
+#
+# Triggers:
+#   * Tag push (v*) — full release: tags <ver>, <ver-major.minor>, latest
+#   * Manual dispatch — builds + pushes :edge so a maintainer can smoke-test
+#     the image off-cycle without cutting a tag.
+#
+# Setup, one-time:
+#   1. Settings → Actions → General → "Workflow permissions" =
+#      "Read and write permissions" (lets the workflow push to GHCR).
+#   2. Settings → Packages → Connect repository to the package once it's
+#      created on first push (or pre-create at
+#      https://github.com/users/Bobcatsfan33/packages).
+#   3. (Optional) Make the image public: GHCR package → Settings → Change
+#      visibility → Public.  The first push lands it as private by default.
+#
+# After that, every release is:
+#   bin/bump_sdk_version.py X.Y.Z --tag
+#   git push && git push --tags
+#   → this workflow fires alongside release-pypi.yml
+#
+# Cosign verification (anyone, anywhere):
+#   cosign verify ghcr.io/bobcatsfan33/tokendna:vX.Y.Z \
+#     --certificate-identity-regexp 'https://github.com/Bobcatsfan33/TokenDNA/.github/workflows/release-docker.yml@.*' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_override:
+        description: 'Image tag for manual builds (defaults to "edge")'
+        required: false
+        default: 'edge'
+
+# Concurrency: a tag push can race with a workflow_dispatch.  Serialize so
+# the registry never receives a half-pushed multi-arch manifest.
+concurrency:
+  group: release-docker-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write     # push to ghcr.io
+  id-token: write     # cosign keyless OIDC + SBOM attestation
+  attestations: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/tokendna
+
+jobs:
+  build-and-publish:
+    name: Build, sign, push
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}},priority=500
+            type=raw,value=${{ inputs.tag_override || 'edge' }},enable=${{ github.event_name == 'workflow_dispatch' }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp || github.event.repository.updated_at }}
+
+      - name: Build + push multi-arch image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: true            # SLSA build provenance
+          sbom: true                  # docker buildx-generated SPDX SBOM attached as attestation
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Sign image (keyless OIDC)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -eu
+          for tag in $TAGS; do
+            echo "Signing $tag@${DIGEST}"
+            cosign sign --yes "${tag}@${DIGEST}"
+          done
+
+      - name: Verify signature on the published image (smoke)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -eu
+          # Pick the first tag — they all point at the same digest
+          first_tag=$(echo "$TAGS" | head -n1)
+          cosign verify "${first_tag}@${DIGEST}" \
+            --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/release-docker.yml@.*" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+      - name: Summary
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          {
+            echo "## Image published"
+            echo
+            echo "**Digest**: \`$DIGEST\`"
+            echo
+            echo "**Tags**:"
+            for t in $TAGS; do echo "- \`$t\`"; done
+            echo
+            echo "**Verify locally**:"
+            echo
+            echo '```bash'
+            first_tag=$(echo "$TAGS" | head -n1)
+            echo "cosign verify $first_tag@$DIGEST \\"
+            echo "  --certificate-identity-regexp 'https://github.com/${{ github.repository }}/.github/workflows/release-docker.yml@.*' \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
