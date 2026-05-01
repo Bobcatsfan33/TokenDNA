@@ -1,76 +1,107 @@
-# TokenDNA — Production Dockerfile
-# CIS Docker Benchmark v1.6 / FedRAMP High container hardening
+# TokenDNA — production container image
 #
-# Security controls:
-#   - Multi-stage build (no build tools in runtime image)
-#   - Non-root user (UID 10001 — not in common user range)
-#   - Read-only root filesystem enforced via docker-compose
-#   - No shell in final image (scratch-like minimal footprint)
-#   - Pinned base image digest in CI (update monthly)
-#   - .env files explicitly deleted
-#   - PYTHONDONTWRITEBYTECODE prevents .pyc file creation (clean FS)
+# Multi-stage build → distroless runtime.
+#
+# Security posture:
+#   * Build stage:  python:3.12-slim with toolchain to compile cryptography +
+#                   psycopg + any other native-extension wheels.
+#   * Runtime stage: gcr.io/distroless/python3-debian12:nonroot
+#                   - no shell, no apt, no busybox, no curl, no wget
+#                   - ships only the Python interpreter + libc + ca-certs
+#                   - default UID 65532 (nonroot variant); we keep it
+#                   - read-only root FS friendly
+#   * Healthcheck:   urllib.request via the Python interpreter — no curl/wget
+#                   binary required, since distroless has neither.
+#   * .env, *.key, *.pem stripped before COPY into runtime stage.
+#   * PYTHONDONTWRITEBYTECODE keeps the runtime FS clean / read-only-friendly.
+#
+# Build:
+#   docker buildx build --platform linux/amd64,linux/arm64 \
+#     -t ghcr.io/bobcatsfan33/tokendna:dev .
+#
+# Run:
+#   docker run --rm -p 8000:8000 \
+#     -e ATTESTATION_CA_SECRET=demo-secret-32-bytes-aaaaaaa \
+#     -e DEV_MODE=true \
+#     ghcr.io/bobcatsfan33/tokendna:dev
 
-# ── Stage 1: dependency builder ───────────────────────────────────────────────
+# ── Stage 1: dependency builder ──────────────────────────────────────────────
 FROM python:3.12-slim AS builder
 
 WORKDIR /build
 
-# Install build tools — stripped from runtime image
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Native build deps for cryptography, psycopg[binary], etc.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc \
         libffi-dev \
         libssl-dev \
+        libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+RUN pip install --prefix=/install -r requirements.txt
 
 
-# ── Stage 2: runtime image ────────────────────────────────────────────────────
-FROM python:3.12-slim AS runtime
+# ── Stage 2: app staging ─────────────────────────────────────────────────────
+# Separate from runtime so we can strip secrets / build artefacts before
+# they reach the distroless layer.
+FROM python:3.12-slim AS appstage
 
-# Install minimal runtime deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        wget \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+WORKDIR /app
+COPY . /app
 
-# Create non-root service account (UID/GID 10001 avoids common ranges)
-RUN groupadd -g 10001 aegis && useradd -u 10001 -g aegis -s /sbin/nologin -M aegis
+# Defence in depth: strip anything that should never be inside an image.
+RUN find /app -name '__pycache__' -type d -prune -exec rm -rf {} + \
+ && find /app \( -name '.env' -o -name '.env.*' -o -name '*.key' -o -name '*.pem' \) -delete \
+ && rm -rf /app/.git /app/.github /app/.pytest_cache /app/.mypy_cache /app/tests \
+ && find /app -name '*.pyc' -delete
+
+
+# ── Stage 3: runtime ─────────────────────────────────────────────────────────
+FROM gcr.io/distroless/python3-debian12:nonroot AS runtime
+
+# Cosign-friendly OCI labels (parsed by GHCR, scanners, and the release
+# workflow when computing the SBOM).
+LABEL org.opencontainers.image.title="TokenDNA" \
+      org.opencontainers.image.description="Runtime identity verification and behavioural trust engine for AI agents." \
+      org.opencontainers.image.source="https://github.com/Bobcatsfan33/TokenDNA" \
+      org.opencontainers.image.licenses="BUSL-1.1" \
+      org.opencontainers.image.vendor="TokenDNA"
+
+# Bring in the resolved site-packages tree from the builder…
+COPY --from=builder --chown=nonroot:nonroot /install /usr/local
+
+# …and the cleaned application source from the appstage.
+COPY --from=appstage --chown=nonroot:nonroot /app /app
 
 WORKDIR /app
 
-# Copy installed Python packages from builder stage
-COPY --from=builder /install /usr/local
-
-# Copy application source (owned by root, readable by aegis — defense in depth)
-COPY --chown=root:aegis . .
-
-# Harden file permissions
-RUN chmod -R o-rwx /app && \
-    chmod -R g-w /app && \
-    # Remove any accidentally included sensitive files
-    rm -f .env .env.* *.key *.pem && \
-    # Create log directory (tmpfs mount in compose overrides this)
-    mkdir -p /var/log/aegis && chown aegis:aegis /var/log/aegis
-
-# Security: prevent python from writing .pyc files to the FS
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONFAULTHANDLER=1 \
-    # Disable pip version check / telemetry
+    PYTHONPATH=/app:/usr/local/lib/python3.12/site-packages \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1
+    DATA_DB_PATH=/data/tokendna.db \
+    AUDIT_LOG_PATH=/var/log/aegis/audit.jsonl
 
-USER aegis
+# Distroless ships a `nonroot` user (UID 65532); we just declare it.
+USER nonroot:nonroot
 
 EXPOSE 8000
 
+# distroless has no shell + no curl/wget, so the healthcheck runs through
+# the Python interpreter that's already in the image.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8000/ || exit 1
+    CMD ["python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).status==200 else 1)"]
 
-# Use exec form (not shell form) — prevents shell injection
-CMD ["python", "-m", "uvicorn", "api:app", \
+# Distroless `python3-debian12` images use the python interpreter as the
+# entrypoint, so we hand it the module + args directly.
+ENTRYPOINT ["python", "-m", "uvicorn"]
+CMD ["api:app", \
      "--host", "0.0.0.0", \
      "--port", "8000", \
      "--workers", "2", \
