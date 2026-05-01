@@ -1,5 +1,5 @@
 # TokenDNA — CLAUDE.md
-_Last updated: 2026-04-27 (post-PR #51 — seed perf + demo dashboard polish merged)_
+_Last updated: 2026-04-30 (post 20%-Plan Track 1 + Track 2.1 — trust surface hardened, KMS/CloudHSM signers shipped)_
 
 ## What This Project Is
 
@@ -116,6 +116,28 @@ These existed before today's audit; CLAUDE.md previously listed them as "not sta
 - `scripts/shadow_trial_report.py` — text or JSON CLI render of the trial report.
 - `docs/demo/RUN_DEMO.md` — full walkthrough for both paths (seeded demo and shadow trial).
 - Coverage: `shadow_mode.py` 96%; full suite 1687/1687 pass.
+
+### 20%-Plan Track 1 (Trust Surface) + Track 2.1 (KMS Signer) — shipped 2026-04-30
+
+Tracks 1 and 2.1 from `~/Downloads/TokenDNA-20-Percent-Plan.md` are done. The repo now passes the security-evaluator first-glance bar (branch protection, vuln reporting, dependency hygiene, CodeQL discipline) and the trust authority can issue attestation certificates backed by real key material in a hardware boundary instead of `MockHSMTrustSigner`.
+
+**Track 1 — Trust Surface**
+- **Branch protection on `main`** — 1 PR review required, `TokenDNA — CI Pipeline` status check required, force-pushes + deletions blocked, conversation resolution required.
+- **Private vulnerability reporting** + **Dependabot alerts** + **automated security fixes** all ENABLED via API.
+- **Repo description** updated to the plan's positioning: *"Runtime identity verification and behavioral trust engine for AI agents. Zero-trust token integrity, session behavioral analytics, and policy enforcement."*
+- **Dependabot/PR cleanup (11 PRs disposed):** merged #52 trivy-action 0.36.0, #53 trufflehog 3.95.2, #54 azure/setup-helm 5, #55 prometheus-client 0.25.0, #57 pydantic 2.13.3, #59 boto3+botocore 1.42.96 (paired — both pinned in `requirements.txt`, can't bump separately without an incompatible intermediate state), #60 actions/upload-artifact v7 (recreated since #2's branch was unrebasable), #61 RELEASES.md renumber, #62 CVE patches; closed #2/#6/#56 as superseded; deferred #8 fastapi 0.135.1 + #13 numpy 2.4.3 per plan (major bumps); #19 (cursor branch) left for the user.
+- **CodeQL alert triage:** 243 → 0 open after PR #63's CodeQL re-scan (3 medium CVEs were tracked by #62 and auto-closed when it merged). 215 alerts dismissed in bulk with rule-categorical justifications stored on each alert (test fixtures / system-installed Python / code-style cleanup / best-effort error swallowing / standard-logger paths not in the SOC2 audit chain). 0 high, 0 critical, 0 error remaining.
+- **`RELEASES.md`** renumbered to chronological order via PR #61 — IL5 Cryptographic Foundation moved v2.4.0 → v2.2.0; Growth Features moved v2.2.0 → v2.3.0; `modules/security/fips.py` header version sync'd.
+
+**Track 2.1 — KMS Signer (PR #63)**
+- **`AWSKMSTrustSigner` rewritten:** cached thread-safe boto3 client (was created per call), accepts ARN / UUID / alias for `KeyId` (e.g. `alias/tokendna-ca`), honours `AWS_KMS_KEY_ID` (AWS-standard) and `ATTESTATION_AWS_REGION`, raises `TrustSignerError` on KMS API failures (was bubbling boto3 exceptions), `client_factory=` constructor arg for test injection.
+- **`CloudHSMTrustSigner` (new):** subclass for IL5 / FIPS 140-2 Level 3 deployments backed by KMS Custom Key Stores → CloudHSM clusters; marks `SignResult.algorithm` with a `+CHSM` suffix so cert auditors can distinguish FIPS-3-issued certificates from FIPS-2 ones.
+- **`rotate_active_key()` helper:** appends a fresh key id to the keyring + flips `ATTESTATION_ACTIVE_KEY_ID` in one operation. Existing certificates remain verifiable because `verify_certificate` already routes by the cert's `ca_key_id`. `apply=False` mode for orchestrators that update env out-of-band.
+- **Mis-configured `aws_kms` / `cloudhsm`** (no kms_key_id anywhere) now warns and falls back to the software signer instead of crashing.
+- **14 new tests** cover the full backend matrix and the plan's explicit acceptance criterion (issue cert with KMS key → rotate active key → old cert still validates → new cert validates → cross-key forgery rejected). Stub KMS client used throughout — no boto3 / network / AWS credentials needed in CI.
+- **Follow-up commit `0a13013`** silenced CodeQL log-injection findings on the KMS sign/verify error paths by switching to `logger.error(..., exc_info=True)` so the exception traceback still reaches operators but no taintable value flows through the format string.
+
+Final: 1703/1703 tests green, ruff clean, repo CodeQL alert count at 0.
 
 ### Demo seed perf + dashboard polish (shipped 2026-04-27, PR #51)
 
