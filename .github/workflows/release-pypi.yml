@@ -1,0 +1,89 @@
+name: Release — Publish SDK to PyPI
+
+# Triggered when a `v*` tag is pushed.  Builds the wheel + sdist for
+# `tokendna-sdk` and publishes to PyPI using OIDC trusted publishing
+# (no long-lived API token needed once the project is claimed on PyPI).
+#
+# Setup, one time:
+#   1. On PyPI, claim the project name `tokendna-sdk` from this org's account.
+#   2. On PyPI → Project → Settings → Trusted publisher → Add a publisher:
+#        Owner:           Bobcatsfan33
+#        Repository name: TokenDNA
+#        Workflow:        release-pypi.yml
+#        Environment:     pypi
+#   3. In this repo → Settings → Environments → New environment → "pypi"
+#      with required reviewers (yourself).
+#
+# Release flow:
+#   bin/bump_sdk_version.py 0.2.0
+#   git push && git tag v0.2.0 && git push --tags
+#   → this workflow fires, builds, awaits environment approval, publishes.
+#
+# Fallback: if you'd rather use a long-lived token, swap the
+# `pypa/gh-action-pypi-publish` step for a `twine upload` call with a
+# `PYPI_API_TOKEN` secret.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write   # required for PyPI OIDC trusted publishing
+
+jobs:
+  guard-version-matches-tag:
+    name: Guard — pyproject version matches tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag must equal pyproject version (vX.Y.Z)
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          tag_v="${tag#v}"
+          pyproject_v=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          init_v=$(python3 -c "import re; print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', open('tokendna_sdk/__init__.py').read()).group(1))")
+          echo "tag=$tag_v  pyproject=$pyproject_v  __init__=$init_v"
+          if [ "$tag_v" != "$pyproject_v" ] || [ "$tag_v" != "$init_v" ]; then
+            echo "::error::tag/pyproject/__init__ version mismatch — run bin/bump_sdk_version.py before tagging"
+            exit 1
+          fi
+
+  build:
+    name: Build wheel + sdist
+    needs: guard-version-matches-tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with: { python-version: '3.12' }
+      - name: Install build
+        run: python3 -m pip install --upgrade build
+      - name: Build distributions
+        run: python3 -m build --wheel --sdist
+      - name: Show artifacts
+        run: ls -l dist/
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: pypi-dists
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/tokendna-sdk
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: pypi-dists
+          path: dist/
+      - name: Publish via PyPA OIDC
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          # The OIDC trusted-publisher binding handles auth; no token here.
