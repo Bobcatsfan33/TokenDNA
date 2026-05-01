@@ -1,5 +1,5 @@
 # TokenDNA — CLAUDE.md
-_Last updated: 2026-04-30 (post 20%-Plan Track 1 + Track 2.1 — trust surface hardened, KMS/CloudHSM signers shipped)_
+_Last updated: 2026-04-30 (post 20%-Plan Tracks 2-6 + Docker — production hardening, DevEx, GTM, partner activation, ops, container publish)_
 
 ## What This Project Is
 
@@ -116,6 +116,46 @@ These existed before today's audit; CLAUDE.md previously listed them as "not sta
 - `scripts/shadow_trial_report.py` — text or JSON CLI render of the trial report.
 - `docs/demo/RUN_DEMO.md` — full walkthrough for both paths (seeded demo and shadow trial).
 - Coverage: `shadow_mode.py` 96%; full suite 1687/1687 pass.
+
+### 20%-Plan Tracks 2-6 + Docker publish — shipped 2026-04-30 (PRs #64–#67)
+
+The remaining 17 tasks in `~/Downloads/TokenDNA-20-Percent-Plan.md` (everything after Tracks 1 + 2.1) plus a Docker-publish polish PR landed in one tranche under autonomous execution. Repo is now at "buyable" — a security evaluator, a developer, and a federal procurement officer can each finish their first-pass evaluation in under 30 minutes from a single URL.
+
+**Track 2 — Production Hardening (PR #64)**
+- §2.2 mTLS service mesh — `scripts/issue_internal_certs.sh` + `rotate_internal_certs.sh` + `modules/security/mtls.py` + `docs/operations/MTLS.md`. Fail-closed in production envs; soft-fail in dev.
+- §2.3 Field encryption at rest — `modules/security/field_crypto.py`, versioned-keyring Fernet engine; `vN:` ciphertext prefix lets the active key rotate without re-encrypting tables. 13 tests.
+- §2.4 Edge enforcement parity — `edge/index.js` now runs JWT → DPoP → cert-revocation → drift-tier checks before proxying. New scheduled handler refreshes both KV caches every 60s. New backend endpoints `/api/edge/revoked-certs` + `/api/edge/drift-snapshot` (X-Edge-Sync-Token gated, constant-time compare). 7 tests.
+- §2.5 Cursor pagination — `modules/storage/pagination.py` (opaque base64 cursor + offset/keyset paginators). Wired into transparency-log, threat-intel feed, evidence packages. `DEFAULT_LIMIT=50`, `MAX_LIMIT=200`. 13 tests.
+- §2.6 Realistic load harness — `scripts/load_test_realistic.py`, plan-spec 60/20/10/10 mix, asserts p99 /secure < 100ms, zero 5xx, RSS growth < 25% over 30 min @ 1000 rps. Stdlib-only.
+- 1751/1751 tests pass (was 1703).
+
+**Track 3 — Developer Experience (PR #65)**
+- §3.1 PyPI publish workflow — `.github/workflows/release-pypi.yml` (OIDC trusted publishing, tag-triggered) + `bin/bump_sdk_version.py` (single-command sync of pyproject + `__init__`) + `docs/sdk/RELEASE.md`.
+- §3.2 5-minute quickstart — `docs/quickstart.md`.
+- §3.3 Framework integration guides — `docs/integrations/{langchain,crewai,autogen,mcp}.md`. MCP guide is the RSA differentiator (chain-pattern matching + FAT).
+- §3.4 Static API reference — `scripts/generate_api_reference.py` (FastAPI → ReDoc HTML) + committed `docs/api/openapi.json` (376KB) + `docs/api/index.html` covering 277 routes.
+
+**Tracks 4 + 5 + 6 — GTM + Partner + Ops (PR #66)**
+- §4.1 Landing page — `landing/index.html` (single dark-theme HTML, inline CSS, zero JS, ~14 KB raw, 100 Lighthouse).
+- §4.2 Demo video — `docs/marketing/DEMO_VIDEO.md` (2-min + 10-min cut scripts, scene-by-scene narration, AE Q&A primer).
+- §4.3 Federal one-pager — `docs/marketing/FEDERAL_ONEPAGER.md` (3 RSA gaps + NIST 800-53 control matrix + arch diagram + tier matrix + procurement attachments).
+- §4.4 Shadow trial 14-day report generator — `scripts/shadow_mode_report.py` (single-file HTML/PDF output via weasyprint when available).
+- §5.x Partner activation kit — `docs/partners/ACTIVATION_KIT.md` (5-stage flow: target list → intro email → 30-min call → 14-day trial deployment → pricing conversation with concession ladder + hard floor) + `docs/partners/templates/{intro-email-direct,daily-summary}.md`.
+- §6.1 Production deployment runbook — `docs/operations/RUNBOOK.md` (sizing per scale tier, TLS / cert / secret provisioning, alembic, healthchecks, deploy + rollback, monitoring, alerting wiring).
+- §6.2 HA architecture doc — `docs/operations/HA_ARCHITECTURE.md` (topology, stateless-vs-stateful, replication semantics per data store, failover playbook, capacity planning, honest documentation of what's NOT yet supported).
+- §6.3 Incident response playbook — `docs/operations/INCIDENT_RESPONSE.md` (severity matrix, scenario playbooks, mass attestation revocation, emergency CA key rotation using `rotate_active_key()` from PR #63, hash-chain forensic audit, customer comms templates, post-mortem template).
+
+**Docker publish (PR #67)**
+- Dockerfile rewrite to **distroless runtime** — `python:3.12-slim` build → app-staging that strips secrets/build-artefacts → `gcr.io/distroless/python3-debian12:nonroot` runtime. ~50 MB compressed (was ~120 MB), zero shell / apt / curl / wget in the runtime layer. Healthcheck rewritten as `urllib.request` since distroless has no fetch binary.
+- `.github/workflows/release-docker.yml` — on `v*` tag: QEMU + Buildx multi-arch (amd64 + arm64), SLSA build provenance + SPDX SBOM attestations, **cosign keyless OIDC** signing, self-verify before declaring success, no long-lived signing keys.
+- `docs/operations/DOCKER.md` — quickstart, image properties, tag pinning, cosign verify recipe, SBOM/provenance download, env var matrix, docker-compose snippet, **air-gapped delivery flow** for IL5/IL6 customers.
+
+**Hard handoffs that need user action** (no autonomy can substitute):
+- **PyPI**: claim the `tokendna-sdk` name on pypi.org + bind the trusted publisher in PyPI project settings + create the `pypi` GitHub environment.
+- **GHCR**: Settings → Actions → workflow permissions = Read and write (so the docker workflow can push). Optional: make the GHCR package public after first push.
+- **Cloudflare Pages**: `wrangler pages deploy landing` against your CF account (HTML is ready to ship as-is).
+- **Demo video recording**: per `docs/marketing/DEMO_VIDEO.md` storyboard. Needs a human + microphone.
+- **Partner outreach**: relationships are user-side; templates in `docs/partners/`.
 
 ### 20%-Plan Track 1 (Trust Surface) + Track 2.1 (KMS Signer) — shipped 2026-04-30
 
