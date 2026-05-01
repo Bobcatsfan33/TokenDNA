@@ -18,6 +18,28 @@ curl http://127.0.0.1:8000/api/health
 # → {"redis": ..., "clickhouse": ..., "tor_list": {"ok": true ...}, ...}
 ```
 
+### Persisting the SQLite database
+
+The container runs as the distroless `nonroot` user (UID 65532) and writes the dev SQLite DB to `/data/tokendna.db`. To keep that DB across restarts, mount a host **directory** (not just the file) so SQLite can also create its `-wal` and `-shm` sidecar files:
+
+```bash
+mkdir -p /tmp/tokendna-data
+chmod 777 /tmp/tokendna-data        # writable by container's UID 65532
+
+# (optional) seed it from the dev fixture before first boot
+cp /tmp/tokendna-demo.db /tmp/tokendna-data/tokendna.db
+chmod 666 /tmp/tokendna-data/tokendna.db
+
+docker run --rm -p 8000:8000 \
+  -e DEV_MODE=true \
+  -e ATTESTATION_CA_SECRET=demo-secret-32-bytes-aaaaaaa \
+  -e DEV_TENANT_ID=acme \
+  -v /tmp/tokendna-data:/data \
+  ghcr.io/bobcatsfan33/tokendna:latest
+```
+
+For production, swap SQLite for Postgres via `DATABASE_URL` and you don't need a host volume at all.
+
 ## Image properties
 
 | Property              | Value                                                      |

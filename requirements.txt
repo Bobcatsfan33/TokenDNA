@@ -17,6 +17,10 @@ psycopg[binary]==3.3.3           # PostgreSQL backend for production data plane
 
 # ── Redis ─────────────────────────────────────────────────────────────────────
 redis==7.3.0
+# redis-py 7.x requires async_timeout on Python < 3.12; pip resolves it via
+# transitive deps in some environments but a fresh distroless install does
+# not, so we pin it explicitly.
+async-timeout>=4.0,<6.0; python_version < "3.12"
 
 # ── ClickHouse ────────────────────────────────────────────────────────────────
 clickhouse-connect==0.15.1

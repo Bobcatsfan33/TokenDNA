@@ -3,7 +3,7 @@
 # Multi-stage build → distroless runtime.
 #
 # Security posture:
-#   * Build stage:  python:3.12-slim with toolchain to compile cryptography +
+#   * Build stage:  python:3.11-slim with toolchain to compile cryptography +
 #                   psycopg + any other native-extension wheels.
 #   * Runtime stage: gcr.io/distroless/python3-debian12:nonroot
 #                   - no shell, no apt, no busybox, no curl, no wget
@@ -26,7 +26,7 @@
 #     ghcr.io/bobcatsfan33/tokendna:dev
 
 # ── Stage 1: dependency builder ──────────────────────────────────────────────
-FROM python:3.12-slim AS builder
+FROM python:3.11-slim AS builder
 
 WORKDIR /build
 
@@ -49,7 +49,7 @@ RUN pip install --prefix=/install -r requirements.txt
 # ── Stage 2: app staging ─────────────────────────────────────────────────────
 # Separate from runtime so we can strip secrets / build artefacts before
 # they reach the distroless layer.
-FROM python:3.12-slim AS appstage
+FROM python:3.11-slim AS appstage
 
 WORKDIR /app
 COPY . /app
@@ -83,7 +83,7 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONFAULTHANDLER=1 \
-    PYTHONPATH=/app:/usr/local/lib/python3.12/site-packages \
+    PYTHONPATH=/app:/usr/local/lib/python3.11/site-packages \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     DATA_DB_PATH=/data/tokendna.db \
     AUDIT_LOG_PATH=/var/log/aegis/audit.jsonl
