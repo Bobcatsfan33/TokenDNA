@@ -37,7 +37,7 @@ jobs:
     name: Guard — pyproject version matches tag
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Tag must equal pyproject version (vX.Y.Z)
         run: |
           tag="${GITHUB_REF#refs/tags/}"
@@ -55,7 +55,7 @@ jobs:
     needs: guard-version-matches-tag
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with: { python-version: '3.12' }
       - name: Install build
