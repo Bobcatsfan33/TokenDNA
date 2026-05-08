@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from tokendna_platform.engines.mcp_inspector import MCPChainEngine
 from tokendna_platform.schema import EventCategory, EventOutcome, NormalizedEvent

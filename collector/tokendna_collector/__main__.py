@@ -94,7 +94,9 @@ def serve_health(runner: CollectorRunner, addr: str) -> Thread:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
             if self.path != "/health":
-                self.send_response(404); self.end_headers(); return
+                self.send_response(404)
+                self.end_headers()
+                return
             future = asyncio.run_coroutine_threadsafe(runner.health(), loop)
             try:
                 health = future.result(timeout=5.0)
