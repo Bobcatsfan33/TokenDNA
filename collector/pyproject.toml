@@ -24,16 +24,22 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Security",
 ]
-dependencies = []  # placeholder until Sprint 1-2 implementation lands
+# Stdlib only at runtime — keeps the distroless image lean and the
+# customer-side audit story simple.
+dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.5"]
+zstd = ["zstandard>=0.22"]      # optional: smaller-than-gzip wire frames
 
 [project.urls]
 Homepage = "https://github.com/Bobcatsfan33/TokenDNA"
 Documentation = "https://github.com/Bobcatsfan33/TokenDNA/tree/main/collector"
 Repository = "https://github.com/Bobcatsfan33/TokenDNA"
 Issues = "https://github.com/Bobcatsfan33/TokenDNA/issues"
+
+[project.scripts]
+tokendna-collector = "tokendna_collector.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["tokendna_collector*"]
