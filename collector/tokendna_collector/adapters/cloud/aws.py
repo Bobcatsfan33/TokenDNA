@@ -32,7 +32,7 @@ normalization layer + tests against fixture payloads.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, AsyncIterator, ClassVar
+from typing import Any, AsyncIterator
 
 from ...config import AdapterConfig
 from ...health import HealthState, HealthStatus

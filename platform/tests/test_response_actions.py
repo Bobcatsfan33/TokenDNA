@@ -11,7 +11,6 @@ from tokendna_platform.findings import Finding, FindingSeverity
 from tokendna_platform.response.actions import (
     AWSWAFBlockIP,
     JiraTicket,
-    K8sIsolatePod,
     OktaRevokeSession,
     PagerDutyEscalate,
 )
