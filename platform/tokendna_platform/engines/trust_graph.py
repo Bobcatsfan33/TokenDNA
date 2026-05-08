@@ -19,7 +19,7 @@ from __future__ import annotations
 import threading
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import ClassVar
 
 from ..schema import EventCategory, NormalizedEvent
