@@ -1,0 +1,21 @@
+TokenDNA Platform
+Copyright 2026 TokenDNA Inc.
+
+This software is the proprietary backend of the TokenDNA project. It is
+made available under the Business Source License 1.1 (BUSL-1.1), see
+``LICENSE`` in this directory.
+
+Production use of the Licensed Work in a hosted commercial offering is
+RESTRICTED until the Change Date listed in ``LICENSE``.  After the Change
+Date, the Licensed Work is automatically relicensed under the Change
+License (Apache License, Version 2.0).
+
+For commercial licensing terms before the Change Date, contact
+TokenDNA Inc.
+
+----
+
+The platform is the proprietary half of the TokenDNA project. Its
+counterpart, the TokenDNA Collector (open-source edge collector), lives
+in the sibling ``collector/`` directory and is licensed under the Apache
+License, Version 2.0 — see ``../collector/LICENSE``.

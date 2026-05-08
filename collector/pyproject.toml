@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tokendna-collector"
+version = "0.0.1"
+description = "TokenDNA open-source edge collector — pulls events from existing identity, SIEM, cloud, and AI workload telemetry and ships them to TokenDNA Cloud."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "TokenDNA contributors" }]
+keywords = [
+    "ai-security", "agent-identity", "siem", "cspm", "okta",
+    "aws", "azure", "gcp", "mcp", "tokendna",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+]
+# Stdlib only at runtime — keeps the distroless image lean and the
+# customer-side audit story simple.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+zstd = ["zstandard>=0.22"]      # optional: smaller-than-gzip wire frames
+
+[project.urls]
+Homepage = "https://github.com/Bobcatsfan33/TokenDNA"
+Documentation = "https://github.com/Bobcatsfan33/TokenDNA/tree/main/collector"
+Repository = "https://github.com/Bobcatsfan33/TokenDNA"
+Issues = "https://github.com/Bobcatsfan33/TokenDNA/issues"
+
+[project.scripts]
+tokendna-collector = "tokendna_collector.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["tokendna_collector*"]
