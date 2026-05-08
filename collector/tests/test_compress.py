@@ -8,7 +8,6 @@ import pytest
 from tokendna_collector.transport.compress import (
     Compressor,
     GzipCodec,
-    IdentityCodec,
 )
 
 
