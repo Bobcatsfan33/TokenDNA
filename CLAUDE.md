@@ -1,5 +1,5 @@
 # TokenDNA — CLAUDE.md
-_Last updated: 2026-04-30 (post 20%-Plan Tracks 2-6 + Docker — production hardening, DevEx, GTM, partner activation, ops, container publish)_
+_Last updated: 2026-05-09 (post deployment-redesign Sprints 1-12 — collector/ Apache-2.0 + platform/ BUSL-1.1 split now on main)_
 
 ## What This Project Is
 
@@ -178,6 +178,34 @@ Tracks 1 and 2.1 from `~/Downloads/TokenDNA-20-Percent-Plan.md` are done. The re
 - **Follow-up commit `0a13013`** silenced CodeQL log-injection findings on the KMS sign/verify error paths by switching to `logger.error(..., exc_info=True)` so the exception traceback still reaches operators but no taintable value flows through the format string.
 
 Final: 1703/1703 tests green, ruff clean, repo CodeQL alert count at 0.
+
+### Deployment redesign — collector/ + platform/ open-core split (Sprints 1-12, 2026-05-09)
+
+Closed the full TRA-CE-style overlay-architecture redesign described in `~/Desktop/tokendna/TOKENDNA-DEPLOYMENT-REDESIGN.md`.  Six PRs merged in sequence (#80 → #85).  **Zero existing modules under `modules/*` were moved or modified** — every byte is additive.  The license boundary (Apache-2.0 under `collector/`, BUSL-1.1 under `platform/`) is now established and the disposition map in `platform/README.md` is the binding contract for the future MOVE of existing modules.
+
+| PR | Sprint | Scope |
+|----|--------|-------|
+| #80 | 1-2 | `collector/` Apache-2.0 + `platform/` BUSL-1.1 scaffolding · `BaseAdapter` ABC · `NormalizedEvent` schema · transport layer (stream / buffer / compress) · Okta System Log adapter · collector runner + `__main__` · distroless Dockerfile · 22 tests |
+| #81 | 3-4 | Cloud ingestion layer · cloud-side `NormalizedEvent` (tolerant wire reader) · schema registry · `(tenant, event_id)` dedup window · category → engine `EventRouter` · `BackpressureGate` (the only place 429s are surfaced) · `EventStore` ABC + in-memory ref · 23 tests |
+| #82 | 5-6 | Stream-consuming intelligence engines (`StreamEngine` ABC + `TrustGraphEngine` / `BehavioralDNAEngine` / `PermissionDriftEngine` / `MCPChainEngine` / `PolicyGuardEngine` detect-mode) · 19 tests |
+| #83 | 7-8 | AWS CloudTrail adapter · Azure Activity Log adapter · DNS-based shadow-AI classifier (12 vendor patterns: OpenAI, Anthropic, Bedrock, Vertex, Azure OpenAI, Cohere, Mistral, Together, Replicate, Perplexity, SageMaker, Google GenAI) · 15 tests |
+| #84 | 9-10 | Unified `Finding` shape · `AlertRouter` with predicate-based rules · `SplunkHECForwarder` + `DatadogForwarder` · `EUAIActReport` (Articles 9/10/13/14) + `NISTAIRMFReport` (GOVERN/MAP/MEASURE/MANAGE) + `SOC2AIReport` (CC6/CC7/CC8) · 17 tests |
+| #85 | 11-12 | Response actions (Okta revoke / AWS WAF block / K8s isolate / PagerDuty escalate / Jira ticket) · `ResponseRouter` for enforce-mode dispatch · `SingleTenantValidator` for federal/IL5 deployments · hash-chained `SOC2ObservationLog` for Type II audits · 24 tests |
+
+**Totals at land time:** ~120 net-new files across `collector/tokendna_collector/*` and `platform/tokendna_platform/*`; **133 new tests** (37 collector + 96 platform); ruff-clean across both new directories; full pytest suite under `modules/*` unaffected.
+
+**Sprint 7-8 SigV4 / Sprint 9-10 webhooks / Sprint 11-12 enforce-mode actions** all use stdlib `urllib` + a test-injectable `http=` seam so CI runs without any real outbound traffic.
+
+#### Follow-up work — NOT yet shipped
+
+These are the four loose ends after Sprints 1-12.  Each is its own focused PR, none is blocking the redesign's open-core thesis:
+
+1. **MOVE existing modules into `platform/tokendna_platform/`** per the disposition map in `platform/README.md`.  Today the engines under `platform/tokendna_platform/engines/*` are stream-side adapters that DELEGATE to algorithms still living in `modules/identity/*`.  The disposition map names every source-file → target-file pair; subsequent PRs can land one module-move at a time without rewriting the engine adapters.
+2. **Real STS SigV4 / Azure OAuth handshakes** for the cloud adapters.  `AWSCloudTrailAdapter.poll()` and `AzureActivityLogAdapter.poll()` ship as functional stubs (`if False: yield`) so the runner contract holds.  The normalisation layer (`adapter.normalize(raw)`) is real and tested against fixture payloads — only the network handshake itself remains.
+3. **Collector Docker image publishing workflow** (`.github/workflows/release-collector-docker.yml`).  Stacks on the existing `release-docker.yml` pattern (multi-arch + cosign keyless OIDC) but targets `ghcr.io/bobcatsfan33/tokendna-collector` instead of the platform image.
+4. **Wire the ingestion router + engines into the FastAPI app** at `api.py` via a new `/api/v1/ingest` endpoint.  The router + dedup + backpressure + storage all exist; what's missing is the FastAPI route that calls `gate.admit(N)` → `dedup.seen()` → `router.route()` → `event_store.write()` for each frame the collector posts.  Auth header: `X-TokenDNA-Tenant` + `Authorization: Bearer <api_key>` to match what `CloudStream` already sends.
+
+Once any of those four lands, the rest of `modules/*` can begin migrating into `platform/tokendna_platform/` per the disposition map without further structural churn.
 
 ### Demo seed perf + dashboard polish (shipped 2026-04-27, PR #51)
 
