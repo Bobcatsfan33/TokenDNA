@@ -1,5 +1,5 @@
 """
-``@identified`` and ``@tool`` — the actual wedge.
+``@identified`` and ``@tool`` — the v0.1 wedge, still supported.
 
 Design notes
 ------------
@@ -13,6 +13,14 @@ Design notes
   ``get_agent_metadata`` for downstream workflow_attestation registration.
 - Decorators never raise on transport failure. The original method's
   return value (or exception) is always passed through to the user.
+
+v0.2 change
+-----------
+The default fallback client is now obtained via
+:func:`tokendna_sdk.make_client`, so when no URL is configured the
+decorator wedge writes a signed JSONL trail to ``~/.tokendna/`` instead
+of buffering forever in memory. Existing callers that explicitly pass
+``client=Client(...)`` are unaffected.
 """
 
 from __future__ import annotations
@@ -77,7 +85,7 @@ def identified(
     scope: list[str] | None = None,
     description: str = "",
     delegation_receipt_id: str | None = None,
-    client: Client | None = None,
+    client: Any | None = None,
     **extra: Any,
 ) -> Callable[[type[T]], type[T]]:
     """
@@ -114,16 +122,23 @@ def identified(
 
 # ── @tool — method decorator ──────────────────────────────────────────────────
 
-def _resolve_client(self_obj: Any, override: Client | None) -> Any:
+def _resolve_client(self_obj: Any, override: Any) -> Any:
     """Resolve which client to call. Duck-typed: any object with a
     ``post(path, body)`` method is acceptable so tests and downstream
-    integrations can plug in their own transports without subclassing."""
+    integrations can plug in their own transports without subclassing.
+
+    The fallback uses :func:`tokendna_sdk.make_client` so local-mode
+    callers get the JSONL-backed local client instead of a remote
+    transport with no URL.
+    """
     if override is not None:
         return override
     bound = getattr(type(self_obj), "__tokendna_client__", None)
     if bound is not None and hasattr(bound, "post"):
         return bound
-    return Client(config=current_config())
+    # Lazy import to break the package-level circular dependency.
+    from . import make_client
+    return make_client()
 
 
 def _resolve_meta(self_obj: Any) -> _AgentMeta | None:
@@ -163,7 +178,7 @@ def tool(
                 return fn(self_obj, *args, **kwargs)
 
             cli = _resolve_client(self_obj, client)
-            cfg = cli.config
+            cfg = getattr(cli, "config", None) or current_config()
             call_id = uuid.uuid4().hex[:16]
             started = time.time()
 
