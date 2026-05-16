@@ -36,7 +36,7 @@ botocore==1.42.96
 user-agents==2.2.0
 
 # ── ML / adaptive scoring ────────────────────────────────────────────────────
-numpy==1.26.4                    # lightweight — used for profile distance math
+numpy==2.4.3                    # lightweight — used for profile distance math
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
 pydantic==2.13.3                  # FastAPI model validation (v2 API)
