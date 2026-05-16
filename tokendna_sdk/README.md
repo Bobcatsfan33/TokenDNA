@@ -2,61 +2,117 @@
 
 **Identity for AI agents in one decorator.**
 
-Drop `@identified` on your LangChain / CrewAI / AutoGen / plain-Python agent and every action it takes becomes a signed, replayable, audit-trail-ready event — without any infrastructure on your side.
+[![PyPI](https://img.shields.io/pypi/v/tokendna-sdk.svg)](https://pypi.org/project/tokendna-sdk/)
+[![Python](https://img.shields.io/pypi/pyversions/tokendna-sdk.svg)](https://pypi.org/project/tokendna-sdk/)
+[![License](https://img.shields.io/pypi/l/tokendna-sdk.svg)](https://github.com/Bobcatsfan33/TokenDNA/blob/main/LICENSE)
+[![Build](https://github.com/Bobcatsfan33/TokenDNA/actions/workflows/publish.yml/badge.svg)](https://github.com/Bobcatsfan33/TokenDNA/actions)
+
+Drop `@identified` on your LangChain / CrewAI / AutoGen / plain-Python agent — or attach `TokenDNAMiddleware` natively — and every action becomes a signed, replayable, audit-trail-ready event with zero infrastructure on your side.
 
 ```python
-from tokendna_sdk import identified, tool, configure
-
-configure(
-    api_base="https://api.tokendna.io",
-    api_key=os.environ["TOKENDNA_API_KEY"],
-    tenant_id="acme-prod",
-)
+from tokendna_sdk import identified, tool
 
 @identified("research-bot", scope=["docs:read", "summarize"])
 class ResearchAgent:
     @tool("fetch_doc", target="document")
-    def fetch_doc(self, url: str) -> str:
-        ...
+    def fetch_doc(self, url: str) -> str: ...
 
     @tool("summarize")
-    def summarize(self, text: str) -> str:
-        ...
+    def summarize(self, text: str) -> str: ...
 ```
 
-That's it. Every method call now ships a UIS (Universal Identity Signal) event under `research-bot`'s identity, with the call recorded as a hop in a workflow trace. No HTTP setup, no schemas to maintain, no middleware to write.
+That's it. No HTTP setup, no schemas, no middleware to write. Every method call ships a signed UIS event under `research-bot`'s identity and lands as a hop in a workflow trace.
 
 ## Why?
 
-Your agents are calling tools, escalating privileges, and pivoting through your infrastructure. **You can't audit what you can't identify.** Every other observability tool treats agents as anonymous workers. TokenDNA gives them names, scopes, and cryptographic provenance.
+Your agents are calling tools, escalating privileges, and pivoting through your infrastructure. **You can't audit what you can't identify.** Most observability tools treat agents as anonymous workers. TokenDNA gives them names, scopes, and cryptographic provenance.
 
-After 100 lines of Python, your agents have:
+After a couple of decorators, your agents have:
 
 - **Provable identity** — every action signed under the agent's declared identity and scope
 - **Workflow attestation** — multi-hop chains (Agent A → tool → Agent B) recorded as signed DAGs you can replay
 - **Delegation receipts** — cryptographic proof that authority flowed from a human to the agent through every intermediate
-- **Drift detection** — alerts when an agent's behavior diverges from its baseline
+- **Behavioral baselines** — alerts when an agent's behavior diverges from its norm
 - **Compliance posture** — signed evidence packs for SOC 2 / ISO 42001 / NIST AI RMF / EU AI Act
 
 ## Install
 
 ```bash
+# Core (zero runtime deps)
 pip install tokendna-sdk
+
+# With native framework middleware
+pip install "tokendna-sdk[langchain]"
+pip install "tokendna-sdk[crewai]"
+pip install "tokendna-sdk[autogen]"
+pip install "tokendna-sdk[mcp]"
+pip install "tokendna-sdk[all]"
 ```
 
-Zero runtime dependencies (stdlib `urllib` only). Python 3.9+.
+Python 3.9+. The core uses only the stdlib (`urllib`); framework adapters are opt-in extras.
 
-## Configure
+## Two ways to use it
 
-Three ways, in priority order. Last one wins.
+### 1. Classic — decorators (works with anything)
+
+```python
+from tokendna_sdk import identified, tool
+
+@identified("research-bot", scope=["docs:read"])
+class ResearchAgent:
+    @tool("fetch_doc")
+    def fetch_doc(self, url): ...
+```
+
+### 2. Native framework middleware (LangChain shown — same idea for CrewAI / AutoGen)
+
+```python
+# pip install "tokendna-sdk[langchain]"
+from tokendna_sdk.integrations.langchain import TokenDNAMiddleware
+
+agent = create_react_agent(
+    model="gpt-4o",
+    tools=[search_web, send_email],
+    middleware=[TokenDNAMiddleware(agent_id="research-bot",
+                                    scope=["web:read", "email:send"])],
+)
+```
+
+The middleware adapter implements the LangChain v0.3 `wrap_model_call` / `wrap_tool_call` / `after_agent` hooks so you get attestation, behavioral scoring, and workflow traces without changing your agent code.
+
+> **Sprint 2** ships native `TokenDNAMiddleware`, `TokenDNACrewCallback`, and `TokenDNAAutoGenMiddleware`. **Sprint 3** ships the `TokenDNAMCPProxy` MCP interceptor. The decorator wedge above works today.
+
+## Local mode (no server required)
+
+If you don't set `TOKENDNA_URL`, the SDK runs in **local mode**: signed JSONL events are appended to `~/.tokendna/events.jsonl` with a host-local HMAC key. Useful for trying it out, for tests, and for air-gapped environments.
+
+```python
+from tokendna_sdk import make_client
+
+client = make_client()       # auto-picks remote if TOKENDNA_URL set, else local
+print(client.health())       # {'status': 'ok', 'mode': 'local', ...}
+client.normalize({"event_id": "demo-1", "agent_id": "research-bot"})
+```
+
+Inspect the trail:
+
+```bash
+tail -1 ~/.tokendna/events.jsonl | python -m json.tool
+```
+
+## Configure (remote mode)
+
+Two ways. Code takes precedence over env.
 
 ### Environment
 
 ```bash
-export TOKENDNA_API_BASE="https://api.tokendna.io"
+export TOKENDNA_URL="https://api.tokendna.io"
 export TOKENDNA_API_KEY="..."
 export TOKENDNA_TENANT_ID="..."
 ```
+
+(The legacy `TOKENDNA_API_BASE` still works.)
 
 ### Code
 
@@ -64,7 +120,7 @@ export TOKENDNA_TENANT_ID="..."
 from tokendna_sdk import configure
 
 configure(
-    api_base="https://api.tokendna.io",
+    url="https://api.tokendna.io",
     api_key="...",
     tenant_id="...",
     timeout_seconds=5.0,
@@ -72,99 +128,89 @@ configure(
 )
 ```
 
-### Disabled mode
+### Disabled
 
 ```python
-configure(enabled=False)  # decorators become no-ops; useful in tests / CI
+configure(enabled=False)   # decorators / middleware become no-ops — useful in CI
 ```
 
-## The decorators
+## The high-level client
+
+```python
+from tokendna_sdk import make_client
+
+client = make_client()
+
+# Health check
+client.health()
+# Best-effort event stream (buffered, batched)
+client.normalize({"event_id": "...", "agent_id": "...", ...})
+# Synchronous policy check — raises TokenDNAVerificationError on deny
+verdict = client.verify("research-bot", "send_email", target="bob@example.com")
+# Issue an attestation receipt for a completed workflow
+att = client.attest("research-bot", hops=[{"actor": "...", "action": "..."}])
+```
+
+## The decorators (classic surface — still supported)
 
 ### `@identified(agent_id, scope=..., description=..., delegation_receipt_id=...)`
 
 Class decorator. Stamps `__tokendna_meta__` on the class with the declared identity. Non-invasive — does not modify methods, `__init__`, or attribute lookup.
 
-```python
-@identified("query-planner", scope=["sql:read"], delegation_receipt_id="rcpt:abc123")
-class QueryPlanner:
-    ...
-```
-
-`delegation_receipt_id` is optional but recommended in production: pass the ID of the receipt that delegates authority from a human to this agent, and every event will reference it. The receipt's chain becomes the agent's authorization audit trail.
-
 ### `@tool(name=None, target=None, capture_args=False)`
 
-Method decorator. On every call:
+Method decorator. Per call: push a hop onto the per-thread workflow trace, ship a UIS event, then call the wrapped method.
 
-1. Pushes a hop `{actor, action, target, receipt_id, metadata}` onto the per-thread workflow trace.
-2. Best-effort emits a UIS-shaped event to `/api/uis/normalize`.
-3. Calls the wrapped method and returns its value (or re-raises its exception).
-
-**Cannot fail your program.** Network failures buffer locally; transport errors get retried by `client.flush()`. The SDK never swallows exceptions from the wrapped method, but it never raises its own either.
-
-`capture_args=False` by default — opt in only for debugging non-sensitive code, since it serializes argument values into the event.
+**Cannot fail your program.** Network failures buffer locally; transport errors retry on `client.flush()`. `capture_args=False` by default — opt in only for non-sensitive code; argument values land in the event when on.
 
 ### `get_agent_metadata()`
 
-Read the current thread's accumulated workflow trace. Use it to register a workflow at the end of a multi-step task:
-
-```python
-result = agent.run_research("topic X")
-trace = get_agent_metadata()  # {"hops": [...]}
-
-# Register the canonical chain — replay against it later
-import requests
-requests.post(
-    "https://api.tokendna.io/api/workflow/register",
-    json={"name": "research-flow", "hops": trace["hops"]},
-    headers={"X-API-Key": os.environ["TOKENDNA_API_KEY"]},
-)
-```
+Read the current thread's accumulated workflow trace.
 
 ## Offline-safe by design
 
-The SDK never blocks your code on TokenDNA availability. If the API is unreachable, events buffer (memory by default; disk if `offline_buffer_path` is set). Call `client.flush()` to drain when connectivity returns.
+The SDK never blocks your code on TokenDNA availability. If the API is unreachable, events buffer (memory; disk if `offline_buffer_path` is set). Call `client.flush()` to drain when connectivity returns.
 
-```python
-from tokendna_sdk import Client, configure
-
-configure(api_base="https://api.tokendna.io", api_key="...",
-          offline_buffer_path="/var/run/tokendna/buffer.jsonl")
-
-client = Client()
-print(client.flush())   # {"sent": 47, "buffered": 0}
-```
-
-This is the wedge: **you can adopt the SDK before you trust the platform**, because adoption costs you nothing on the bad days.
+This is the wedge: **you can adopt the SDK before you trust the platform**, because adoption costs nothing on the bad days.
 
 ## CLI
 
 ```bash
-$ tokendna --help
-$ tokendna config show                         # active config (key redacted)
-$ tokendna policy plan ./policy_bundle.json    # dry-run a policy bundle
-$ tokendna policy apply <bundle_id>            # activate a bundle
-$ tokendna replay <decision_id>                # replay a recorded decision
+tokendna --help
+tokendna config show                # active config (key redacted)
+tokendna policy plan ./bundle.json
+tokendna policy apply <bundle_id>
+tokendna replay <decision_id>
 ```
+
+Sprint 3 adds: `tokendna verify`, `tokendna demo`, `tokendna status`, `tokendna baseline show <agent_id>`.
 
 ## Examples
 
-See `examples/` in the repo:
+The [examples/](https://github.com/Bobcatsfan33/TokenDNA/tree/main/examples) directory in the repo:
 
-- `examples/langchain_research_agent/` — full LangChain integration with attested tool calls
+- `examples/langchain_research_agent/` — LangChain agent with attested tool calls
+- `examples/quickstart/` — Sprint 3 quickstart demos (LangChain / CrewAI / MCP / local mode)
 
 ## What's the catch?
 
-There is none for the SDK itself — it's Apache 2.0, zero deps, works against any TokenDNA tenant or in offline-only mode. The catch is that the *value* of the events you ship lives on the platform: trust graph, blast radius, intent correlation, the network flywheel. The SDK is the on-ramp; the platform is where your agents become provably trustworthy.
+None for the SDK itself — Apache 2.0, zero runtime deps, works against any TokenDNA tenant or in offline-only mode. The *value* of the events you ship lives on the platform: trust graph, blast radius scoring, intent correlation, the network flywheel. The SDK is the on-ramp; the platform is where your agents become provably trustworthy.
 
 ## Status
 
-Alpha. The decorator surface is stable; the optional features (delegation receipt embedding, workflow auto-registration) may evolve. Pin the version while we're pre-1.0.
+**Beta** (v0.2.x). The core surface — `@identified` / `@tool`, `TokenDNAClient`, `TokenDNALocalClient`, `make_client` — is stable. Framework middleware adapters land in v0.2.x as they're released. Pin the version while we're pre-1.0.
 
 ## License
 
-Apache 2.0.
+Apache 2.0. See [LICENSE](https://github.com/Bobcatsfan33/TokenDNA/blob/main/LICENSE).
+
+## Links
+
+- [Documentation](https://github.com/Bobcatsfan33/TokenDNA/tree/main/tokendna_sdk)
+- [Changelog](https://github.com/Bobcatsfan33/TokenDNA/blob/main/CHANGELOG.md)
+- [Issues](https://github.com/Bobcatsfan33/TokenDNA/issues)
+- [Security Policy](https://github.com/Bobcatsfan33/TokenDNA/security/policy)
 
 ---
 
-🌱 [TokenDNA](https://github.com/Bobcatsfan33/TokenDNA) — runtime risk engine for AI agents.
+[TokenDNA](https://github.com/Bobcatsfan33/TokenDNA) — runtime identity & risk engine for AI agents.
