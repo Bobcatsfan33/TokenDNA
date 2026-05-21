@@ -7,7 +7,8 @@ This checklist captures minimum controls before promoting to production.
 Run:
 
 ```bash
-python3 scripts/preflight_prod.py
+python3 scripts/preflight_prod.py --environment production
+python3 scripts/postgres_smoke.py
 ```
 
 This validates critical environment variables and recommended settings:
@@ -16,11 +17,26 @@ This validates critical environment variables and recommended settings:
 - `TOKENDNA_ENV=production` (activates `modules/security/secret_gate.py`)
 - `DEV_MODE=false`
 - strong keys present (`ATTESTATION_CA_SECRET`, `AUDIT_HMAC_KEY`, `DNA_HMAC_KEY`)
+  and no production secret still contains `change-me`
 - module HMAC secrets present and not the published dev defaults
   (`TOKENDNA_DELEGATION_SECRET`, `TOKENDNA_WORKFLOW_SECRET`,
   `TOKENDNA_HONEYPOT_SECRET`, `TOKENDNA_POSTURE_SECRET`)
 - operator/runtime thresholds configured (`EDGE_DECISION_SLO_MS`, `RATE_LIMIT_PER_MINUTE`)
-- `DATA_BACKEND=postgres` and `DATABASE_URL` set — SQLite is dev-only.
+- `TOKENDNA_DB_BACKEND=postgres` and `TOKENDNA_PG_DSN` set — SQLite is dev-only.
+  `DATA_BACKEND` / `DATABASE_URL` are accepted compatibility aliases, but
+  the TokenDNA-specific names should be present in production manifests.
+- storage modules use the shared backend abstraction; any remaining direct
+  `sqlite3.connect` usage is reported as a production blocker.
+- the Postgres smoke test can create/query tenant API keys, usage metering,
+  UIS events, policy bundles, decision audits, and staged-rollout grants.
+
+For the Compose appliance pilot:
+
+```bash
+cp .env.production.example .env
+# Edit .env, replacing every change-me value.
+docker compose -f docker-compose.yml -f docker-compose.production.yml up -d postgres redis clickhouse
+```
 
 The FastAPI app calls `assert_production_secrets()` on startup. When
 `TOKENDNA_ENV=production`, missing/weak/dev-default secrets cause the
@@ -74,4 +90,3 @@ python3 scripts/compliance_scheduler.py --tenant-id <tenant-id> --frameworks dis
 ```
 
 Produces signed OSCAL/eMASS snapshots that can be ingested downstream.
-

@@ -52,6 +52,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from modules.storage import db_backend
+from modules.storage.pg_connection import open_adapted_db_conn
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -72,18 +73,15 @@ def _db_path() -> str:
     return os.getenv("DATA_DB_PATH", "/data/tokendna.db")
 
 
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+def _get_conn():
+    return open_adapted_db_conn(db_path=_db_path())
 
 
 def _pg_dsn() -> str:
     from modules.storage.pg_connection import normalize_dsn_for_psycopg
 
-    return normalize_dsn_for_psycopg(os.getenv("TOKENDNA_PG_DSN", ""))
+    dsn = db_backend.get_backend_config().postgres_dsn or ""
+    return normalize_dsn_for_psycopg(dsn)
 
 
 def _use_pg() -> bool:

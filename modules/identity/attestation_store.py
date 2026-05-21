@@ -30,7 +30,8 @@ def _db_path() -> str:
 def _pg_dsn() -> str:
     from modules.storage.pg_connection import normalize_dsn_for_psycopg
 
-    return normalize_dsn_for_psycopg(str(os.getenv("TOKENDNA_PG_DSN", "")).strip())
+    dsn = db_backend.get_backend_config().postgres_dsn or ""
+    return normalize_dsn_for_psycopg(dsn)
 
 
 def _encode_cursor(order_value: str, item_id: str) -> str:

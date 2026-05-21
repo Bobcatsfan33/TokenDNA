@@ -30,7 +30,6 @@ import hashlib
 import json
 import logging
 import os
-import sqlite3
 import threading
 import uuid
 from dataclasses import dataclass
@@ -38,7 +37,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from modules.product import threat_sharing
-from modules.storage import db_backend
+from modules.storage.ddl_runner import run_ddl
+from modules.storage.pg_connection import get_adapted_db_conn
 
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
@@ -65,18 +65,6 @@ BREADTH_SATURATION_TENANTS = int(os.getenv("FLYWHEEL_BREADTH_SAT", "20"))
 
 def _db_path() -> str:
     return os.getenv("DATA_DB_PATH", "/data/tokendna.db")
-
-
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
-def _use_pg() -> bool:
-    return db_backend.should_use_postgres()
 
 
 def _now() -> datetime:
@@ -136,18 +124,8 @@ CREATE TABLE IF NOT EXISTS tenant_subscription (
 
 
 def init_db() -> None:
-    if _use_pg():
-        return
     threat_sharing.init_db()  # ensure base tables exist
-    db_path = _db_path()
-    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
-    with _lock:
-        conn = _get_conn()
-        try:
-            conn.executescript(_SCHEMA)
-            conn.commit()
-        finally:
-            conn.close()
+    run_ddl(_SCHEMA, db_path=_db_path())
 
 
 # ── Data classes ──────────────────────────────────────────────────────────────
@@ -191,15 +169,12 @@ def record_network_hit(
     (network_playbook_id, tenant_hash, match_id). Returns the new hit row, or
     ``None`` if the hit was already recorded.
     """
-    if _use_pg():
-        return None
     industry = get_tenant_industry(tenant_id)
     th = _hash_tenant(tenant_id)
     now = _iso(_now())
     hit_id = f"nhit:{uuid.uuid4().hex[:24]}"
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             cur = conn.execute(
                 """
                 INSERT OR IGNORE INTO network_playbook_hits
@@ -209,7 +184,6 @@ def record_network_hit(
                 """,
                 (hit_id, network_playbook_id, th, match_id or "", industry, now),
             )
-            conn.commit()
             if cur.rowcount == 0:
                 return None
             return {
@@ -221,20 +195,15 @@ def record_network_hit(
                 "detected_at": now,
                 "confirmed": False,
             }
-        finally:
-            conn.close()
 
 
 def confirm_hit(hit_id: str, confirmed_by: str) -> bool:
     """Mark a hit as a confirmed-true-positive. Returns True iff a row was
     updated. Idempotent — second call on an already-confirmed hit returns
     False."""
-    if _use_pg():
-        return False
     now = _iso(_now())
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             cur = conn.execute(
                 """
                 UPDATE network_playbook_hits
@@ -243,10 +212,7 @@ def confirm_hit(hit_id: str, confirmed_by: str) -> bool:
                 """,
                 (now, confirmed_by, hit_id),
             )
-            conn.commit()
             return cur.rowcount > 0
-        finally:
-            conn.close()
 
 
 def get_hits(
@@ -254,11 +220,8 @@ def get_hits(
     confirmed_only: bool = False,
     limit: int = 200,
 ) -> list[NetworkHit]:
-    if _use_pg():
-        return []
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             sql = "SELECT * FROM network_playbook_hits WHERE network_playbook_id=?"
             params: list[Any] = [network_playbook_id]
             if confirmed_only:
@@ -280,8 +243,6 @@ def get_hits(
                 )
                 for r in rows
             ]
-        finally:
-            conn.close()
 
 
 # ── Catalog scoring ───────────────────────────────────────────────────────────
@@ -319,11 +280,8 @@ def score_network_playbook(network_playbook_id: str) -> PlaybookScore:
     Pure function of the hit table — re-derived on each call so the score
     always reflects current ground truth.
     """
-    if _use_pg():
-        return PlaybookScore(network_playbook_id, 0.0, 0, 0, 0, None, 0.0)
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             row = conn.execute(
                 """
                 SELECT
@@ -336,8 +294,6 @@ def score_network_playbook(network_playbook_id: str) -> PlaybookScore:
                 """,
                 (network_playbook_id,),
             ).fetchone()
-        finally:
-            conn.close()
 
     if not row or row["total"] == 0:
         return PlaybookScore(network_playbook_id, 0.0, 0, 0, 0, None, 1.0)
@@ -408,12 +364,9 @@ def set_tenant_industry(tenant_id: str, industry: str) -> dict[str, Any]:
     industry = (industry or "").strip().lower()
     if industry not in VALID_INDUSTRIES:
         raise ValueError(f"unknown_industry:{industry}")
-    if _use_pg():
-        return {"tenant_id": tenant_id, "industry": industry}
     now = _iso(_now())
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             conn.execute(
                 """
                 INSERT INTO tenant_industry (tenant_id, industry, updated_at)
@@ -424,25 +377,17 @@ def set_tenant_industry(tenant_id: str, industry: str) -> dict[str, Any]:
                 """,
                 (tenant_id, industry, now),
             )
-            conn.commit()
-        finally:
-            conn.close()
     return {"tenant_id": tenant_id, "industry": industry, "updated_at": now}
 
 
 def get_tenant_industry(tenant_id: str) -> str | None:
-    if _use_pg():
-        return None
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             row = conn.execute(
                 "SELECT industry FROM tenant_industry WHERE tenant_id=?",
                 (tenant_id,),
             ).fetchone()
             return row["industry"] if row else None
-        finally:
-            conn.close()
 
 
 # ── Industry digest ───────────────────────────────────────────────────────────
@@ -466,15 +411,11 @@ def get_industry_digest(
             "items": [],
             "message": "no_industry_tag",
         }
-    if _use_pg():
-        return {"tenant_id": tenant_id, "industry": industry, "items": []}
-
     since_dt = _now() - timedelta(days=max(1, int(days)))
     since = _iso(since_dt)
     own_hash = _hash_tenant(tenant_id)
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             rows = conn.execute(
                 """
                 SELECT
@@ -498,8 +439,6 @@ def get_industry_digest(
                 """,
                 (industry, since, own_hash, min(int(limit), 100)),
             ).fetchall()
-        finally:
-            conn.close()
     items = [
         {
             "network_playbook_id": r["network_playbook_id"],
@@ -528,15 +467,12 @@ def set_auto_subscribe(
     enabled: bool,
     min_confidence: float | None = None,
 ) -> dict[str, Any]:
-    if _use_pg():
-        return {"tenant_id": tenant_id, "auto_subscribe": enabled}
     if min_confidence is None:
         min_confidence = DEFAULT_AUTO_SUBSCRIBE_THRESHOLD
     min_confidence = max(0.0, min(1.0, float(min_confidence)))
     now = _iso(_now())
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             conn.execute(
                 """
                 INSERT INTO tenant_subscription
@@ -549,9 +485,6 @@ def set_auto_subscribe(
                 """,
                 (tenant_id, 1 if enabled else 0, min_confidence, now),
             )
-            conn.commit()
-        finally:
-            conn.close()
     return {
         "tenant_id": tenant_id,
         "auto_subscribe": bool(enabled),
@@ -561,21 +494,12 @@ def set_auto_subscribe(
 
 
 def get_subscription(tenant_id: str) -> dict[str, Any]:
-    if _use_pg():
-        return {
-            "tenant_id": tenant_id,
-            "auto_subscribe": False,
-            "min_confidence": DEFAULT_AUTO_SUBSCRIBE_THRESHOLD,
-        }
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             row = conn.execute(
                 "SELECT * FROM tenant_subscription WHERE tenant_id=?",
                 (tenant_id,),
             ).fetchone()
-        finally:
-            conn.close()
     if not row:
         return {
             "tenant_id": tenant_id,

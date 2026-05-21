@@ -49,6 +49,17 @@ def _serialize(event: NormalizedEvent) -> str:
     return json.dumps(d, separators=(",", ":"), sort_keys=True)
 
 
+def _deserialize(line: str) -> NormalizedEvent:
+    """Decode one JSONL buffer line back into a NormalizedEvent."""
+    raw = json.loads(line)
+    data = dict(raw)
+    if isinstance(data.get("timestamp"), str):
+        data["timestamp"] = datetime.fromisoformat(data["timestamp"])
+    if isinstance(data.get("received_at"), str):
+        data["received_at"] = datetime.fromisoformat(data["received_at"])
+    return NormalizedEvent(**data)
+
+
 class LocalBuffer:
     """Append-only on-disk overflow buffer for the cloud transport."""
 

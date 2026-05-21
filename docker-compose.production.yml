@@ -5,7 +5,9 @@
 #
 # This overlay:
 #   1. Adds a Postgres service (production-required).
-#   2. Sets DATABASE_URL and DATA_BACKEND=postgres on the api container.
+#   2. Sets TOKENDNA_PG_DSN and TOKENDNA_DB_BACKEND=postgres on the api
+#      container. DATABASE_URL / DATA_BACKEND are also set as compatibility
+#      aliases for tooling that expects conventional names.
 #   3. Wires TOKENDNA_ENV=production so modules/security/secret_gate.py
 #      enforces real HMAC secrets at startup.
 #   4. Requires every TOKENDNA_*_SECRET env var to be supplied via .env or
@@ -18,6 +20,8 @@ services:
   tokendna:
     environment:
       - TOKENDNA_ENV=production
+      - TOKENDNA_DB_BACKEND=postgres
+      - TOKENDNA_PG_DSN=postgresql://tokendna:${POSTGRES_PASSWORD}@postgres:5432/tokendna
       - DATA_BACKEND=postgres
       - DATABASE_URL=postgresql://tokendna:${POSTGRES_PASSWORD}@postgres:5432/tokendna
       # The four production HMAC secrets — these MUST come from the host

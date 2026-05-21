@@ -1,18 +1,18 @@
 """
-TokenDNA — Tenant store
-SQLite in dev/single-node; swap DATA_DB_URL to postgres://... for production.
-Uses raw sqlite3 (no ORM dependency) for portability.
+TokenDNA — Tenant store.
+Uses the shared storage backend so dev can run on SQLite and production can
+run on PostgreSQL without module-local database drivers.
 """
 from __future__ import annotations
 
 import logging
 import os
-import sqlite3
 import threading
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
+from modules.storage.pg_connection import AdaptedCursor, get_db_conn
 from .models import ApiKey, Plan, Tenant
 
 logger = logging.getLogger(__name__)
@@ -20,32 +20,14 @@ logger = logging.getLogger(__name__)
 def _db_path() -> str:
     return os.getenv("DATA_DB_PATH", "/data/tokendna.db")
 
-# SQLite isn't safe for concurrent writes across processes; in production
-# point DATA_DB_URL at PostgreSQL and swap the driver below.
 _lock = threading.Lock()
-
-
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
 
 
 @contextmanager
 def _cursor():
     with _lock:
-        conn = _get_conn()
-        try:
-            cur = conn.cursor()
-            yield cur
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        with get_db_conn(db_path=_db_path()) as conn:
+            yield AdaptedCursor(conn.cursor())
 
 
 # ── Schema ────────────────────────────────────────────────────────────────────
@@ -202,7 +184,7 @@ def revoke_api_key(key_id: str, tenant_id: str) -> None:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _row_to_tenant(row: sqlite3.Row) -> Tenant:
+def _row_to_tenant(row: Any) -> Tenant:
     return Tenant(
         id=row["id"], name=row["name"], plan=Plan(row["plan"]),
         is_active=bool(row["is_active"]), owner_email=row["owner_email"],

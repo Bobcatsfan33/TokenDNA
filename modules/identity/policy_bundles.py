@@ -7,7 +7,6 @@ from __future__ import annotations
 import base64
 import json
 import os
-import sqlite3
 import threading
 import uuid
 from contextlib import contextmanager
@@ -15,6 +14,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from modules.identity.edge_enforcement import evaluate_runtime_enforcement
+from modules.storage import db_backend
+from modules.storage.pg_connection import AdaptedCursor, get_db_conn
 
 _lock = threading.Lock()
 
@@ -47,27 +48,11 @@ def _decode_cursor(cursor: str | None) -> tuple[str, str] | None:
     return created_at, bundle_id
 
 
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
 @contextmanager
 def _cursor():
     with _lock:
-        conn = _get_conn()
-        try:
-            cur = conn.cursor()
-            yield cur
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        with get_db_conn(db_path=_db_path()) as conn:
+            yield AdaptedCursor(conn.cursor())
 
 
 def init_db() -> None:
@@ -148,6 +133,9 @@ def init_db() -> None:
             "ALTER TABLE policy_bundles ADD COLUMN rollback_guard_seconds INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE policy_bundles ADD COLUMN governance_json TEXT NOT NULL DEFAULT '{}'",
         ):
+            if db_backend.should_use_postgres():
+                cur.execute(ddl.replace("ADD COLUMN ", "ADD COLUMN IF NOT EXISTS ", 1))
+                continue
             try:
                 cur.execute(ddl)
             except Exception:
@@ -480,7 +468,7 @@ def list_approvals(
     return rows[: min(max(limit, 1), 200)]
 
 
-def _active_bundle_guard(cur: sqlite3.Cursor, tenant_id: str, bundle_name: str, now: datetime) -> tuple[bool, str | None]:
+def _active_bundle_guard(cur: Any, tenant_id: str, bundle_name: str, now: datetime) -> tuple[bool, str | None]:
     active = cur.execute(
         """
         SELECT bundle_id, activated_at, rollback_guard_seconds

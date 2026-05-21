@@ -31,6 +31,30 @@ jobs:
       - name: Ruff lint
         run: ruff check . --output-format=github
 
+      - name: Storage backend guardrail
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import sys
+
+          allowed = {"modules/storage/pg_connection.py"}
+          offenders = []
+          for path in Path("modules").rglob("*.py"):
+              rel = path.as_posix()
+              if rel in allowed:
+                  continue
+              if "sqlite3.connect" in path.read_text(encoding="utf-8"):
+                  offenders.append(rel)
+
+          if offenders:
+              print("::error::Product modules must use modules.storage.pg_connection instead of sqlite3.connect directly.")
+              for rel in offenders:
+                  print(f"::error file={rel}::direct sqlite3.connect call bypasses the shared storage backend")
+              sys.exit(1)
+
+          print("All product modules use the shared storage backend.")
+          PY
+
       - name: Import verification
         run: |
           python -c "

@@ -28,6 +28,7 @@ from .transport import (
     PermanentTransportError,
     TransientTransportError,
 )
+from .transport.buffer import _deserialize
 
 logger = logging.getLogger("tokendna_collector")
 
@@ -100,6 +101,16 @@ class CollectorRunner:
     async def _transport_loop(self) -> None:
         backoff = 1.0
         while not self._stop.is_set():
+            try:
+                if await asyncio.to_thread(self._drain_buffer_once):
+                    backoff = 1.0
+                    continue
+            except TransientTransportError:
+                logger.warning("cloud transient failure while draining disk buffer")
+                await asyncio.sleep(min(backoff, 60.0) + random.random())
+                backoff = min(backoff * 2, 60.0)
+                continue
+
             batch = await self._collect_batch()
             if not batch:
                 await asyncio.sleep(0.5)
@@ -116,6 +127,40 @@ class CollectorRunner:
                 self._buffer.append_many(batch)
                 await asyncio.sleep(min(backoff, 60.0) + random.random())
                 backoff = min(backoff * 2, 60.0)
+
+    def _drain_buffer_once(self) -> bool:
+        """Ship one buffered batch before fresh events.
+
+        Returns True when any buffered lines were removed, whether accepted by
+        the cloud or permanently rejected. Transient failures keep the buffer
+        intact and are retried by the caller with backoff.
+        """
+        pending: list[NormalizedEvent] = []
+        last_line: str | None = None
+        for _spool, line in self._buffer.iter_pending():
+            try:
+                pending.append(_deserialize(line))
+            except Exception:
+                logger.exception("dropping corrupt buffered event line")
+                self._buffer.drain_through(line)
+                return True
+            last_line = line
+            if len(pending) >= self._batch_size:
+                break
+
+        if not pending:
+            return False
+
+        try:
+            self._cloud.send_batch(pending)
+            self._buffer.drain_through(last_line)
+            return True
+        except PermanentTransportError:
+            logger.exception("cloud permanently rejected buffered batch; dropping sent prefix")
+            self._buffer.drain_through(last_line)
+            return True
+        except TransientTransportError:
+            raise
 
     async def _collect_batch(self) -> list[NormalizedEvent]:
         batch: list[NormalizedEvent] = []

@@ -49,6 +49,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import re
 import sqlite3
 import threading
 from typing import Any, Generator
@@ -184,8 +185,8 @@ _PLACEHOLDER_CACHE: dict[str, str] = {}
 
 def adapt_sql(sql: str) -> str:
     """
-    Convert SQLite ``?`` positional placeholders to psycopg ``%s`` when
-    Postgres is active.  In SQLite mode this is a no-op.
+    Convert the narrow SQLite SQL subset used by TokenDNA modules to Postgres
+    when Postgres is active. In SQLite mode this is a no-op.
 
     The result is cached per unique SQL string to avoid repeated scanning.
     """
@@ -195,6 +196,25 @@ def adapt_sql(sql: str) -> str:
     if cached is not None:
         return cached
     result = sql.replace("?", "%s")
+    result = re.sub(
+        r"\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b",
+        "BIGSERIAL PRIMARY KEY",
+        result,
+        flags=re.IGNORECASE,
+    )
+    if re.search(r"\bINSERT\s+OR\s+IGNORE\s+INTO\b", result, flags=re.IGNORECASE):
+        result = re.sub(
+            r"\bINSERT\s+OR\s+IGNORE\s+INTO\b",
+            "INSERT INTO",
+            result,
+            flags=re.IGNORECASE,
+        )
+        if "ON CONFLICT" not in result.upper():
+            stripped = result.rstrip()
+            semicolon = stripped.endswith(";")
+            if semicolon:
+                stripped = stripped[:-1].rstrip()
+            result = stripped + " ON CONFLICT DO NOTHING" + (";" if semicolon else "")
     _PLACEHOLDER_CACHE[sql] = result
     return result
 
@@ -257,6 +277,90 @@ class AdaptedCursor:
     def __iter__(self) -> Any:
         return iter(self._cur)
 
+    def __enter__(self) -> "AdaptedCursor":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        close = getattr(self._cur, "close", None)
+        if callable(close):
+            close()
+
+
+class AdaptedConnection:
+    """Connection wrapper that applies ``adapt_sql`` to direct execute calls."""
+
+    def __init__(self, conn: Any) -> None:
+        self._conn = conn
+
+    def execute(self, sql: str, params: Any = ()) -> AdaptedCursor:
+        return AdaptedCursor(self._conn.execute(adapt_sql(sql), params))
+
+    def executemany(self, sql: str, seq: Any) -> AdaptedCursor:
+        return AdaptedCursor(self._conn.executemany(adapt_sql(sql), seq))
+
+    def cursor(self) -> AdaptedCursor:
+        return AdaptedCursor(self._conn.cursor())
+
+    def executescript(self, sql: str) -> None:
+        native = getattr(self._conn, "executescript", None)
+        if callable(native) and not should_use_postgres():
+            native(sql)
+            return
+        for stmt in _split_script(sql):
+            self.execute(stmt)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._conn, name)
+
+
+class ManagedAdaptedConnection(AdaptedConnection):
+    """Adapted connection that owns a ``get_db_conn`` context manager."""
+
+    def __init__(self, ctx: Any) -> None:
+        self._ctx = ctx
+        super().__init__(ctx.__enter__())
+
+    def close(self) -> None:
+        self._ctx.__exit__(None, None, None)
+
+    def __enter__(self) -> "ManagedAdaptedConnection":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        self._ctx.__exit__(exc_type, exc, tb)
+
+
+def _split_script(schema_sql: str) -> list[str]:
+    out: list[str] = []
+    buf: list[str] = []
+    in_string: str | None = None
+    for ch in schema_sql:
+        if in_string:
+            buf.append(ch)
+            if ch == in_string:
+                in_string = None
+            continue
+        if ch in ("'", '"'):
+            in_string = ch
+            buf.append(ch)
+            continue
+        if ch == ";":
+            stmt = "".join(buf).strip()
+            if stmt:
+                out.append(stmt)
+            buf = []
+            continue
+        buf.append(ch)
+    tail = "".join(buf).strip()
+    if tail:
+        out.append(tail)
+    return out
+
+
+def open_adapted_db_conn(db_path: str | None = None, *, autocommit: bool = False) -> ManagedAdaptedConnection:
+    """Open an adapted connection for legacy code that manually calls close()."""
+    return ManagedAdaptedConnection(get_db_conn(db_path=db_path, autocommit=autocommit))
+
 
 # ---------------------------------------------------------------------------
 # SQLite row factory shim  (matches sqlite3.Row dict-style access)
@@ -317,6 +421,17 @@ def get_db_conn(
         resolved_path = db_path or os.getenv("DATA_DB_PATH", "/data/tokendna.db")
         with _sqlite_conn_ctx(resolved_path, autocommit=autocommit) as conn:
             yield conn
+
+
+@contextlib.contextmanager
+def get_adapted_db_conn(
+    db_path: str | None = None,
+    *,
+    autocommit: bool = False,
+) -> Generator[AdaptedConnection, None, None]:
+    """Like ``get_db_conn`` but adapts direct ``conn.execute`` calls too."""
+    with get_db_conn(db_path=db_path, autocommit=autocommit) as conn:
+        yield AdaptedConnection(conn)
 
 
 @contextlib.contextmanager

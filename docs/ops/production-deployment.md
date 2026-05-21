@@ -13,6 +13,9 @@ _Sprint D-1 | Last updated: 2026-04-22_
 | Redis | 7+ | Rate limiting, caching, revocation |
 | ClickHouse | 23+ | Telemetry analytics |
 
+For the local-first enterprise topology and packaging split, see
+`docs/ops/local-control-plane.md`.
+
 ---
 
 ## Environment Variables
@@ -28,6 +31,10 @@ TOKENDNA_DB_BACKEND=postgres
 TOKENDNA_PG_DSN=postgresql://user:password@host:5432/tokendna
 TOKENDNA_PG_POOL_MIN=5
 TOKENDNA_PG_POOL_MAX=20
+
+# Compatibility aliases accepted by the runtime and useful for common tooling.
+DATA_BACKEND=postgres
+DATABASE_URL=${TOKENDNA_PG_DSN}
 
 # Redis
 REDIS_HOST=redis.internal

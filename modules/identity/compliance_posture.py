@@ -45,7 +45,6 @@ import hmac
 import json
 import logging
 import os
-import sqlite3
 import sys
 import threading
 import uuid
@@ -54,7 +53,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from modules.storage import db_backend
+from modules.storage.ddl_runner import run_ddl
+from modules.storage.pg_connection import get_adapted_db_conn
 
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
@@ -135,18 +135,6 @@ def _db_path() -> str:
     return os.getenv("DATA_DB_PATH", "/data/tokendna.db")
 
 
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
-def _use_pg() -> bool:
-    return db_backend.should_use_postgres()
-
-
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -192,17 +180,7 @@ CREATE INDEX IF NOT EXISTS idx_incident_tenant_agent
 
 
 def init_db() -> None:
-    if _use_pg():
-        return
-    db_path = _db_path()
-    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
-    with _lock:
-        conn = _get_conn()
-        try:
-            conn.executescript(_SCHEMA)
-            conn.commit()
-        finally:
-            conn.close()
+    run_ddl(_SCHEMA, db_path=_db_path())
 
 
 # ── Data classes ──────────────────────────────────────────────────────────────
@@ -334,10 +312,7 @@ def _collect_delegation_health(tenant_id: str) -> dict[str, Any]:
         from modules.identity import delegation_receipt  # noqa: PLC0415
         # Sample-based: walk a recent agent if we have one — for the MVP we
         # just count revoked receipts as a coarse health signal.
-        path = _db_path()
-        conn = sqlite3.connect(path)
-        conn.row_factory = sqlite3.Row
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             row = conn.execute(
                 """
                 SELECT
@@ -348,8 +323,6 @@ def _collect_delegation_health(tenant_id: str) -> dict[str, Any]:
                 """,
                 (tenant_id,),
             ).fetchone()
-        finally:
-            conn.close()
         revoked = int((row["revoked"] if row else 0) or 0)
         total = int((row["total"] if row else 0) or 0)
         # Mark as failing if any receipt is revoked but the rate is high.
@@ -484,29 +457,24 @@ def generate_posture_statement(
     digest = _digest(body)
     signature = _sign(statement_id, tenant_id, framework, digest, signed_at)
 
-    if not _use_pg():
-        with _lock:
-            conn = _get_conn()
-            try:
-                conn.execute(
-                    """
-                    INSERT INTO compliance_posture_statements
-                        (statement_id, tenant_id, framework, period_start,
-                         period_end, signed_at, overall_pass, controls_json,
-                         evidence_digest, signature)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        statement_id, tenant_id, framework,
-                        period_start, period_end, signed_at,
-                        1 if overall else 0,
-                        json.dumps(controls_evidence, sort_keys=True),
-                        digest, signature,
-                    ),
-                )
-                conn.commit()
-            finally:
-                conn.close()
+    with _lock:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
+            conn.execute(
+                """
+                INSERT INTO compliance_posture_statements
+                    (statement_id, tenant_id, framework, period_start,
+                     period_end, signed_at, overall_pass, controls_json,
+                     evidence_digest, signature)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    statement_id, tenant_id, framework,
+                    period_start, period_end, signed_at,
+                    1 if overall else 0,
+                    json.dumps(controls_evidence, sort_keys=True),
+                    digest, signature,
+                ),
+            )
 
     return PostureStatement(
         statement_id=statement_id,
@@ -525,17 +493,12 @@ def generate_posture_statement(
 def verify_posture_statement(statement_id: str, tenant_id: str | None = None) -> dict[str, Any]:
     """Recompute the digest + signature against the stored body. Returns
     {valid, reason}."""
-    if _use_pg():
-        return {"valid": False, "reason": "pg_not_implemented"}
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             row = conn.execute(
                 "SELECT * FROM compliance_posture_statements WHERE statement_id=?",
                 (statement_id,),
             ).fetchone()
-        finally:
-            conn.close()
     if not row:
         return {"valid": False, "reason": "not_found"}
     if tenant_id is not None and row["tenant_id"] != tenant_id:
@@ -563,17 +526,12 @@ def get_posture_statement(
     statement_id: str,
     tenant_id: str | None = None,
 ) -> dict[str, Any] | None:
-    if _use_pg():
-        return None
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             row = conn.execute(
                 "SELECT * FROM compliance_posture_statements WHERE statement_id=?",
                 (statement_id,),
             ).fetchone()
-        finally:
-            conn.close()
     if not row:
         return None
     if tenant_id is not None and row["tenant_id"] != tenant_id:
@@ -597,11 +555,8 @@ def list_posture_statements(
     framework: str | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    if _use_pg():
-        return []
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             sql = "SELECT * FROM compliance_posture_statements WHERE tenant_id=?"
             params: list[Any] = [tenant_id]
             if framework:
@@ -621,8 +576,6 @@ def list_posture_statements(
                 }
                 for r in rows
             ]
-        finally:
-            conn.close()
 
 
 # ── Incident reconstruction ───────────────────────────────────────────────────
@@ -698,27 +651,22 @@ def incident_reconstruction(
     generated_at = _iso(_now())
     signature = _sign(report_id, tenant_id, agent_id, content_digest, generated_at)
 
-    if not _use_pg():
-        with _lock:
-            conn = _get_conn()
-            try:
-                conn.execute(
-                    """
-                    INSERT INTO compliance_incident_reports
-                        (report_id, tenant_id, agent_id, period_start,
-                         period_end, generated_at, content_digest,
-                         report_json, signature)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        report_id, tenant_id, agent_id, since, until,
-                        generated_at, content_digest,
-                        json.dumps(body, sort_keys=True), signature,
-                    ),
-                )
-                conn.commit()
-            finally:
-                conn.close()
+    with _lock:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
+            conn.execute(
+                """
+                INSERT INTO compliance_incident_reports
+                    (report_id, tenant_id, agent_id, period_start,
+                     period_end, generated_at, content_digest,
+                     report_json, signature)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    report_id, tenant_id, agent_id, since, until,
+                    generated_at, content_digest,
+                    json.dumps(body, sort_keys=True), signature,
+                ),
+            )
 
     return {
         "report_id": report_id,
@@ -737,17 +685,12 @@ def get_incident_report(
     report_id: str,
     tenant_id: str | None = None,
 ) -> dict[str, Any] | None:
-    if _use_pg():
-        return None
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             row = conn.execute(
                 "SELECT * FROM compliance_incident_reports WHERE report_id=?",
                 (report_id,),
             ).fetchone()
-        finally:
-            conn.close()
     if not row:
         return None
     if tenant_id is not None and row["tenant_id"] != tenant_id:

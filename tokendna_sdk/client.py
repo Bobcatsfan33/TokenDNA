@@ -158,6 +158,21 @@ class Client:
             "User-Agent": "tokendna-sdk-python",
         }
 
+    @staticmethod
+    def _coerce_response(result: int | tuple[int, bytes] | tuple[int, str]) -> tuple[int, bytes]:
+        """Normalize legacy transport overrides into ``(status, body)``.
+
+        Older tests and SDK adopters override ``_do_post`` with a function
+        that returns only an integer status. Keep that extension point stable
+        while allowing newer callers to inspect response bodies.
+        """
+        if isinstance(result, tuple):
+            status, raw = result
+            if isinstance(raw, str):
+                raw = raw.encode("utf-8")
+            return int(status), raw
+        return int(result), b""
+
     def post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         if not self.config.enabled:
             return {"sent": False, "buffered": False, "reason": "sdk_disabled"}
@@ -167,7 +182,7 @@ class Client:
         url = f"{self.config.api_base}{path}"
         payload = json.dumps(body, separators=(",", ":")).encode("utf-8")
         try:
-            status, _data = self._do_post(url, payload, self._headers())
+            status, _data = self._coerce_response(self._do_post(url, payload, self._headers()))
             return {"sent": True, "buffered": False, "status": int(status)}
         except (urllib.error.URLError, OSError, TimeoutError) as exc:
             self.buffer.append(
@@ -183,7 +198,7 @@ class Client:
         url = f"{self.config.api_base}{path}"
         payload = json.dumps(body, separators=(",", ":")).encode("utf-8")
         try:
-            status, raw = self._do_post(url, payload, self._headers())
+            status, raw = self._coerce_response(self._do_post(url, payload, self._headers()))
         except (urllib.error.URLError, OSError, TimeoutError) as exc:
             raise TokenDNAUnavailableError(f"transport failed: {exc}") from exc
         if status >= 400:

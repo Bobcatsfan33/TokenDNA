@@ -25,12 +25,13 @@ import hashlib
 import json
 import math
 import os
-import sqlite3
 import threading
 from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
+
+from modules.storage.pg_connection import AdaptedCursor, get_db_conn
 
 _lock = threading.Lock()
 
@@ -46,20 +47,8 @@ def _db_path() -> str:
 @contextmanager
 def _cursor():
     with _lock:
-        db_path = _db_path()
-        os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
-        conn = sqlite3.connect(db_path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        try:
-            cur = conn.cursor()
-            yield cur
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        with get_db_conn(db_path=_db_path()) as conn:
+            yield AdaptedCursor(conn.cursor())
 
 
 # ── Store initialisation ──────────────────────────────────────────────────────
