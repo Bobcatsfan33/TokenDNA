@@ -36,6 +36,7 @@ For the Compose appliance pilot:
 cp .env.production.example .env
 # Edit .env, replacing every change-me value.
 docker compose -f docker-compose.yml -f docker-compose.production.yml up -d postgres redis clickhouse
+docker compose -f docker-compose.yml -f docker-compose.production.yml run --rm tokendna-deployment-gate
 ```
 
 The FastAPI app calls `assert_production_secrets()` on startup. When

@@ -71,6 +71,35 @@ services:
         max-size: "50m"
         max-file: "5"
 
+  tokendna-deployment-gate:
+    build: .
+    image: aegis-security/tokendna:latest
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:seccomp-profile.json
+    cap_drop:
+      - ALL
+    networks:
+      - aegis-internal
+    env_file:
+      - .env
+    environment:
+      - ENVIRONMENT=production
+      - TOKENDNA_ENV=production
+      - TOKENDNA_DB_BACKEND=postgres
+      - TOKENDNA_PG_DSN=postgresql://tokendna:${POSTGRES_PASSWORD}@postgres:5432/tokendna
+      - DATA_BACKEND=postgres
+      - DATABASE_URL=postgresql://tokendna:${POSTGRES_PASSWORD}@postgres:5432/tokendna
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["python"]
+    command: ["scripts/local_appliance_gate.py"]
+
 volumes:
   postgres-data:
     driver: local

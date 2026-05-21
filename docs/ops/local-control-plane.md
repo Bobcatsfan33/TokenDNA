@@ -72,18 +72,16 @@ cp .env.production.example .env
 # Edit .env, replacing every change-me value.
 
 docker compose -f docker-compose.yml -f docker-compose.production.yml up -d postgres redis clickhouse
-set -a
-. ./.env
-set +a
-python3 scripts/preflight_prod.py --environment production
-python3 scripts/postgres_smoke.py
+docker compose -f docker-compose.yml -f docker-compose.production.yml run --rm tokendna-deployment-gate
 
 docker compose -f docker-compose.yml -f docker-compose.production.yml up -d tokendna
 ```
 
-The control plane binds the API to `127.0.0.1:8000` by default. Put the
-customer's local reverse proxy, private load balancer, or service mesh in
-front of it for TLS, SSO, and network policy.
+The deployment gate runs inside the same Compose network as Postgres, so
+operators do not need `psql`, local Python Postgres drivers, or a host-exposed
+Postgres port. The control plane binds the API to `127.0.0.1:8000` by default.
+Put the customer's local reverse proxy, private load balancer, or service mesh
+in front of it for TLS, SSO, and network policy.
 
 ## Packaging Guidance
 
