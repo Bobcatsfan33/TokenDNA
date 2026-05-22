@@ -47,7 +47,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from modules.storage import db_backend
-from modules.storage.pg_connection import open_adapted_db_conn
+from modules.storage.pg_connection import ensure_sqlite_dir, open_adapted_db_conn
 
 
 # ── Constants ──────────────────────────────────────────────────────────────────
@@ -139,7 +139,7 @@ def init_db() -> None:
     if _use_pg():
         return  # PG path: stub
     db_path = _db_path()
-    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+    ensure_sqlite_dir(db_path)
     with _lock:
         conn = _get_conn()
         try:

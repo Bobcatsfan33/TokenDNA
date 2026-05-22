@@ -4,9 +4,11 @@ Copy .env.example to .env and fill in values before running.
 """
 
 import os
+import sys
 from dotenv import load_dotenv
 
-load_dotenv()
+if not any("pytest" in arg for arg in sys.argv):
+    load_dotenv()
 
 # ── Redis ─────────────────────────────────────────────────────────────────────
 REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")

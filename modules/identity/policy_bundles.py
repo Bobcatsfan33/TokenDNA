@@ -15,7 +15,7 @@ from typing import Any
 
 from modules.identity.edge_enforcement import evaluate_runtime_enforcement
 from modules.storage import db_backend
-from modules.storage.pg_connection import AdaptedCursor, get_db_conn
+from modules.storage.pg_connection import ensure_sqlite_dir, AdaptedCursor, get_db_conn
 
 _lock = threading.Lock()
 
@@ -57,7 +57,7 @@ def _cursor():
 
 def init_db() -> None:
     db_path = _db_path()
-    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+    ensure_sqlite_dir(db_path)
     with _cursor() as cur:
         cur.execute(
             """

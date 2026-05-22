@@ -52,7 +52,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from modules.storage import db_backend
-from modules.storage.pg_connection import open_adapted_db_conn
+from modules.storage.pg_connection import ensure_sqlite_dir, open_adapted_db_conn
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -78,7 +78,7 @@ def _get_conn():
 
 
 def _pg_dsn() -> str:
-    from modules.storage.pg_connection import normalize_dsn_for_psycopg
+    from modules.storage.pg_connection import ensure_sqlite_dir, normalize_dsn_for_psycopg
 
     dsn = db_backend.get_backend_config().postgres_dsn or ""
     return normalize_dsn_for_psycopg(dsn)
@@ -162,7 +162,7 @@ def init_db() -> None:
         _pg_init()
         return
     db_path = _db_path()
-    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+    ensure_sqlite_dir(db_path)
     with _lock:
         conn = _get_conn()
         try:

@@ -47,7 +47,7 @@ def _get_client():
 def _ensure_schema(client) -> None:
     client.command(f"""
         CREATE TABLE IF NOT EXISTS {CLICKHOUSE_DB}.sessions (
-            timestamp         DateTime64(3)  DEFAULT now64(),
+            timestamp         DateTime       DEFAULT now(),
             request_id        String,
             tenant_id         String,
             user_id           String,

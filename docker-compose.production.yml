@@ -13,8 +13,6 @@
 #   4. Requires every TOKENDNA_*_SECRET env var to be supplied via .env or
 #      a secrets backend — there is no fallback in this overlay.
 
-version: "3.9"
-
 services:
 
   tokendna:
@@ -40,10 +38,6 @@ services:
     restart: unless-stopped
     networks:
       - aegis-internal
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
     environment:
       POSTGRES_DB: tokendna
       POSTGRES_USER: tokendna
@@ -78,11 +72,6 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
-    security_opt:
-      - no-new-privileges:true
-      - seccomp:seccomp-profile.json
-    cap_drop:
-      - ALL
     networks:
       - aegis-internal
     env_file:

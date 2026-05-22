@@ -66,7 +66,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from modules.security.audit_log import AuditEventType, AuditOutcome, log_event
-from modules.storage.pg_connection import AdaptedCursor, get_db_conn
+from modules.storage.pg_connection import ensure_sqlite_dir, AdaptedCursor, get_db_conn
 
 log = logging.getLogger(__name__)
 
@@ -336,7 +336,7 @@ def _cursor():
 def init_db() -> None:
     """Create MCP inspector tables if they don't exist and seed built-in tools."""
     db_path = _db_path()
-    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+    ensure_sqlite_dir(db_path)
     with _cursor() as cur:
         cur.execute(
             """

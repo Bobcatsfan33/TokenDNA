@@ -264,9 +264,10 @@ async def _startup_checks() -> None:
     else:
         logger.info("FIPS 140-2 active ✓ (environment=%s)", il_env)
 
-    _data_dir = os.path.dirname(os.getenv("DATA_DB_PATH", "/data/tokendna.db"))
-    if _data_dir:
-        os.makedirs(_data_dir, exist_ok=True)
+    if not db_backend.should_use_postgres():
+        _data_dir = os.path.dirname(os.getenv("DATA_DB_PATH", "/data/tokendna.db"))
+        if _data_dir:
+            os.makedirs(_data_dir, exist_ok=True)
     tenant_store.init_db()
     attestation_store.init_db()
     uis_store.init_db()

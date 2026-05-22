@@ -14,7 +14,7 @@ from typing import Any
 
 from modules.product.feature_gates import PlanTier
 from modules.identity.trust_authority import build_signer_for_algorithm, build_signer_for_key
-from modules.storage.pg_connection import AdaptedCursor, get_db_conn
+from modules.storage.pg_connection import ensure_sqlite_dir, AdaptedCursor, get_db_conn
 
 _lock = threading.Lock()
 
@@ -80,7 +80,7 @@ def _limit_for(feature: str, plan: PlanTier | str) -> dict[str, Any]:
 
 def init_db() -> None:
     db_path = _db_path()
-    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+    ensure_sqlite_dir(db_path)
     with _cursor() as cur:
         cur.execute(
             """

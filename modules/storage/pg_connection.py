@@ -115,6 +115,16 @@ def normalize_dsn_for_psycopg(dsn: str) -> str:
 _normalize_dsn_for_psycopg = normalize_dsn_for_psycopg
 
 
+def ensure_sqlite_dir(db_path: str | None) -> None:
+    """Create the SQLite parent directory only when SQLite is active."""
+    if should_use_postgres():
+        return
+    resolved = db_path or os.getenv("DATA_DB_PATH", "/data/tokendna.db")
+    db_dir = os.path.dirname(resolved)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
+
 def _get_pg_pool() -> Any:
     """Return (or initialise) the global psycopg connection pool."""
     global _pg_pool
