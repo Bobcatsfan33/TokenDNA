@@ -8,9 +8,9 @@
 # behave as no-ops when missing (see modules/observability/* and the secret
 # gate).
 
-# ── Database migrations ──────────────────────────────────────────────────────
+# ── Database compatibility / legacy Alembic tooling ─────────────────────────
 alembic==1.13.3
-psycopg-pool==3.2.4
+psycopg-pool==3.3.1
 
 # ── Observability (opt-in via env vars) ──────────────────────────────────────
 prometheus-client==0.25.0

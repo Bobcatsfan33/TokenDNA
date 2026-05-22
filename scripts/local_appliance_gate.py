@@ -18,6 +18,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.postgres_smoke import main as run_postgres_smoke
 from scripts.preflight_prod import run_preflight
+from modules.storage.migrations import apply_migrations
 
 
 def main() -> None:
@@ -25,6 +26,8 @@ def main() -> None:
     print(json.dumps(report, sort_keys=True, indent=2))
     if not report.get("passed"):
         sys.exit(1)
+    migration_report = apply_migrations()
+    print(json.dumps({"storage_migrations": migration_report}, sort_keys=True, indent=2))
     run_postgres_smoke()
 
 

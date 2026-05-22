@@ -1089,8 +1089,10 @@ function SystemPage() {
   const [health] = useApi("/api/health", {}, 15000);
   const [op]     = useApi("/api/operator/status", {}, 30000);
 
-  const deps = (op.dependencies)||{};
-  const slo  = (op.slo)||{};
+  const deps       = (op.dependencies)||{};
+  const slo        = (op.slo)||{};
+  const migrations = (op.migrations)||{};
+  const pending    = migrations.pending || [];
 
   return h("div",null,
     h("div",{className:"section-head"},
@@ -1101,10 +1103,15 @@ function SystemPage() {
       h("div",{className:"card"},
         h("div",{className:"card-head"}, h("div",{className:"card-title"},"Dependencies")),
         h("div",{className:"card-body"},
-          Object.entries(deps).map(([name,info]) => h("div",{key:name,style:{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid var(--border)"}},
-            h("span",{style:{fontSize:13}},name),
-            h("span",{className:info?.ok ? "text-green":"text-red",style:{fontSize:12,fontWeight:600}},info?.ok ? "● online":"● offline"),
-          ))
+          Object.entries(deps).map(([name,info]) => {
+            const isStorage = name === "storage_backend";
+            const ok = isStorage ? !!info?.backend : !!info?.ok;
+            const label = isStorage ? (info?.backend || "unknown") : (ok ? "online" : "offline");
+            return h("div",{key:name,style:{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid var(--border)"}},
+              h("span",{style:{fontSize:13}},name),
+              h("span",{className:ok ? "text-green":"text-red",style:{fontSize:12,fontWeight:600}},ok ? "● "+label:"● "+label),
+            );
+          })
         ),
       ),
       h("div",{className:"card"},
@@ -1131,6 +1138,33 @@ function SystemPage() {
               h("span",{style:{color:"var(--muted)",fontSize:12,width:140}},"Version"),
               h("span",{className:"mono",style:{fontSize:12}},op.version||health.version||"—"),
             ),
+          ),
+        ),
+      ),
+      h("div",{className:"card"},
+        h("div",{className:"card-head"}, h("div",{className:"card-title"},"Storage Migrations")),
+        h("div",{className:"card-body"},
+          h("div",{style:{display:"flex",flexDirection:"column",gap:10}},
+            h("div",{className:"flex-row"},
+              h("span",{style:{color:"var(--muted)",fontSize:12,width:140}},"Status"),
+              h("span",{className:migrations.up_to_date ? "text-green":"text-red",style:{fontSize:12,fontWeight:700}},migrations.up_to_date ? "Current":"Action Required"),
+            ),
+            h("div",{className:"flex-row"},
+              h("span",{style:{color:"var(--muted)",fontSize:12,width:140}},"Head"),
+              h("span",{className:"mono",style:{fontSize:12}},migrations.head||"—"),
+            ),
+            h("div",{className:"flex-row"},
+              h("span",{style:{color:"var(--muted)",fontSize:12,width:140}},"Current"),
+              h("span",{className:"mono",style:{fontSize:12}},migrations.current||"—"),
+            ),
+            h("div",{className:"flex-row"},
+              h("span",{style:{color:"var(--muted)",fontSize:12,width:140}},"Pending"),
+              h("span",{className:pending.length ? "text-red":"text-green",style:{fontSize:12}},String(pending.length)),
+            ),
+            migrations.error ? h("div",{className:"text-red",style:{fontSize:12,lineHeight:1.5}},migrations.error) : null,
+            pending.length ? h("div",{className:"mono",style:{fontSize:11,lineHeight:1.6,color:"var(--muted)"}},
+              pending.map(item => item.revision).join(", ")
+            ) : null,
           ),
         ),
       ),
@@ -1865,7 +1899,7 @@ function App() {
       )),
       h("div", { style:{marginTop:"auto",padding:"16px 18px",borderTop:"1px solid var(--border)"} },
         h("div",{style:{fontSize:11,color:"var(--muted)"}}, "TokenDNA v3.0"),
-        h("div",{style:{fontSize:11,color:"var(--muted)",marginTop:2}}, "Sprint 2-3 — Demo Build"),
+        h("div",{style:{fontSize:11,color:"var(--muted)",marginTop:2}}, "Local Control Plane"),
       ),
     ),
 

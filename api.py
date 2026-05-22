@@ -264,53 +264,15 @@ async def _startup_checks() -> None:
     else:
         logger.info("FIPS 140-2 active ✓ (environment=%s)", il_env)
 
-    if not db_backend.should_use_postgres():
-        _data_dir = os.path.dirname(os.getenv("DATA_DB_PATH", "/data/tokendna.db"))
-        if _data_dir:
-            os.makedirs(_data_dir, exist_ok=True)
-    tenant_store.init_db()
-    attestation_store.init_db()
-    uis_store.init_db()
-    trust_graph.init_db()
-    intent_correlation.init_db()
-    policy_guard.init_db()
-    permission_drift.init_db()
-    agent_lifecycle.init_db()
-    mcp_inspector.init_db()
-    mcp_gateway.init_db()
-    agent_discovery.init_db()
-    enforcement_plane.init_db()
-    behavioral_dna.init_db()
-    compliance_engine.init_db()
-    cert_dashboard.init_db()
-    policy_advisor.init_db()
-    from modules.identity import passport as _passport_init  # noqa: PLC0415
-    from modules.identity import verifier_reputation as _reputation_init  # noqa: PLC0415
-    from modules.identity import proof_of_control as _poc_init  # noqa: PLC0415
-    _passport_init.init_passport_db()
-    _reputation_init.init_reputation_db()
-    _poc_init.init_db()
-    ct_log.init_db()
-    network_intel.init_db()
-    compliance.init_db()
-    policy_bundles.init_db()
-    decision_audit.init_db()
-    trust_federation.init_db()
-    feature_metering.init_db()
-    from modules.product import threat_sharing as _ts_init  # noqa: PLC0415
-    _ts_init.init_db()
-    from modules.product import threat_sharing_flywheel as _fw_init  # noqa: PLC0415
-    _fw_init.init_db()
-    from modules.product import staged_rollout as _sr_init  # noqa: PLC0415
-    _sr_init.init_db()
-    from modules.identity import delegation_receipt as _dr_init  # noqa: PLC0415
-    _dr_init.init_db()
-    from modules.identity import workflow_attestation as _wf_init  # noqa: PLC0415
-    _wf_init.init_db()
-    from modules.identity import compliance_posture as _cp_init  # noqa: PLC0415
-    _cp_init.init_db()
-    from modules.identity import honeypot_mesh as _hp_init  # noqa: PLC0415
-    _hp_init.init_db()
+    from modules.storage.migrations import apply_migrations
+
+    migration_report = apply_migrations()
+    logger.info(
+        "Storage migrations ready (head=%s current=%s applied_now=%s)",
+        migration_report.get("head"),
+        migration_report.get("current"),
+        migration_report.get("applied_now"),
+    )
 
     from modules.identity.cache_redis import is_available as redis_ok
     logger.info("Redis: %s", "connected" if redis_ok() else "UNREACHABLE")
@@ -667,6 +629,7 @@ async def api_operator_status(
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
 ):
     from modules.identity.cache_redis import is_available as redis_ok
+    from modules.storage.migrations import migration_status
 
     dependencies = {
         "sqlite": {"ok": True},
@@ -674,6 +637,14 @@ async def api_operator_status(
         "clickhouse": {"ok": clickhouse_client.is_available()},
         "storage_backend": db_backend.get_backend_config().__dict__,
     }
+    try:
+        migrations = migration_status()
+    except Exception as exc:  # noqa: BLE001
+        migrations = {
+            "up_to_date": False,
+            "pending": [],
+            "error": str(exc),
+        }
     slo = {
         "edge_decision_ms": {
             "target": float(os.getenv("EDGE_DECISION_SLO_MS", "5")),
@@ -691,6 +662,7 @@ async def api_operator_status(
         "tenant_id": tenant.tenant_id,
         "version": APP_VERSION,
         "dependencies": dependencies,
+        "migrations": migrations,
         "slo": slo,
         "posture": posture,
     }

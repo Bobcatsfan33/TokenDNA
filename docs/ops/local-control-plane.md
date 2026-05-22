@@ -46,6 +46,7 @@ set -a
 set +a
 
 python3 scripts/preflight_prod.py --environment production
+python3 scripts/migrate_storage.py
 python3 scripts/postgres_smoke.py
 ```
 
@@ -59,7 +60,8 @@ The preflight fails production when:
 - modules still bypass the shared storage backend with direct
   `sqlite3.connect` usage
 
-The Postgres smoke test exercises tenant creation/API-key lookup, metering,
+The migration command applies and records TokenDNA storage revisions in
+`tokendna_schema_migrations`. The Postgres smoke test exercises tenant creation/API-key lookup, metering,
 UIS event persistence, policy bundle storage, decision audit storage, and
 staged-rollout grants against the configured Postgres DSN.
 
@@ -95,6 +97,7 @@ Air-gapped customer bundles should include:
 - signed control-plane and collector images
 - SDK and collector wheels
 - SBOMs and provenance attestations
+- release manifest from `scripts/build_release_bundle.py`
 - policy-pack signatures
 - Helm chart and Docker Compose pilot manifest
 - upgrade, backup, restore, and preflight runbooks

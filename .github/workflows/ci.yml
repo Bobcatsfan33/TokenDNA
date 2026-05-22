@@ -347,6 +347,10 @@ jobs:
       - name: Preflight (production, strong secrets) — must pass
         env:
           DEV_MODE: "false"
+          TOKENDNA_ENV: production
+          TOKENDNA_DB_BACKEND: postgres
+          TOKENDNA_PG_DSN: postgresql://tokendna:tokendna@localhost:5432/tokendna
+          DATABASE_URL: postgresql://tokendna:tokendna@localhost:5432/tokendna
           OIDC_ISSUER: https://example.com
           OIDC_AUDIENCE: ci
           DNA_HMAC_KEY: ci-dna-hmac-key-32-bytes-aaaaaaaa
@@ -360,12 +364,11 @@ jobs:
           export TOKENDNA_POSTURE_SECRET=$(openssl rand -hex 32)
           python scripts/preflight_prod.py --environment production
 
-  # ── Postgres integration tests ────────────────────────────────────────────
-  # Spins up an ephemeral Postgres, applies the Alembic baseline, and runs
-  # the storage-layer test files against the real backend. Catches dialect
-  # divergence before the runtime path goes live in production.
+  # ── Live Postgres deployment gate ─────────────────────────────────────────
+  # Spins up an ephemeral Postgres and runs the same production preflight,
+  # TokenDNA storage migrations, and smoke path operators use locally.
   postgres-integration:
-    name: Postgres Integration
+    name: Live Postgres Deployment Gate
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -382,16 +385,23 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
+      DEV_MODE: "false"
+      TOKENDNA_ENV: production
+      ENVIRONMENT: production
       TOKENDNA_DB_BACKEND: postgres
-      # `+psycopg` selects the psycopg v3 driver (we ship psycopg 3 in
-      # requirements.txt, not the legacy psycopg2 default that SQLAlchemy
-      # otherwise tries to import). Direct psycopg consumers normalise
-      # this back to a plain libpq URI via normalize_dsn_for_psycopg().
-      TOKENDNA_PG_DSN: postgresql+psycopg://tokendna:tokendna@localhost:5432/tokendna
-      # Modules not yet ported to Postgres (attestation_store, agent_lifecycle,
-      # mcp_inspector) fall back to SQLite. The default /data path isn't
-      # writable on the runner, so point them at /tmp.
+      TOKENDNA_PG_DSN: postgresql://tokendna:tokendna@localhost:5432/tokendna
+      DATABASE_URL: postgresql://tokendna:tokendna@localhost:5432/tokendna
       DATA_DB_PATH: /tmp/tokendna-ci.db
+      OIDC_ISSUER: https://ci.example.com
+      OIDC_AUDIENCE: ci
+      DNA_HMAC_KEY: ci-dna-hmac-key-32-bytes-aaaaaaaa
+      AUDIT_HMAC_KEY: ci-audit-hmac-key-32-bytes-aaaaaa
+      ATTESTATION_CA_KEY_ID: ci-key
+      ATTESTATION_CA_SECRET: ci-attestation-secret-32-bytes-aa
+      TOKENDNA_DELEGATION_SECRET: ci-delegation-secret-32-bytes-aaaa
+      TOKENDNA_WORKFLOW_SECRET: ci-workflow-secret-32-bytes-aaaaaa
+      TOKENDNA_HONEYPOT_SECRET: ci-honeypot-secret-32-bytes-aaaaaa
+      TOKENDNA_POSTURE_SECRET: ci-posture-secret-32-bytes-aaaaaaa
     steps:
       - uses: actions/checkout@v6
 
@@ -402,21 +412,21 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt -r requirements-prod.txt pytest
+          pip install -r requirements.txt pytest
 
-      - name: Apply Alembic baseline
-        run: alembic upgrade head
+      - name: Run production preflight
+        run: python scripts/preflight_prod.py --environment production
 
-      - name: Run a representative slice against Postgres
+      - name: Apply TokenDNA storage migrations
+        run: python scripts/migrate_storage.py
+
+      - name: Run live Postgres smoke
+        run: python scripts/postgres_smoke.py
+
+      - name: Assert migrations remain current
         run: |
-          python -m pytest -q \
-            tests/test_passport.py \
-            tests/test_uis_store.py \
-            tests/test_trust_graph.py \
-            tests/test_delegation_receipt.py \
-            tests/test_workflow_attestation.py \
-            tests/test_policy_guard.py \
-            tests/test_permission_drift.py
+          python scripts/migrate_storage.py --status
+          python -m pytest -q tests/test_storage_migrations.py tests/test_preflight_prod.py tests/test_db_backend.py
 
   # ── Helm chart lint + template validation ─────────────────────────────────
   helm-lint:

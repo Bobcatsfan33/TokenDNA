@@ -63,9 +63,11 @@ def main() -> None:
     from modules.product import metering, staged_rollout
     from modules.identity import decision_audit, policy_bundles, uis_store
     from modules.product.feature_gates import PlanTier
+    from modules.storage.migrations import apply_migrations
 
-    for module in (tenant_store, metering, staged_rollout, decision_audit, policy_bundles, uis_store):
-        module.init_db()
+    migration_report = apply_migrations()
+    if not migration_report.get("up_to_date"):
+        raise RuntimeError(f"storage migrations are not up to date: {migration_report}")
 
     tenant, raw_key = tenant_store.create_tenant(
         name=f"Smoke Tenant {run_id}",
@@ -132,6 +134,7 @@ def main() -> None:
                 "policy_bundle_id": bundle["bundle_id"],
                 "audit_id": audit["audit_id"],
                 "rollout_grant_id": grant.grant_id,
+                "schema_head": migration_report.get("head"),
             },
             sort_keys=True,
         )

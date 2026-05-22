@@ -151,8 +151,8 @@ observability:
 # -----------------------------------------------------------------------------
 migrations:
   enabled: true
-  # Pre-upgrade hook job that runs `alembic upgrade head` before the
-  # rolling deployment proceeds. Skipped on first install.
+  # Pre-install/pre-upgrade hook job that runs TokenDNA storage migrations
+  # before the rolling deployment proceeds.
   image:
     repository: ghcr.io/bobcatsfan33/tokendna
     tag: ""

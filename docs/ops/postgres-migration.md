@@ -93,9 +93,8 @@ TOKENDNA_DB_BACKEND=postgres TOKENDNA_PG_DSN=$DSN \
   pytest tests/test_<module>.py -v
 ```
 
-Postgres test runs are not part of the default CI; they need a live
-Postgres and are gated behind a `pg_integration` mark in the next sprint
-(PR-D introduces the Alembic baseline that the integration tests use).
+Live Postgres now runs in CI through the deployment gate: production
+preflight, TokenDNA storage migrations, smoke test, and migration status.
 
 ## Known gaps
 
