@@ -10,7 +10,13 @@ from modules.storage import pg_connection
 
 
 def test_db_backend_defaults_to_sqlite_without_dual_write():
-    for key in ("TOKENDNA_DB_BACKEND", "TOKENDNA_DB_DUAL_WRITE", "TOKENDNA_PG_DSN"):
+    for key in (
+        "TOKENDNA_DB_BACKEND",
+        "DATA_BACKEND",
+        "TOKENDNA_DB_DUAL_WRITE",
+        "TOKENDNA_PG_DSN",
+        "DATABASE_URL",
+    ):
         os.environ.pop(key, None)
     cfg = db_backend.get_backend_config()
     assert cfg.backend == "sqlite"
@@ -30,12 +36,18 @@ def test_db_backend_postgres_and_dual_write_flags():
     assert cfg.postgres_dsn
     assert db_backend.should_use_postgres() is True
     assert db_backend.should_dual_write() is True
-    for key in ("TOKENDNA_DB_BACKEND", "TOKENDNA_DB_DUAL_WRITE", "TOKENDNA_PG_DSN"):
+    for key in ("TOKENDNA_DB_BACKEND", "TOKENDNA_DB_DUAL_WRITE", "TOKENDNA_PG_DSN", "DATABASE_URL"):
         os.environ.pop(key, None)
 
 
 def test_db_backend_accepts_production_aliases():
-    for key in ("TOKENDNA_DB_BACKEND", "TOKENDNA_PG_DSN", "TOKENDNA_DB_DUAL_WRITE"):
+    for key in (
+        "TOKENDNA_DB_BACKEND",
+        "DATA_BACKEND",
+        "TOKENDNA_PG_DSN",
+        "DATABASE_URL",
+        "TOKENDNA_DB_DUAL_WRITE",
+    ):
         os.environ.pop(key, None)
     os.environ["DATA_BACKEND"] = "postgres"
     os.environ["DATABASE_URL"] = "postgresql://localhost:5432/tokendna"
@@ -59,5 +71,5 @@ def test_adapt_sql_converts_sqlite_ddl_for_postgres():
     assert "AUTOINCREMENT" not in adapted
     assert "VALUES (%s)" in adapted
     assert "ON CONFLICT DO NOTHING" in adapted
-    for key in ("TOKENDNA_DB_BACKEND", "TOKENDNA_PG_DSN"):
+    for key in ("TOKENDNA_DB_BACKEND", "DATA_BACKEND", "TOKENDNA_PG_DSN", "DATABASE_URL"):
         os.environ.pop(key, None)
