@@ -27,6 +27,9 @@ This validates critical environment variables and recommended settings:
   the TokenDNA-specific names should be present in production manifests.
 - storage modules use the shared backend abstraction; any remaining direct
   `sqlite3.connect` usage is reported as a production blocker.
+- if SAML is enabled, HTTPS SP URLs, IdP SSO URL, IdP signing certificate,
+  RelayState host allowlist, disabled-by-default IdP-initiated login, and
+  the `python3-saml` runtime dependency are all present.
 - the Postgres smoke test can create/query tenant API keys, usage metering,
   UIS events, policy bundles, decision audits, and staged-rollout grants.
 
@@ -44,6 +47,23 @@ The FastAPI app calls `assert_production_secrets()` on startup. When
 process to refuse to start. See `docs/ops/backup-dr.md` for key
 provisioning and rotation, and `docs/ops/external-engagements.md` for
 the pen-test and compliance gates that follow this checklist.
+
+## 1.1) Customer IdP SAML/SCIM validation
+
+For Okta, Microsoft Entra ID, OneLogin, or another customer IdP, run the
+repeatable TokenDNA-side harness after preflight:
+
+```bash
+python3 scripts/idp_ga_validation.py \
+  --provider okta \
+  --base-url https://tokendna.customer.example \
+  --api-key "$TOKENDNA_TENANT_API_KEY"
+```
+
+Retain the JSON report with the customer evidence packet. The browser SAML
+login, replay rejection, signing certificate fingerprint, and IdP app
+configuration screenshots are still live-tenant evidence requirements.
+See `docs/ops/saml-scim.md`.
 
 ## 2) Key rotation drill (staging first)
 

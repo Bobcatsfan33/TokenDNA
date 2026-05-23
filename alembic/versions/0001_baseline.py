@@ -31,6 +31,8 @@ logger = logging.getLogger("alembic.tokendna.baseline")
 # Modules whose schema initializer is the source of truth for baseline DDL.
 _INIT_TARGETS: tuple[tuple[str, str], ...] = (
     ("modules.tenants.store", "init_db"),
+    ("modules.auth.saml", "init_db"),
+    ("modules.auth.scim", "init_db"),
     ("modules.identity.attestation_store", "init_db"),
     ("modules.identity.uis_store", "init_db"),
     ("modules.identity.trust_graph", "init_db"),
