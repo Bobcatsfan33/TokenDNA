@@ -2,7 +2,8 @@
 TokenDNA — Tenant authentication middleware
 Supports two auth paths (checked in order):
   1. X-API-Key header  → resolves tenant from key hash (primary, production)
-  2. Bearer JWT        → resolves tenant from JWT sub claim (dev / OIDC flow)
+  2. Bearer token      → resolves tenant API keys for SCIM-compatible IdPs,
+                         then JWT sub claims for OIDC flows
 DEV_MODE bypasses both and injects a synthetic dev tenant.
 """
 from __future__ import annotations
@@ -64,8 +65,21 @@ async def get_tenant(
             api_key_id=key_record.id,
         )
 
-    # ── Path 2: Bearer JWT (delegates to existing auth module) ────────────────
+    # ── Path 2: Bearer tenant API key or JWT ─────────────────────────────────
     if bearer:
+        # SCIM providers such as Okta send provisioning credentials as
+        # Authorization: Bearer <token>. Accept a tenant API key here before
+        # falling through to JWT verification for OIDC/API callers.
+        result = store.lookup_by_key(bearer.credentials)
+        if result:
+            key_record, tenant = result
+            return TenantContext(
+                tenant_id=tenant.id,
+                tenant_name=tenant.name,
+                plan=tenant.plan,
+                api_key_id=key_record.id,
+            )
+
         # Import here to avoid circular import
         from auth import _verify_jwt  # type: ignore
         try:

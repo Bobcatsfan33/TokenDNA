@@ -71,17 +71,21 @@ IdP-initiated SAML is disabled by default. Enable it only by explicit customer e
 
 ### Auth and tenant isolation
 
-SCIM calls use the normal TokenDNA tenant boundary:
+SCIM calls use the normal TokenDNA tenant boundary. For Okta, Microsoft
+Entra ID, OneLogin, and most SCIM clients, configure bearer-token auth with
+the tenant API key value:
 
 ```http
-Authorization: Bearer <tenant-jwt>
+Authorization: Bearer <tenant-api-key>
 ```
 
-or:
+Direct API callers can also send the same key with:
 
 ```http
 X-API-Key: <tenant-api-key>
 ```
+
+OIDC JWT bearer auth remains supported for non-SCIM API callers.
 
 Every SCIM read and write is tenant-scoped. Users and groups are stored durably in the shared backend, have weak ETag-style versions, and emit audit events for create, update, patch, and delete actions.
 
