@@ -128,7 +128,7 @@ The repeatable TokenDNA-side harness is:
 python3 scripts/idp_ga_validation.py \
   --provider okta \
   --base-url https://tokendna.customer.example \
-  --api-key "$TOKENDNA_TENANT_API_KEY"
+  --bearer "$TOKENDNA_TENANT_API_KEY"
 ```
 
 Use `--provider entra` or `--provider onelogin` for those customer tenants. The script verifies metadata, SP-initiated SAML request generation, SCIM discovery, user lifecycle, group lifecycle, and group membership patching, then emits a JSON evidence report. The browser login, assertion replay, and certificate-fingerprint evidence remain customer-tenant manual checks because they require the live IdP admin console and a real assigned user.
