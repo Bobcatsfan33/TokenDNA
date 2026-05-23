@@ -8,6 +8,7 @@ Exit code 0 means pass; non-zero means one or more required checks failed.
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import sys
@@ -52,6 +53,29 @@ def _scan_direct_sqlite_connects() -> list[str]:
             if "sqlite3.connect" in text:
                 offenders.append(rel)
     return sorted(offenders)
+
+
+def _python_module_available(module_name: str) -> bool:
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except (ImportError, AttributeError, ValueError):
+        return False
+
+
+def _is_https_url(value: str | None) -> bool:
+    text = str(value or "").strip().lower()
+    return text.startswith("https://")
+
+
+def _saml_configured() -> bool:
+    return any(
+        _has(os.getenv(key))
+        for key in (
+            "SAML_IDP_SSO_URL",
+            "SAML_IDP_X509_CERT",
+            "SAML_IDP_METADATA_URL",
+        )
+    )
 
 
 # Minimum acceptable length for any HMAC key in production.
@@ -127,6 +151,30 @@ def run_preflight(environment: str | None = None) -> dict[str, Any]:
         ),
     )
 
+    saml_enabled = _saml_configured()
+    if saml_enabled:
+        add_check("saml_sp_entity_id_https", _is_https_url(os.getenv("SAML_SP_ENTITY_ID")), "SAML_SP_ENTITY_ID must be an https URL")
+        add_check("saml_sp_acs_url_https", _is_https_url(os.getenv("SAML_SP_ACS_URL")), "SAML_SP_ACS_URL must be an https URL")
+        add_check("saml_idp_sso_url_set", _has(os.getenv("SAML_IDP_SSO_URL")), "SAML_IDP_SSO_URL required when SAML is enabled")
+        add_check("saml_idp_x509_cert_set", _has(os.getenv("SAML_IDP_X509_CERT")), "SAML_IDP_X509_CERT required when SAML is enabled")
+        add_check(
+            "saml_runtime_dependency_available",
+            _python_module_available("onelogin.saml2.response"),
+            "python3-saml runtime dependency required when SAML is enabled",
+        )
+        add_check(
+            "saml_relay_state_allowlist_set",
+            _has(os.getenv("SAML_ALLOWED_RELAY_STATE_HOSTS")),
+            "SAML_ALLOWED_RELAY_STATE_HOSTS required for enterprise return URL control",
+        )
+        add_check(
+            "saml_idp_initiated_disabled_by_default",
+            not _is_truthy(os.getenv("SAML_ALLOW_IDP_INITIATED")),
+            "IdP-initiated SAML must remain disabled unless explicitly approved per customer",
+        )
+    else:
+        add_check("saml_config_not_enabled", True, "SAML not configured in this environment")
+
     # Production HMAC secret gate — value-level checks, not just presence.
     for env_var in (
         "TOKENDNA_DELEGATION_SECRET",
@@ -189,6 +237,11 @@ def run_preflight(environment: str | None = None) -> dict[str, Any]:
             "postgres_dsn_present": bool(storage.postgres_dsn),
             "direct_sqlite_module_count": len(direct_sqlite),
             "direct_sqlite_modules": direct_sqlite,
+        },
+        "saml": {
+            "configured": saml_enabled,
+            "idp_initiated": _is_truthy(os.getenv("SAML_ALLOW_IDP_INITIATED")),
+            "relay_state_allowlist_present": _has(os.getenv("SAML_ALLOWED_RELAY_STATE_HOSTS")),
         },
         "checks": checks,
     }
