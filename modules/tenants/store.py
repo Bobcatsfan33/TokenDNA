@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from modules.storage.pg_connection import ensure_sqlite_dir, AdaptedCursor, get_db_conn
+from modules.storage.db_backend import should_use_postgres
 from .models import ApiKey, Plan, Tenant
 
 logger = logging.getLogger(__name__)
@@ -60,11 +61,14 @@ def init_db() -> None:
                 last_used    TEXT
             )
         """)
-        try:
-            cur.execute("ALTER TABLE api_keys ADD COLUMN role TEXT NOT NULL DEFAULT 'readonly'")
-        except Exception:
-            # Existing installations already have the column.
-            pass
+        if should_use_postgres():
+            cur.execute("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'readonly'")
+        else:
+            try:
+                cur.execute("ALTER TABLE api_keys ADD COLUMN role TEXT NOT NULL DEFAULT 'readonly'")
+            except Exception:
+                # Existing SQLite installations already have the column.
+                pass
         cur.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_tenant ON api_keys(tenant_id)")
     logger.info("Tenant DB initialised at %s", db_path)
