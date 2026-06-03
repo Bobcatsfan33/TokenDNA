@@ -110,6 +110,9 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      - name: Install test dependency
+        run: pip install pytest
+
       - name: Generate OSCAL and evidence artifacts
         run: |
           python scripts/generate_oscal.py
