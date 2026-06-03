@@ -129,6 +129,30 @@ def test_scim_create_group_and_lookup():
     assert fetched["id"] == g["id"]
 
 
+def test_scim_group_membership_syncs_roles(monkeypatch):
+    monkeypatch.setenv(
+        "TOKENDNA_SCIM_GROUP_ROLE_MAP_JSON",
+        '{"SOC Analysts":"analyst","Platform Owners":"owner"}',
+    )
+    user = scim.create_user(
+        {"schemas": [scim.SCHEMA_USER], "userName": "analyst@example.com"},
+        tenant_id="t-1",
+    )
+    group = scim.create_group(
+        {
+            "schemas": [scim.SCHEMA_GROUP],
+            "displayName": "SOC Analysts",
+            "members": [{"value": user["id"]}],
+        },
+        tenant_id="t-1",
+    )
+
+    assert scim.get_user(user["id"], tenant_id="t-1")["roles"] == ["analyst"]
+
+    scim.delete_group(group["id"], tenant_id="t-1")
+    assert scim.get_user(user["id"], tenant_id="t-1")["roles"] == []
+
+
 def test_scim_service_provider_config_advertises_bearer():
     cfg = scim.service_provider_config()
     schemes = cfg.get("authenticationSchemes", [])

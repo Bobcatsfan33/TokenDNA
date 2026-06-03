@@ -1,0 +1,180 @@
+{
+  "schema_version": "2026-06-02",
+  "baseline": "DoD ATO readiness starter mapping for NIST SP 800-53 Rev. 5 / FedRAMP High / DoD Cloud SRG",
+  "system": "TokenDNA AI Agent Identity Control Plane",
+  "boundary": "Customer-local control plane, collector, SDK integrations, data stores, audit export, and deployment automation",
+  "profiles": ["cmmc_l2", "fedramp_high", "dod_il4", "dod_il5", "dod_il6"],
+  "controls": [
+    {
+      "id": "AC-2",
+      "family": "Access Control",
+      "title": "Account Management",
+      "owner": "shared",
+      "implementation_status": "partial",
+      "implementation_summary": "Tenant API keys carry explicit roles; admin key lifecycle routes require tenant RBAC and emit audit events. Enterprise SSO and SCIM group-role mappings support customer-owned account sources.",
+      "evidence_files": ["modules/tenants/store.py", "modules/tenants/middleware.py", "api.py", "tests/test_tenant_auth_rbac.py", "modules/auth/scim.py"]
+    },
+    {
+      "id": "AC-3",
+      "family": "Access Control",
+      "title": "Access Enforcement",
+      "owner": "product",
+      "implementation_status": "implemented",
+      "implementation_summary": "FastAPI dependencies enforce role thresholds across protected routes using least-privilege TenantContext defaults.",
+      "evidence_files": ["modules/security/rbac.py", "modules/tenants/models.py", "api.py", "tests/test_tenant_auth_rbac.py"]
+    },
+    {
+      "id": "AC-6",
+      "family": "Access Control",
+      "title": "Least Privilege",
+      "owner": "product",
+      "implementation_status": "implemented",
+      "implementation_summary": "API keys default to readonly, legacy keys are migrated to readonly, and only owner actors can mint owner keys.",
+      "evidence_files": ["modules/tenants/models.py", "modules/tenants/store.py", "modules/storage/migrations.py", "tests/test_storage_migrations.py"]
+    },
+    {
+      "id": "AU-2",
+      "family": "Audit and Accountability",
+      "title": "Event Logging",
+      "owner": "product",
+      "implementation_status": "implemented",
+      "implementation_summary": "Security events are written to a hash-chained audit log and can be forwarded to SIEM webhooks.",
+      "evidence_files": ["modules/security/audit_log.py", "api.py", "tests/test_audit_log_emission.py"]
+    },
+    {
+      "id": "AU-9",
+      "family": "Audit and Accountability",
+      "title": "Protection of Audit Information",
+      "owner": "shared",
+      "implementation_status": "partial",
+      "implementation_summary": "Audit entries are HMAC protected and hash chained. WORM/object-lock retention is a deployment responsibility documented in backup and ATO runbooks.",
+      "evidence_files": ["modules/security/audit_log.py", "docs/ops/backup-dr.md", "docs/ato/system-security-plan.md"]
+    },
+    {
+      "id": "CA-7",
+      "family": "Assessment, Authorization, and Monitoring",
+      "title": "Continuous Monitoring",
+      "owner": "shared",
+      "implementation_status": "partial",
+      "implementation_summary": "CI, preflight, dependency audit, operator SLO, and evidence collection scripts produce repeatable monitoring artifacts for assessor review.",
+      "evidence_files": [".github/workflows/ci.yml", "scripts/preflight_prod.py", "scripts/collect_ato_evidence.py", "scripts/stig_evidence.py"]
+    },
+    {
+      "id": "CM-2",
+      "family": "Configuration Management",
+      "title": "Baseline Configuration",
+      "owner": "shared",
+      "implementation_status": "partial",
+      "implementation_summary": "Helm values, production env templates, release manifests, and preflight profiles define the deployable baseline. Customer-owned infrastructure baselines must be inherited or attached in eMASS.",
+      "evidence_files": ["deploy/helm/tokendna/values.yaml", ".env.production.example", "scripts/build_release_bundle.py", "scripts/preflight_prod.py"]
+    },
+    {
+      "id": "CM-6",
+      "family": "Configuration Management",
+      "title": "Configuration Settings",
+      "owner": "shared",
+      "implementation_status": "partial",
+      "implementation_summary": "DoD compliance profiles enforce FIPS, managed secrets, SIEM audit forwarding, mTLS material, TLS data service settings, and KMS/HSM signing posture.",
+      "evidence_files": ["scripts/preflight_prod.py", "tests/test_preflight_prod.py", "docs/ato/system-security-plan.md"]
+    },
+    {
+      "id": "IA-2",
+      "family": "Identification and Authentication",
+      "title": "Identification and Authentication",
+      "owner": "shared",
+      "implementation_status": "partial",
+      "implementation_summary": "OIDC/JWT verification supports explicit tenant claims and role/group mapping. CAC/PIV integration is inherited through the customer IdP or gateway.",
+      "evidence_files": ["auth.py", "modules/tenants/middleware.py", "docs/ops/saml-scim.md"]
+    },
+    {
+      "id": "IA-5",
+      "family": "Identification and Authentication",
+      "title": "Authenticator Management",
+      "owner": "shared",
+      "implementation_status": "partial",
+      "implementation_summary": "API keys are generated with high entropy, stored only as hashes, and revoked through audited admin flows. Secret storage and rotation are enforced by profile gates and customer KMS/Vault operations.",
+      "evidence_files": ["modules/tenants/models.py", "modules/tenants/store.py", "modules/security/secrets.py", "docs/operations/RUNBOOK.md"]
+    },
+    {
+      "id": "IR-4",
+      "family": "Incident Response",
+      "title": "Incident Handling",
+      "owner": "shared",
+      "implementation_status": "partial",
+      "implementation_summary": "Incident playbooks cover breach response, key rotation, mass revocation, forensic audit verification, and customer communications.",
+      "evidence_files": ["docs/operations/INCIDENT_RESPONSE.md", "scripts/rotation_drill.py", "modules/security/audit_log.py"]
+    },
+    {
+      "id": "RA-5",
+      "family": "Risk Assessment",
+      "title": "Vulnerability Monitoring and Scanning",
+      "owner": "shared",
+      "implementation_status": "implemented",
+      "implementation_summary": "CI runs lint, full tests, pip-audit, CodeQL, TruffleHog, Trivy, Helm validation, and production preflight.",
+      "evidence_files": [".github/workflows/ci.yml", "requirements.txt", "docs/ops/release-packaging.md"]
+    },
+    {
+      "id": "SA-10",
+      "family": "System and Services Acquisition",
+      "title": "Developer Configuration Management",
+      "owner": "product",
+      "implementation_status": "implemented",
+      "implementation_summary": "Release manifests, CI gates, dependency pins, and signed-artifact placeholders support controlled software release evidence.",
+      "evidence_files": ["scripts/build_release_bundle.py", ".github/workflows/ci.yml", "docs/ops/release-packaging.md"]
+    },
+    {
+      "id": "SC-8",
+      "family": "System and Communications Protection",
+      "title": "Transmission Confidentiality and Integrity",
+      "owner": "shared",
+      "implementation_status": "partial",
+      "implementation_summary": "mTLS and TLS settings are documented and profile-gated for internal API, Redis, ClickHouse, and Postgres connectivity.",
+      "evidence_files": ["modules/security/mtls.py", "docs/operations/MTLS.md", "scripts/preflight_prod.py"]
+    },
+    {
+      "id": "SC-12",
+      "family": "System and Communications Protection",
+      "title": "Cryptographic Key Establishment and Management",
+      "owner": "shared",
+      "implementation_status": "partial",
+      "implementation_summary": "Trust authority supports software, AWS KMS, CloudHSM, and HSM backends; DoD profiles require managed KMS/HSM style backends.",
+      "evidence_files": ["modules/identity/trust_authority.py", "modules/security/secrets.py", "scripts/preflight_prod.py"]
+    },
+    {
+      "id": "SC-13",
+      "family": "System and Communications Protection",
+      "title": "Cryptographic Protection",
+      "owner": "shared",
+      "implementation_status": "partial",
+      "implementation_summary": "FIPS mode is required by DoD/FedRAMP High profiles and TLS helpers restrict protocol posture; validation depends on the deployed cryptographic module and enclave.",
+      "evidence_files": ["modules/security/fips.py", "scripts/preflight_prod.py", ".env.production.example"]
+    },
+    {
+      "id": "SC-28",
+      "family": "System and Communications Protection",
+      "title": "Protection of Information at Rest",
+      "owner": "customer",
+      "implementation_status": "inherited",
+      "implementation_summary": "Database, object storage, backup, and volume encryption are inherited from the customer-managed IL4/IL5/IL6 enclave or approved cloud service offering.",
+      "evidence_files": ["docs/ops/backup-dr.md", "docs/ato/customer-responsibility-matrix.md"]
+    },
+    {
+      "id": "SI-2",
+      "family": "System and Information Integrity",
+      "title": "Flaw Remediation",
+      "owner": "product",
+      "implementation_status": "implemented",
+      "implementation_summary": "Pinned dependencies, blocking vulnerability audit, CodeQL, Trivy, and release gates support repeatable flaw remediation evidence.",
+      "evidence_files": ["requirements.txt", ".github/workflows/ci.yml", "docs/ops/release-packaging.md"]
+    },
+    {
+      "id": "SR-4",
+      "family": "Supply Chain Risk Management",
+      "title": "Provenance",
+      "owner": "product",
+      "implementation_status": "partial",
+      "implementation_summary": "Release manifests record git SHA, artifacts, runbooks, and required gates. SBOM and signed provenance artifacts are expected release inputs.",
+      "evidence_files": ["scripts/build_release_bundle.py", "docs/ops/release-packaging.md"]
+    }
+  ]
+}

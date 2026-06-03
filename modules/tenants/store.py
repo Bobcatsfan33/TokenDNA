@@ -56,9 +56,15 @@ def init_db() -> None:
                 key_hash     TEXT NOT NULL UNIQUE,
                 is_active    INTEGER NOT NULL DEFAULT 1,
                 created_at   TEXT NOT NULL,
+                role         TEXT NOT NULL DEFAULT 'readonly',
                 last_used    TEXT
             )
         """)
+        try:
+            cur.execute("ALTER TABLE api_keys ADD COLUMN role TEXT NOT NULL DEFAULT 'readonly'")
+        except Exception:
+            # Existing installations already have the column.
+            pass
         cur.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_tenant ON api_keys(tenant_id)")
     logger.info("Tenant DB initialised at %s", db_path)
@@ -69,20 +75,23 @@ def init_db() -> None:
 def create_tenant(name: str, owner_email: str = "", plan: Plan = Plan.FREE) -> tuple[Tenant, str]:
     """Create a tenant and its first API key. Returns (tenant, raw_api_key)."""
     tenant = Tenant.new(name=name, owner_email=owner_email, plan=plan)
-    api_key_record, raw_key = ApiKey.generate(tenant.id, "default")
+    api_key_record, raw_key = ApiKey.generate(tenant.id, "default", role="owner")
 
     with _cursor() as cur:
         cur.execute(
-            "INSERT INTO tenants VALUES (?,?,?,?,?,?)",
+            "INSERT INTO tenants (id, name, plan, is_active, owner_email, created_at) VALUES (?,?,?,?,?,?)",
             (tenant.id, tenant.name, tenant.plan.value,
              int(tenant.is_active), tenant.owner_email,
              tenant.created_at.isoformat()),
         )
         cur.execute(
-            "INSERT INTO api_keys VALUES (?,?,?,?,?,?,?,?)",
+            """INSERT INTO api_keys
+               (id, tenant_id, name, key_prefix, key_hash, is_active, created_at, role, last_used)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
             (api_key_record.id, api_key_record.tenant_id, api_key_record.name,
              api_key_record.key_prefix, api_key_record.key_hash,
-             int(api_key_record.is_active), api_key_record.created_at.isoformat(), None),
+             int(api_key_record.is_active), api_key_record.created_at.isoformat(),
+             api_key_record.role, None),
         )
 
     logger.info("Created tenant %s (%s)", tenant.name, tenant.id)
@@ -108,15 +117,18 @@ def deactivate_tenant(tenant_id: str) -> None:
 
 # ── API Keys ──────────────────────────────────────────────────────────────────
 
-def create_api_key(tenant_id: str, name: str) -> tuple[ApiKey, str]:
+def create_api_key(tenant_id: str, name: str, *, role: str = "readonly") -> tuple[ApiKey, str]:
     """Rotate / add a new key for a tenant. Returns (record, raw_key)."""
-    record, raw_key = ApiKey.generate(tenant_id=tenant_id, name=name)
+    role = _normalize_role(role)
+    record, raw_key = ApiKey.generate(tenant_id=tenant_id, name=name, role=role)
     with _cursor() as cur:
         cur.execute(
-            "INSERT INTO api_keys VALUES (?,?,?,?,?,?,?,?)",
+            """INSERT INTO api_keys
+               (id, tenant_id, name, key_prefix, key_hash, is_active, created_at, role, last_used)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
             (record.id, record.tenant_id, record.name,
              record.key_prefix, record.key_hash,
-             int(record.is_active), record.created_at.isoformat(), None),
+             int(record.is_active), record.created_at.isoformat(), record.role, None),
         )
     return record, raw_key
 
@@ -146,6 +158,7 @@ def lookup_by_key(raw_key: str) -> Optional[tuple[ApiKey, Tenant]]:
         key_prefix=row["key_prefix"], key_hash=row["key_hash"],
         is_active=bool(row["is_active"]),
         created_at=datetime.fromisoformat(row["created_at"]),
+        role=_row_role(row),
         last_used=datetime.fromisoformat(row["last_used"]) if row["last_used"] else None,
     )
     tenant = Tenant(
@@ -168,6 +181,7 @@ def list_api_keys(tenant_id: str) -> list[ApiKey]:
             key_prefix=r["key_prefix"], key_hash=r["key_hash"],
             is_active=bool(r["is_active"]),
             created_at=datetime.fromisoformat(r["created_at"]),
+            role=_row_role(r),
             last_used=datetime.fromisoformat(r["last_used"]) if r["last_used"] else None,
         )
         for r in rows
@@ -190,3 +204,17 @@ def _row_to_tenant(row: Any) -> Tenant:
         is_active=bool(row["is_active"]), owner_email=row["owner_email"],
         created_at=datetime.fromisoformat(row["created_at"]),
     )
+
+
+def _normalize_role(role: str) -> str:
+    value = (role or "readonly").strip().lower()
+    if value not in {"readonly", "analyst", "admin", "owner"}:
+        raise ValueError(f"invalid api key role: {role!r}")
+    return value
+
+
+def _row_role(row: Any) -> str:
+    try:
+        return _normalize_role(row["role"])
+    except Exception:
+        return "readonly"

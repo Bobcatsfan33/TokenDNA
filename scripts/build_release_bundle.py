@@ -65,6 +65,9 @@ def build_manifest(image_tag: str, output: Path) -> dict[str, Any]:
         ROOT / "docs" / "ops" / "release-packaging.md",
         ROOT / "docs" / "ops" / "local-control-plane.md",
         ROOT / "docs" / "ops" / "backup-dr.md",
+        ROOT / "docs" / "ato" / "system-security-plan.md",
+        ROOT / "docs" / "ato" / "customer-responsibility-matrix.md",
+        ROOT / "docs" / "ato" / "continuous-monitoring-plan.md",
     ]
     missing = [path.relative_to(ROOT).as_posix() for path in required_docs if not path.exists()]
     if missing:
@@ -90,6 +93,9 @@ def build_manifest(image_tag: str, output: Path) -> dict[str, Any]:
         },
         "required_gates": [
             "python scripts/preflight_prod.py --environment production",
+            "python scripts/generate_oscal.py",
+            "python scripts/stig_evidence.py",
+            "python scripts/collect_ato_evidence.py --fail-on-missing",
             "python scripts/migrate_storage.py",
             "python scripts/postgres_smoke.py",
             "docker compose -f docker-compose.yml -f docker-compose.production.yml run --rm tokendna-deployment-gate",

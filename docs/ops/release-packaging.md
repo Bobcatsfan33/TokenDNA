@@ -37,7 +37,11 @@ Before signing a release, run:
 
 ```bash
 ruff check .
-python -m pytest
+pip-audit -r requirements.txt --no-deps --disable-pip
+python -m pytest -q --import-mode=importlib tests platform/tests collector/tests
+python scripts/generate_oscal.py
+python scripts/stig_evidence.py
+python scripts/collect_ato_evidence.py --fail-on-missing
 python scripts/build_release_bundle.py --image-tag tokendna/control-plane:<version>
 docker compose -f docker-compose.yml -f docker-compose.production.yml run --rm tokendna-deployment-gate
 ```

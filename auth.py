@@ -63,23 +63,13 @@ def _find_key(kid: str, allow_refresh: bool = True) -> Optional[dict]:
 
 # ── Token verification ────────────────────────────────────────────────────────
 
-def verify_token(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-) -> dict:
+def _verify_jwt(token: str) -> dict:
+    """Validate a raw JWT and return its decoded claims.
+
+    This is intentionally dependency-free so both the FastAPI
+    ``verify_token`` dependency and tenant middleware can use the same
+    verification path.
     """
-    FastAPI dependency. Validates a Bearer JWT and returns the decoded payload.
-
-    In DEV_MODE the token is not verified — a synthetic payload is returned.
-    """
-    if DEV_MODE:
-        logger.warning("DEV_MODE: JWT verification skipped.")
-        return {"sub": "dev-user", "jti": "dev-jti", "dev_mode": True}
-
-    if credentials is None:
-        raise HTTPException(status_code=401, detail="Authorization header required")
-
-    token = credentials.credentials
-
     try:
         header = jwt.get_unverified_header(token)
     except JWTError:
@@ -112,3 +102,21 @@ def verify_token(
         raise HTTPException(status_code=401, detail="Token has been revoked")
 
     return payload
+
+
+def verify_token(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> dict:
+    """
+    FastAPI dependency. Validates a Bearer JWT and returns the decoded payload.
+
+    In DEV_MODE the token is not verified — a synthetic payload is returned.
+    """
+    if DEV_MODE:
+        logger.warning("DEV_MODE: JWT verification skipped.")
+        return {"sub": "dev-user", "jti": "dev-jti", "dev_mode": True}
+
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="Authorization header required")
+
+    return _verify_jwt(credentials.credentials)

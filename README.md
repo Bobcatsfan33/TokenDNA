@@ -124,7 +124,7 @@ curl http://localhost:8000/
 For local development without an OIDC provider:
 ```bash
 DEV_MODE=true docker compose up -d
-# All JWT verification is bypassed; a synthetic dev-user payload is used
+# JWT verification is bypassed and a synthetic dev tenant is injected.
 ```
 
 ---
@@ -136,8 +136,16 @@ All settings are read from environment variables (see `.env.example`).
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DEV_MODE` | `false` | Disable JWT verification (dev only) |
+| `DEV_TENANT_ROLE` | `owner` | Synthetic tenant role used only when `DEV_MODE=true` |
+| `TOKENDNA_COMPLIANCE_PROFILE` | `commercial` | Deployment gate profile: `commercial`, `cmmc_l2`, `fedramp_high`, `dod_il4`, `dod_il5`, or `dod_il6` |
 | `OIDC_ISSUER` | — | OIDC provider base URL |
 | `OIDC_AUDIENCE` | — | Expected `aud` claim in JWTs |
+| `TOKENDNA_OIDC_TENANT_CLAIM` | `org_id,tenant_id,tid,organization` | JWT claim used to resolve the tenant |
+| `TOKENDNA_OIDC_ROLE_CLAIM` | `tokendna_role,role` | JWT claim used for direct TokenDNA role mapping |
+| `TOKENDNA_OIDC_GROUPS_CLAIM` | `roles,groups` | JWT claim used for group-based role mapping |
+| `TOKENDNA_OIDC_GROUP_ROLE_MAP_JSON` | — | JSON map from IdP groups to `owner`, `admin`, `analyst`, or `readonly` |
+| `TOKENDNA_OIDC_ALLOW_SUB_TENANT_FALLBACK` | `false` in production | Allow `sub`/`client_id` tenant fallback outside hardened production mode |
+| `TOKENDNA_SCIM_GROUP_ROLE_MAP_JSON` | — | JSON map from SCIM groups to TokenDNA roles |
 | `REDIS_HOST` | `redis` | Redis hostname |
 | `CLICKHOUSE_HOST` | `clickhouse` | ClickHouse hostname |
 | `GEOIP_PROVIDER` | `ip-api` | `ip-api` or `maxmind` |
@@ -158,6 +166,8 @@ All settings are read from environment variables (see `.env.example`).
 | `TOKENDNA_DB_BACKEND` | `sqlite` | Data backend selector: `sqlite` or `postgres` |
 | `TOKENDNA_PG_DSN` | — | PostgreSQL DSN used when backend is `postgres` |
 | `TOKENDNA_DB_DUAL_WRITE` | `false` | When true, SQLite writes are mirrored to Postgres for migration |
+| `AUDIT_BACKEND` | `file` | Comma-separated audit sinks: `file`, `redis`, `siem` |
+| `AUDIT_LOG_PATH` | `audit.jsonl` | Hash-chained audit log path when file audit is enabled |
 | `IMPOSSIBLE_TRAVEL_SPEED_KMH` | `900` | km/h threshold |
 | `BRANCHING_THRESHOLD` | `3` | Distinct devices before flagging |
 | `SIEM_WEBHOOK_URL` | — | HTTPS webhook for SIEM events |
@@ -172,7 +182,7 @@ All settings are read from environment variables (see `.env.example`).
 | `GET` | `/` | None | Health check |
 | `GET` | `/secure` | READONLY+ | Main integrity check — validate token DNA |
 | `GET` | `/profile/{uid}` | ANALYST+ | Inspect user behavioral profile |
-| `DELETE` | `/profile/{uid}` | ANALYST+ | Reset user profile baseline |
+| `DELETE` | `/profile/{uid}` | ADMIN+ | Reset user profile baseline |
 | `POST` | `/revoke` | ANALYST+ | Manually revoke token by `jti` |
 | `GET` | `/api/sessions` | ANALYST+ | Active session risk profiles |
 | `GET` | `/api/cloud-findings` | ANALYST+ | Cloud scan findings with severity summary |
