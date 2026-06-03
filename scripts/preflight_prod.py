@@ -21,6 +21,8 @@ if str(_ROOT) not in sys.path:
 
 
 PROD_ENVS = {"production", "il5", "il6"}
+KNOWN_COMPLIANCE_PROFILES = {"", "commercial", "cmmc_l2", "fedramp_high", "dod_il4", "dod_il5", "dod_il6"}
+DOD_HARDENED_PROFILES = {"fedramp_high", "dod_il4", "dod_il5", "dod_il6"}
 DIRECT_SQLITE_ALLOWED = {
     "modules/storage/pg_connection.py",
 }
@@ -81,12 +83,32 @@ def _is_strong_secret(env_var: str) -> tuple[bool, str]:
     return True, "ok"
 
 
+def _valid_json_object(env_var: str) -> tuple[bool, str]:
+    raw = os.getenv(env_var, "").strip()
+    if not raw:
+        return True, "not configured"
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return False, f"{env_var} is not valid JSON: {exc}"
+    if not isinstance(parsed, dict):
+        return False, f"{env_var} must be a JSON object"
+    return True, "ok"
+
+
 def run_preflight(environment: str | None = None) -> dict[str, Any]:
     env = (environment or os.getenv("ENVIRONMENT", "dev")).strip().lower()
+    compliance_profile = os.getenv("TOKENDNA_COMPLIANCE_PROFILE", "").strip().lower()
     checks: list[dict[str, Any]] = []
 
     def add_check(name: str, ok: bool, detail: str = "") -> None:
         checks.append({"name": name, "ok": bool(ok), "detail": detail})
+
+    add_check(
+        "compliance_profile_known",
+        compliance_profile in KNOWN_COMPLIANCE_PROFILES,
+        "TOKENDNA_COMPLIANCE_PROFILE must be one of: " + ", ".join(sorted(p for p in KNOWN_COMPLIANCE_PROFILES if p)),
+    )
 
     dev_mode = _is_truthy(os.getenv("DEV_MODE"))
     add_check("dev_mode_disabled", not dev_mode, "DEV_MODE must be false in production")
@@ -94,10 +116,32 @@ def run_preflight(environment: str | None = None) -> dict[str, Any]:
 
     add_check("oidc_issuer_set", _has(os.getenv("OIDC_ISSUER")), "OIDC_ISSUER required")
     add_check("oidc_audience_set", _has(os.getenv("OIDC_AUDIENCE")), "OIDC_AUDIENCE required")
+    tenant_claim = os.getenv("TOKENDNA_OIDC_TENANT_CLAIM", "").strip()
+    add_check(
+        "oidc_tenant_claim_set",
+        _has(tenant_claim),
+        "TOKENDNA_OIDC_TENANT_CLAIM required in production (for example: org_id)",
+    )
+    fallback_enabled = _is_truthy(os.getenv("TOKENDNA_OIDC_ALLOW_SUB_TENANT_FALLBACK"))
+    add_check(
+        "oidc_sub_tenant_fallback_disabled",
+        not fallback_enabled,
+        "Do not use sub/client_id as tenant id in production",
+    )
+    for env_var in ("TOKENDNA_OIDC_GROUP_ROLE_MAP_JSON", "TOKENDNA_SCIM_GROUP_ROLE_MAP_JSON"):
+        ok, detail = _valid_json_object(env_var)
+        add_check(env_var.lower() + "_valid", ok, detail)
     dna_ok, dna_detail = _is_strong_secret("DNA_HMAC_KEY")
     audit_ok, audit_detail = _is_strong_secret("AUDIT_HMAC_KEY")
     add_check("dna_hmac_key_strong", dna_ok, dna_detail)
     add_check("audit_hmac_key_strong", audit_ok, audit_detail)
+    audit_backend = os.getenv("AUDIT_BACKEND") or os.getenv("AUDIT_BACKENDS") or ""
+    audit_log_path = os.getenv("AUDIT_LOG_PATH") or os.getenv("AUDIT_LOG_FILE") or ""
+    add_check("audit_backend_set", _has(audit_backend), "AUDIT_BACKEND required")
+    add_check("audit_log_path_set", _has(audit_log_path), "AUDIT_LOG_PATH required for file audit backend")
+    audit_backends = {p.strip().lower() for p in audit_backend.split(",") if p.strip()}
+    if "siem" in audit_backends:
+        add_check("audit_siem_webhook_set", _has(os.getenv("SIEM_WEBHOOK_URL")), "SIEM_WEBHOOK_URL required when AUDIT_BACKEND includes siem")
 
     from modules.storage.db_backend import get_backend_config
 
@@ -167,8 +211,56 @@ def run_preflight(environment: str | None = None) -> dict[str, Any]:
             ca_secret_detail,
         )
 
-    if env in {"il5", "il6"}:
-        add_check("fips_enabled", _is_truthy(os.getenv("USE_FIPS")), "USE_FIPS=true required for IL5/IL6")
+    hardened_env = env in {"il5", "il6"} or compliance_profile in DOD_HARDENED_PROFILES
+    if hardened_env:
+        fips_enabled = _is_truthy(os.getenv("USE_FIPS")) or _is_truthy(os.getenv("FIPS_MODE"))
+        add_check("fips_enabled", fips_enabled, "USE_FIPS=true or FIPS_MODE=true required for DoD/FedRAMP High profiles")
+
+    if compliance_profile in DOD_HARDENED_PROFILES or compliance_profile == "cmmc_l2":
+        secrets_backend = (os.getenv("SECRETS_BACKEND", "env") or "env").strip().lower()
+        add_check(
+            "managed_secrets_backend",
+            secrets_backend in {"aws_sm", "vault"},
+            "SECRETS_BACKEND must be aws_sm or vault for DoD/CMMC profiles",
+        )
+        add_check(
+            "audit_siem_enabled",
+            "siem" in audit_backends,
+            "AUDIT_BACKEND must include siem for DoD/CMMC profiles",
+        )
+        if "siem" not in audit_backends:
+            add_check(
+                "audit_siem_webhook_set",
+                _has(os.getenv("SIEM_WEBHOOK_URL")),
+                "SIEM_WEBHOOK_URL required for DoD/CMMC profiles",
+            )
+
+    if compliance_profile in DOD_HARDENED_PROFILES:
+        add_check(
+            "attestation_managed_key_backend",
+            ca_backend in {"aws_kms", "cloudhsm", "hsm"},
+            "ATTESTATION_KEY_BACKEND must be aws_kms, cloudhsm, or hsm for DoD/FedRAMP High profiles",
+        )
+        add_check(
+            "mtls_api_material_set",
+            all(_has(os.getenv(name)) for name in ("TLS_CA_CERT_PATH", "TLS_API_CERT_PATH", "TLS_API_KEY_PATH")),
+            "TLS_CA_CERT_PATH, TLS_API_CERT_PATH, and TLS_API_KEY_PATH required for DoD/FedRAMP High profiles",
+        )
+        add_check(
+            "redis_tls_enabled",
+            _is_truthy(os.getenv("REDIS_TLS")),
+            "REDIS_TLS=true required for DoD/FedRAMP High profiles",
+        )
+        add_check(
+            "clickhouse_tls_enabled",
+            _is_truthy(os.getenv("CLICKHOUSE_SECURE")),
+            "CLICKHOUSE_SECURE=true required for DoD/FedRAMP High profiles",
+        )
+        add_check(
+            "postgres_mtls_material_set",
+            all(_has(os.getenv(name)) for name in ("TLS_POSTGRES_CERT_PATH", "TLS_POSTGRES_KEY_PATH")),
+            "TLS_POSTGRES_CERT_PATH and TLS_POSTGRES_KEY_PATH required for DoD/FedRAMP High profiles",
+        )
 
     required_for_env = env in PROD_ENVS
     if not required_for_env:
@@ -180,6 +272,7 @@ def run_preflight(environment: str | None = None) -> dict[str, Any]:
     failed = [c for c in checks if not c["ok"]]
     return {
         "environment": env,
+        "compliance_profile": compliance_profile or "commercial",
         "required_for_env": required_for_env,
         "passed": required_for_env is False or not failed,
         "failed_count": len(failed),

@@ -25,6 +25,8 @@ and rotated by the operator via the admin console.
 from __future__ import annotations
 
 import logging
+import json
+import os
 import threading
 import uuid
 from dataclasses import dataclass, field, asdict
@@ -37,6 +39,7 @@ SCHEMA_USER = "urn:ietf:params:scim:schemas:core:2.0:User"
 SCHEMA_GROUP = "urn:ietf:params:scim:schemas:core:2.0:Group"
 SCHEMA_LIST_RESPONSE = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
 SCHEMA_ERROR = "urn:ietf:params:scim:api:messages:2.0:Error"
+ROLE_VALUES = {"owner", "admin", "analyst", "readonly"}
 
 _lock = threading.Lock()
 # Stage 1 in-memory store. Stage 2 will route through tenant_store.
@@ -93,6 +96,9 @@ def create_user(payload: dict[str, Any], *, tenant_id: str) -> dict[str, Any]:
         "active": bool(payload.get("active", True)),
         "name": payload.get("name") or {},
         "emails": payload.get("emails") or [],
+        "roles": _normalize_roles(payload.get("roles") or []),
+        "_manual_roles": _normalize_roles(payload.get("roles") or []),
+        "_scim_group_roles": [],
         "tenant_id": tenant_id,
         "meta": _meta(user_id, "User"),
     }
@@ -125,6 +131,9 @@ def replace_user(user_id: str, payload: dict[str, Any], *, tenant_id: str) -> di
             record["name"] = payload["name"]
         if "emails" in payload:
             record["emails"] = payload["emails"]
+        if "roles" in payload:
+            record["_manual_roles"] = _normalize_roles(payload["roles"])
+            _sync_user_roles(record)
         record["meta"]["lastModified"] = _now_iso()
         return _strip_internal(record)
 
@@ -187,7 +196,10 @@ def patch_user(user_id: str, patch_doc: dict[str, Any], *, tenant_id: str) -> di
 
         for protected in ("id", "schemas", "meta"):
             patched.pop(protected, None)
+        if "roles" in patched:
+            patched["_manual_roles"] = _normalize_roles(patched["roles"])
         record.update(patched)
+        _sync_user_roles(record)
         record["meta"]["lastModified"] = _now_iso()
         return _strip_internal(record)
 
@@ -212,6 +224,7 @@ def create_group(payload: dict[str, Any], *, tenant_id: str) -> dict[str, Any]:
     }
     with _lock:
         _groups[group_id] = record
+        _sync_roles_locked(tenant_id)
     return _strip_internal(record)
 
 
@@ -262,6 +275,7 @@ def patch_group(group_id: str, patch_doc: dict[str, Any], *, tenant_id: str) -> 
             patched.pop(protected, None)
         record.update(patched)
         record["meta"]["lastModified"] = _now_iso()
+        _sync_roles_locked(tenant_id)
         return _strip_internal(record)
 
 
@@ -271,6 +285,7 @@ def delete_group(group_id: str, *, tenant_id: str) -> None:
         if not record or record["tenant_id"] != tenant_id:
             raise SCIMError(404, "Group not found")
         del _groups[group_id]
+        _sync_roles_locked(tenant_id)
 
 
 # ── Discovery endpoints ───────────────────────────────────────────────────────
@@ -328,6 +343,8 @@ def resource_types() -> dict[str, Any]:
 def _strip_internal(record: dict[str, Any]) -> dict[str, Any]:
     out = dict(record)
     out.pop("tenant_id", None)
+    out.pop("_manual_roles", None)
+    out.pop("_scim_group_roles", None)
     return out
 
 
@@ -336,3 +353,79 @@ def _reset_for_tests() -> None:
     with _lock:
         _users.clear()
         _groups.clear()
+
+
+def _normalize_roles(raw: Any) -> list[str]:
+    if isinstance(raw, str):
+        candidates = [raw]
+    else:
+        try:
+            candidates = list(raw)
+        except TypeError:
+            candidates = []
+    out: list[str] = []
+    for item in candidates:
+        value = str(item.get("value") if isinstance(item, dict) else item).strip().lower()
+        if value in ROLE_VALUES and value not in out:
+            out.append(value)
+    return out
+
+
+def _group_role_map() -> dict[str, str]:
+    raw = os.getenv("TOKENDNA_SCIM_GROUP_ROLE_MAP_JSON", "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("invalid TOKENDNA_SCIM_GROUP_ROLE_MAP_JSON ignored")
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    out: dict[str, str] = {}
+    for group_name, role in parsed.items():
+        normalized_role = str(role).strip().lower()
+        if normalized_role in ROLE_VALUES:
+            out[str(group_name).strip().lower()] = normalized_role
+    return out
+
+
+def _member_ids(group: dict[str, Any]) -> set[str]:
+    ids: set[str] = set()
+    for member in group.get("members") or []:
+        if isinstance(member, dict):
+            value = member.get("value") or member.get("$ref") or member.get("id")
+        else:
+            value = member
+        if value:
+            ids.add(str(value))
+    return ids
+
+
+def _sync_roles_locked(tenant_id: str) -> None:
+    role_map = _group_role_map()
+    for user in _users.values():
+        if user.get("tenant_id") == tenant_id:
+            user["_scim_group_roles"] = []
+
+    for group in _groups.values():
+        if group.get("tenant_id") != tenant_id:
+            continue
+        role = role_map.get(str(group.get("displayName", "")).strip().lower())
+        if not role:
+            continue
+        for user_id in _member_ids(group):
+            user = _users.get(user_id)
+            if user and user.get("tenant_id") == tenant_id:
+                roles = user.setdefault("_scim_group_roles", [])
+                if role not in roles:
+                    roles.append(role)
+
+    for user in _users.values():
+        if user.get("tenant_id") == tenant_id:
+            _sync_user_roles(user)
+
+
+def _sync_user_roles(user: dict[str, Any]) -> None:
+    roles = sorted(set(user.get("_manual_roles") or []) | set(user.get("_scim_group_roles") or []))
+    user["roles"] = roles

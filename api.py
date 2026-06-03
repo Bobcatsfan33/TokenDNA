@@ -183,6 +183,10 @@ def _record_decision_audit(
         policy_bundle=policy_bundle,
     )
 
+
+def _tenant_subject(tenant: TenantContext) -> str:
+    return str(getattr(tenant, "owner_email", "") or tenant.api_key_id or tenant.tenant_id)
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     await _startup_checks()
@@ -2763,8 +2767,7 @@ async def secure(
 @app.get("/profile/{user_id}")
 async def get_profile(
     user_id: str,
-    _user: dict = Depends(verify_token),
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
 ):
     tr      = TenantRedis(get_redis(), tenant.tenant_id)
     profile = ml_model.get_profile(user_id, redis=tr)
@@ -2776,8 +2779,7 @@ async def get_profile(
 @app.delete("/profile/{user_id}")
 async def reset_profile(
     user_id: str,
-    _user: dict = Depends(verify_token),
-    tenant: TenantContext = Depends(get_tenant),
+    tenant: TenantContext = Depends(require_role(Role.ADMIN)),
 ):
     tr = TenantRedis(get_redis(), tenant.tenant_id)
     ml_model.reset_profile(user_id, redis=tr)
@@ -2789,7 +2791,6 @@ async def reset_profile(
 @app.post("/revoke")
 async def manual_revoke(
     body: dict,
-    _user: dict = Depends(verify_token),
     tenant: TenantContext = Depends(require_role(Role.ANALYST)),
 ):
     jti = body.get("jti")
@@ -2798,7 +2799,7 @@ async def manual_revoke(
     ttl = int(body.get("ttl_seconds", 3600))
     revoke_token(jti, ttl_seconds=ttl, tenant_id=tenant.tenant_id)
     log_event(AuditEventType.AUTH_TOKEN_REVOKED, AuditOutcome.SUCCESS,
-              tenant_id=tenant.tenant_id, subject=tenant.owner_email,
+              tenant_id=tenant.tenant_id, subject=_tenant_subject(tenant),
               resource=f"jti:{jti}", detail={"ttl_seconds": ttl, "manual": True})
     return {"status": "revoked", "jti": jti, "ttl_seconds": ttl}
 
@@ -2809,7 +2810,7 @@ async def manual_revoke(
 async def list_tenants(tenant: TenantContext = Depends(require_role(Role.ADMIN))):
     tenants = tenant_store.list_tenants()
     log_event(AuditEventType.ACCESS_GRANTED, AuditOutcome.SUCCESS,
-              tenant_id=tenant.tenant_id, subject=tenant.owner_email,
+              tenant_id=tenant.tenant_id, subject=_tenant_subject(tenant),
               resource="/admin/tenants", detail={"action": "list"})
     return {"tenants": [
         {"id": t.id, "name": t.name, "plan": t.plan.value,
@@ -2828,7 +2829,7 @@ async def create_tenant(body: dict, tenant: TenantContext = Depends(require_role
         raise HTTPException(status_code=400, detail="'name' required")
     new_tenant, raw_key = tenant_store.create_tenant(name=name, owner_email=email, plan=plan)
     log_event(AuditEventType.TENANT_CREATED, AuditOutcome.SUCCESS,
-              tenant_id=tenant.tenant_id, subject=tenant.owner_email,
+              tenant_id=tenant.tenant_id, subject=_tenant_subject(tenant),
               resource=f"tenant:{new_tenant.id}", detail={"name": name, "plan": plan.value})
     return {
         "tenant":  {"id": new_tenant.id, "name": new_tenant.name, "plan": new_tenant.plan.value},
@@ -2838,44 +2839,73 @@ async def create_tenant(body: dict, tenant: TenantContext = Depends(require_role
 
 
 @app.get("/admin/tenants/{tenant_id}/keys")
-async def list_keys(tenant_id: str, _user: dict = Depends(verify_token)):
+async def list_keys(tenant_id: str, tenant: TenantContext = Depends(require_role(Role.ADMIN))):
+    if tenant_id != tenant.tenant_id and tenant.role != "owner":
+        raise HTTPException(status_code=403, detail="Cannot list keys for another tenant")
     keys = tenant_store.list_api_keys(tenant_id)
     return {"keys": [
         {"id": k.id, "name": k.name, "prefix": k.key_prefix,
-         "is_active": k.is_active, "created_at": k.created_at.isoformat(),
+         "role": k.role, "is_active": k.is_active, "created_at": k.created_at.isoformat(),
          "last_used": k.last_used.isoformat() if k.last_used else None}
         for k in keys
     ]}
 
 
 @app.post("/admin/tenants/{tenant_id}/keys", status_code=201)
-async def create_key(tenant_id: str, body: dict, _user: dict = Depends(verify_token)):
+async def create_key(tenant_id: str, body: dict, tenant: TenantContext = Depends(require_role(Role.ADMIN))):
+    if tenant_id != tenant.tenant_id and tenant.role != "owner":
+        raise HTTPException(status_code=403, detail="Cannot create keys for another tenant")
     name = body.get("name", "default").strip()
-    record, raw_key = tenant_store.create_api_key(tenant_id=tenant_id, name=name)
+    role = body.get("role", "readonly")
+    if str(role).strip().lower() == "owner" and tenant.role != "owner":
+        raise HTTPException(status_code=403, detail="Only owner keys can create owner keys")
+    try:
+        record, raw_key = tenant_store.create_api_key(tenant_id=tenant_id, name=name, role=role)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    log_event(
+        AuditEventType.API_KEY_CREATED,
+        AuditOutcome.SUCCESS,
+        tenant_id=tenant.tenant_id,
+        subject=tenant.api_key_id,
+        resource=f"tenant:{tenant_id}:key:{record.id}",
+        detail={"target_tenant_id": tenant_id, "key_name": name, "role": record.role},
+    )
     return {"key_id": record.id, "prefix": record.key_prefix, "api_key": raw_key,
+            "role": record.role,
             "warning": "Save this API key now — it will NOT be shown again."}
 
 
 @app.delete("/admin/tenants/{tenant_id}/keys/{key_id}")
-async def revoke_key(tenant_id: str, key_id: str, _user: dict = Depends(verify_token)):
+async def revoke_key(tenant_id: str, key_id: str, tenant: TenantContext = Depends(require_role(Role.ADMIN))):
+    if tenant_id != tenant.tenant_id and tenant.role != "owner":
+        raise HTTPException(status_code=403, detail="Cannot revoke keys for another tenant")
     tenant_store.revoke_api_key(key_id=key_id, tenant_id=tenant_id)
+    log_event(
+        AuditEventType.API_KEY_REVOKED,
+        AuditOutcome.SUCCESS,
+        tenant_id=tenant.tenant_id,
+        subject=tenant.api_key_id,
+        resource=f"tenant:{tenant_id}:key:{key_id}",
+        detail={"target_tenant_id": tenant_id},
+    )
     return {"status": "revoked", "key_id": key_id}
 
 
 # ── AWS onboarding ────────────────────────────────────────────────────────────
 
 @app.post("/onboarding/aws/external-id")
-async def aws_external_id(_user: dict = Depends(verify_token)):
+async def aws_external_id(_tenant: TenantContext = Depends(require_role(Role.ADMIN))):
     from onboarding.aws_connector import generate_external_id
     return {"external_id": generate_external_id()}
 
 
 @app.post("/onboarding/aws/test")
-async def aws_test(body: dict, _user: dict = Depends(verify_token)):
+async def aws_test(body: dict, tenant: TenantContext = Depends(require_role(Role.ADMIN))):
     from onboarding.aws_connector import AwsConnectionConfig, test_connection
     try:
         cfg = AwsConnectionConfig(
-            tenant_id=_user.get("sub", "unknown"),
+            tenant_id=tenant.tenant_id,
             account_id=body["account_id"],
             scan_role_arn=body["scan_role_arn"],
             external_id=body["external_id"],
@@ -2994,9 +3024,9 @@ async def api_audit_log(
     """
     from pathlib import Path
     import json as _json
-    from config import AUDIT_LOG_PATH  # type: ignore[attr-defined]
+    from modules.security.audit_log import AUDIT_FILE
 
-    path = Path(AUDIT_LOG_PATH) if "AUDIT_LOG_PATH" in dir() else Path("/var/log/aegis/audit.jsonl")
+    path = Path(AUDIT_FILE)
     entries = []
     try:
         if path.exists():

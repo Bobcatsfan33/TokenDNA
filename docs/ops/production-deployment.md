@@ -25,6 +25,13 @@ For the local-first enterprise topology and packaging split, see
 ```env
 # Auth
 PASSPORT_SIGNING_SECRET=<random 64-byte hex>
+OIDC_ISSUER=https://idp.example.com
+OIDC_AUDIENCE=https://api.tokendna.example.com
+TOKENDNA_OIDC_TENANT_CLAIM=org_id
+TOKENDNA_OIDC_ROLE_CLAIM=tokendna_role,role
+TOKENDNA_OIDC_GROUPS_CLAIM=roles,groups
+TOKENDNA_OIDC_GROUP_ROLE_MAP_JSON={"Security Owners":"owner","SOC Analysts":"analyst"}
+TOKENDNA_OIDC_ALLOW_SUB_TENANT_FALLBACK=false
 
 # Database — Postgres (production)
 TOKENDNA_DB_BACKEND=postgres
@@ -68,6 +75,29 @@ Open endpoints protected by `RATE_LIMIT_OPEN_PER_MINUTE`:
 ```env
 DEV_MODE=false   # MUST be false in production (enforced at startup)
 ```
+
+`DEV_TENANT_ROLE` is honored only by the synthetic tenant injected when
+`DEV_MODE=true`; it does not affect production API-key or OIDC role mapping.
+
+### DoD / FedRAMP Profiles
+
+```env
+# commercial | cmmc_l2 | fedramp_high | dod_il4 | dod_il5 | dod_il6
+TOKENDNA_COMPLIANCE_PROFILE=dod_il5
+```
+
+When a DoD/FedRAMP High profile is selected, production preflight requires
+managed secrets (`aws_sm` or `vault`), FIPS mode, SIEM audit forwarding, KMS/HSM
+attestation signing, internal mTLS material, Redis TLS, ClickHouse TLS, and
+Postgres client mTLS material. Generate the ATO evidence package with:
+
+```bash
+python scripts/generate_oscal.py
+python scripts/stig_evidence.py
+python scripts/collect_ato_evidence.py --fail-on-missing
+```
+
+The generated package is written to `dist/ato/`.
 
 ---
 
@@ -124,8 +154,11 @@ def insert_record(tenant_id: str, data: dict) -> None:
 ## Checklist Before First Customer
 
 - [ ] `TOKENDNA_DB_BACKEND=postgres` with valid `TOKENDNA_PG_DSN`
+- [ ] OIDC tenant claim explicitly configured (`TOKENDNA_OIDC_TENANT_CLAIM`);
+      production must not derive tenant identity from `sub` / `client_id`
 - [ ] Redis available and `REDIS_PASSWORD` set
 - [ ] `DEV_MODE=false`
+- [ ] `TOKENDNA_COMPLIANCE_PROFILE` selected for the customer boundary
 - [ ] `PASSPORT_SIGNING_SECRET` is a production secret (not the dev default)
 - [ ] `RATE_LIMIT_OPEN_PER_MINUTE` tuned for expected traffic
 - [ ] ClickHouse connected for telemetry pipeline

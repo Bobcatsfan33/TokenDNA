@@ -522,17 +522,8 @@ def get_dual_write_conns(
 
     with sqlite_ctx as primary:
         try:
-            with pg_ctx as secondary:
-                try:
-                    yield primary, secondary
-                except Exception as exc:
-                    # Roll back secondary on any caller error
-                    try:
-                        secondary.rollback()
-                    except Exception:
-                        pass
-                    raise exc
-        except (ConfigurationError, BackendUnavailableError) as pool_err:
+            secondary = pg_ctx.__enter__()
+        except Exception as pool_err:
             record_backend_fallback(
                 reason=str(pool_err),
                 context={"db_path": resolved_path},
@@ -542,3 +533,18 @@ def get_dual_write_conns(
                 pool_err,
             )
             yield primary, None
+            return
+
+        try:
+            yield primary, secondary
+        except Exception as exc:
+            # Roll back secondary on any caller error without masking the
+            # primary exception.
+            try:
+                secondary.rollback()
+            except Exception:
+                pass
+            pg_ctx.__exit__(type(exc), exc, exc.__traceback__)
+            raise
+        else:
+            pg_ctx.__exit__(None, None, None)

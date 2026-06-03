@@ -174,11 +174,36 @@ def _baseline_schema() -> None:
         raise RuntimeError(f"baseline migration failed:\n  - {joined}")
 
 
+def _api_key_roles() -> None:
+    """Add least-privilege roles to tenant API keys.
+
+    Existing API keys are deliberately backfilled to ``readonly``. Operators
+    can promote specific bootstrap/admin keys after review, but no legacy key
+    should inherit owner privilege by accident.
+    """
+    with get_adapted_db_conn() as conn:
+        if db_backend.should_use_postgres():
+            conn.execute("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'readonly'")
+            return
+
+        columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(api_keys)").fetchall()
+        }
+        if "role" not in columns:
+            conn.execute("ALTER TABLE api_keys ADD COLUMN role TEXT NOT NULL DEFAULT 'readonly'")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         revision="202605220001_baseline",
         description="Initialize TokenDNA control-plane schemas",
         apply=_baseline_schema,
+    ),
+    Migration(
+        revision="202606010001_api_key_roles",
+        description="Add least-privilege role column to tenant API keys",
+        apply=_api_key_roles,
     ),
 )
 

@@ -78,6 +78,58 @@ jobs:
           print(f'All {len(mods)} modules imported successfully')
           "
 
+  # ── Full monorepo regression suite ─────────────────────────────────────────
+  test-suite:
+    name: Full Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt pytest pytest-asyncio
+          pip install -e ./platform -e ./collector
+
+      - name: Run backend, platform, and collector tests
+        run: python -m pytest -q --import-mode=importlib tests platform/tests collector/tests
+
+  # ── DoD ATO readiness evidence ─────────────────────────────────────────────
+  ato-evidence:
+    name: DoD ATO Evidence Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install test dependency
+        run: pip install pytest
+
+      - name: Generate OSCAL and evidence artifacts
+        run: |
+          python scripts/generate_oscal.py
+          python scripts/stig_evidence.py
+          python scripts/collect_ato_evidence.py --fail-on-missing
+
+      - name: Run ATO evidence tests
+        run: python -m pytest -q tests/test_ato_evidence.py tests/test_preflight_prod.py
+
+      - name: Upload ATO evidence
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ato-evidence
+          path: dist/ato
+          if-no-files-found: error
+
   # ── Dependency Vulnerability Scan ───────────────────────────────────────────
   dependency-scan:
     name: Dependency Security Scan
@@ -93,9 +145,8 @@ jobs:
       - name: pip-audit
         run: |
           pip install pip-audit
-          pip-audit -r requirements.txt --format=json --output=pip-audit-results.json || true
-          pip-audit -r requirements.txt || echo "::warning::pip-audit found vulnerabilities"
-          pip-audit -r requirements.txt || echo "::warning::pip-audit found vulnerabilities — review pip-audit-results.json artifact"
+          pip-audit -r requirements.txt --no-deps --disable-pip --progress-spinner off --format=json --output=pip-audit-results.json
+          pip-audit -r requirements.txt --no-deps --disable-pip --progress-spinner off
 
       - name: Upload audit results
         uses: actions/upload-artifact@v7
@@ -353,8 +404,11 @@ jobs:
           DATABASE_URL: postgresql://tokendna:tokendna@localhost:5432/tokendna
           OIDC_ISSUER: https://example.com
           OIDC_AUDIENCE: ci
+          TOKENDNA_OIDC_TENANT_CLAIM: org_id
           DNA_HMAC_KEY: ci-dna-hmac-key-32-bytes-aaaaaaaa
           AUDIT_HMAC_KEY: ci-audit-hmac-key-32-bytes-aaaaaa
+          AUDIT_BACKEND: file
+          AUDIT_LOG_PATH: /tmp/tokendna-ci-audit.jsonl
           ATTESTATION_CA_KEY_ID: ci-key
           ATTESTATION_CA_SECRET: ci-attestation-secret-32-bytes-aa
         run: |
@@ -394,8 +448,11 @@ jobs:
       DATA_DB_PATH: /tmp/tokendna-ci.db
       OIDC_ISSUER: https://ci.example.com
       OIDC_AUDIENCE: ci
+      TOKENDNA_OIDC_TENANT_CLAIM: org_id
       DNA_HMAC_KEY: ci-dna-hmac-key-32-bytes-aaaaaaaa
       AUDIT_HMAC_KEY: ci-audit-hmac-key-32-bytes-aaaaaa
+      AUDIT_BACKEND: file
+      AUDIT_LOG_PATH: /tmp/tokendna-ci-audit.jsonl
       ATTESTATION_CA_KEY_ID: ci-key
       ATTESTATION_CA_SECRET: ci-attestation-secret-32-bytes-aa
       TOKENDNA_DELEGATION_SECRET: ci-delegation-secret-32-bytes-aaaa

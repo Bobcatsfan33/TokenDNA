@@ -43,8 +43,8 @@ import requests
 logger = logging.getLogger("aegis.audit")
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-AUDIT_BACKEND: str  = os.getenv("AUDIT_BACKEND", "file")
-AUDIT_FILE:    str  = os.getenv("AUDIT_LOG_PATH", "/var/log/aegis/audit.jsonl")
+AUDIT_BACKEND: str  = os.getenv("AUDIT_BACKEND") or os.getenv("AUDIT_BACKENDS", "file")
+AUDIT_FILE:    str  = os.getenv("AUDIT_LOG_PATH") or os.getenv("AUDIT_LOG_FILE", "/var/log/aegis/audit.jsonl")
 AUDIT_HMAC_KEY: str = os.getenv("AUDIT_HMAC_KEY", "")  # REQUIRED in production
 AUDIT_WEBHOOK:  str = os.getenv("SIEM_WEBHOOK_URL", "")
 
@@ -231,13 +231,15 @@ def log_event(
 
 def _dispatch(record: AuditRecord) -> None:
     """Write to configured backend(s). Never raises — audit failures are logged, not fatal."""
-    backend = AUDIT_BACKEND.lower()
+    backends = {b.strip().lower() for b in AUDIT_BACKEND.split(",") if b.strip()}
+    if "all" in backends:
+        backends.update({"file", "redis", "siem"})
     try:
-        if backend in ("file", "all"):
+        if "file" in backends:
             _write_file(record)
-        if backend in ("redis", "all"):
+        if "redis" in backends:
             _write_redis(record)
-        if backend in ("siem", "all") and AUDIT_WEBHOOK:
+        if "siem" in backends and AUDIT_WEBHOOK:
             _write_siem(record)
     except Exception as e:  # noqa: BLE001
         logger.error("AUDIT DISPATCH FAILED — event may be lost: %s | %s", record.event_type, e)

@@ -24,7 +24,10 @@ env:
   TOKENDNA_ENV: production
   ENVIRONMENT: production
   DEV_MODE: "false"
+  TOKENDNA_COMPLIANCE_PROFILE: commercial
   DATA_BACKEND: postgres
+  TOKENDNA_OIDC_TENANT_CLAIM: org_id
+  TOKENDNA_OIDC_ALLOW_SUB_TENANT_FALLBACK: "false"
 
 # -----------------------------------------------------------------------------
 # Secrets
