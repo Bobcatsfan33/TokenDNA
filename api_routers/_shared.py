@@ -6,6 +6,8 @@ cycle: api.py imports api_routers).
 """
 from __future__ import annotations
 
+import os
+
 from fastapi import HTTPException
 
 
@@ -93,3 +95,17 @@ def sdk_attest_agent(**kwargs):
     if "tenant_name" in kwargs:
         kwargs["owner_org"] = kwargs.pop("tenant_name")
     return sdk_create_attestation(**kwargs)
+
+
+# ── App version + edge-sync auth (moved from api.py) ──────────────────────────
+import hmac as _edge_hmac  # noqa: E402
+
+APP_VERSION = "2.5.0"
+
+
+def _edge_sync_authorized(request: Request) -> bool:
+    expected = (os.getenv("EDGE_SYNC_TOKEN") or "").strip()
+    if not expected:
+        return False
+    presented = (request.headers.get("X-Edge-Sync-Token") or "").strip()
+    return bool(presented) and _edge_hmac.compare_digest(presented, expected)
