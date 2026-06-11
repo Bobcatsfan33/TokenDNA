@@ -150,11 +150,26 @@ def init_db() -> None:
             )
             """
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cert_renewals (
+                renewal_id      TEXT PRIMARY KEY,
+                certificate_id  TEXT NOT NULL,
+                tenant_id       TEXT NOT NULL,
+                expires_at      TEXT NOT NULL,
+                triggered_at    TEXT NOT NULL,
+                urgency         TEXT NOT NULL,
+                status          TEXT NOT NULL DEFAULT 'triggered',
+                hook_results_json TEXT NOT NULL DEFAULT '[]'
+            )
+            """
+        )
         for idx_sql in [
             "CREATE INDEX IF NOT EXISTS idx_cert_usage_cert ON cert_usage_log(certificate_id, tenant_id)",
             "CREATE INDEX IF NOT EXISTS idx_cert_usage_tenant ON cert_usage_log(tenant_id, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_cert_anomalies_tenant ON cert_anomalies(tenant_id, resolved)",
             "CREATE INDEX IF NOT EXISTS idx_cert_expiry_tenant ON cert_expiry_alerts(tenant_id, acknowledged)",
+            "CREATE INDEX IF NOT EXISTS idx_cert_renewals_cert ON cert_renewals(certificate_id, tenant_id)",
         ]:
             cur.execute(idx_sql)
 
@@ -657,3 +672,198 @@ def fleet_summary(*, tenant_id: str) -> dict[str, Any]:
         "critical_anomalies": len(critical_anomalies),
         "certs_expiring_soon": len(expiring_certs),
     }
+
+
+# ── Lifecycle automation (T-4) ────────────────────────────────────────────────
+#
+# Replaces CRUD-only behavior with an adaptive sweep: it classifies the fleet,
+# refreshes expiry alerts, fires audit events, and triggers operator-registered
+# renewal hooks for certs crossing the renewal threshold — idempotently.
+
+# Default: begin renewal once a cert is inside the WARNING window (7 days).
+RENEWAL_THRESHOLD_DAYS = int(os.getenv("CERT_RENEWAL_THRESHOLD_DAYS", str(EXPIRY_WARNING_DAYS)))
+
+# Registry of renewal hooks. A hook is ``Callable[[dict, dict], Any]`` receiving
+# (cert, context) and returning a JSON-serializable result. Failures are
+# isolated so one bad hook never blocks the sweep.
+_renewal_hooks: list[Any] = []
+
+
+def register_renewal_hook(hook: Any) -> None:
+    """Register a renewal hook invoked by run_expiry_sweep for due certs."""
+    _renewal_hooks.append(hook)
+
+
+def clear_renewal_hooks() -> None:
+    """Remove all registered renewal hooks (test/operator reset)."""
+    _renewal_hooks.clear()
+
+
+def _emit_audit(event_name: str, *, tenant_id: str, resource: str, detail: dict) -> None:
+    """Best-effort SOC 2 audit emission for cert automation (T-4)."""
+    try:
+        from modules.security.audit_log import (  # noqa: PLC0415
+            AuditEventType, AuditOutcome, log_event,
+        )
+        log_event(
+            getattr(AuditEventType, event_name),
+            AuditOutcome.SUCCESS,
+            tenant_id=tenant_id,
+            subject="cert-automation",
+            resource=resource,
+            detail=detail,
+        )
+    except Exception as exc:  # noqa: BLE001 - audit is best-effort
+        log.warning("cert audit emission failed (%s): %s", event_name, exc)
+
+
+def _renewal_already_open(cur, *, tenant_id: str, cert_id: str, expires_at: str) -> bool:
+    """True if a renewal for this cert+expiry window is already on record.
+
+    Keeps the sweep idempotent: re-running does not re-trigger hooks for a cert
+    whose current certificate (same expires_at) was already actioned.
+    """
+    row = cur.execute(
+        """
+        SELECT renewal_id FROM cert_renewals
+        WHERE certificate_id = ? AND tenant_id = ? AND expires_at = ?
+              AND status != 'failed'
+        """,
+        (cert_id, tenant_id, expires_at),
+    ).fetchone()
+    return row is not None
+
+
+def _trigger_renewal(cert: dict[str, Any], *, tenant_id: str, urgency: str, days: int) -> dict[str, Any]:
+    """Invoke every renewal hook for a single cert; record + audit the result."""
+    cert_id = cert.get("certificate_id", "")
+    expires_at = cert.get("expires_at", "")
+    context = {"tenant_id": tenant_id, "urgency": urgency, "days_until_expiry": days}
+
+    hook_results: list[dict[str, Any]] = []
+    overall_ok = True
+    for hook in list(_renewal_hooks):
+        name = getattr(hook, "__name__", repr(hook))
+        try:
+            result = hook(cert, context)
+            hook_results.append({"hook": name, "ok": True, "result": result})
+        except Exception as exc:  # noqa: BLE001 - one hook must not break the sweep
+            overall_ok = False
+            hook_results.append({"hook": name, "ok": False, "error": str(exc)})
+            log.warning("renewal hook %s failed for cert %s: %s", name, cert_id, exc)
+
+    status = "triggered" if overall_ok else "failed"
+    with _cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO cert_renewals
+                (renewal_id, certificate_id, tenant_id, expires_at,
+                 triggered_at, urgency, status, hook_results_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid.uuid4()), cert_id, tenant_id, expires_at,
+                _iso_now(), urgency, status, json.dumps(hook_results),
+            ),
+        )
+    _emit_audit(
+        "CERT_RENEWAL_TRIGGERED",
+        tenant_id=tenant_id,
+        resource=f"cert/{cert_id}",
+        detail={"urgency": urgency, "days_until_expiry": days, "status": status,
+                "hooks": len(hook_results)},
+    )
+    return {"certificate_id": cert_id, "status": status, "hook_results": hook_results}
+
+
+def run_expiry_sweep(
+    *,
+    tenant_id: str,
+    renew_within_days: int = RENEWAL_THRESHOLD_DAYS,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Adaptive certificate-lifecycle sweep (the automation, not CRUD).
+
+    For a tenant it:
+      1. classifies the fleet and refreshes expiry alerts (via get_expiring),
+      2. triggers renewal hooks for non-revoked, non-expired certs within
+         ``renew_within_days`` — idempotently (same cert+expiry not re-actioned),
+      3. emits a CERT_EXPIRY_SWEEP audit event plus a CERT_RENEWAL_TRIGGERED
+         per renewal.
+
+    Returns a structured summary. ``dry_run=True`` classifies and reports what
+    *would* be renewed without invoking hooks or writing renewal records.
+    """
+    init_db()
+    # Refresh alerts across the notice window (also upserts alert rows).
+    expiring = get_expiring(tenant_id=tenant_id, within_days=EXPIRY_NOTICE_DAYS, limit=2000)
+
+    by_urgency: dict[str, int] = {}
+    due: list[dict[str, Any]] = []
+    for cert in expiring:
+        urgency = cert.get("urgency", "notice")
+        by_urgency[urgency] = by_urgency.get(urgency, 0) + 1
+        days = cert.get("days_until_expiry")
+        if cert.get("status") == "revoked":
+            continue
+        if days is None or days < 0:
+            continue
+        if days <= renew_within_days:
+            due.append(cert)
+
+    renewals: list[dict[str, Any]] = []
+    skipped_idempotent = 0
+    if not dry_run:
+        for cert in due:
+            cert_id = cert.get("certificate_id", "")
+            expires_at = cert.get("expires_at", "")
+            with _cursor() as cur:
+                if _renewal_already_open(cur, tenant_id=tenant_id, cert_id=cert_id, expires_at=expires_at):
+                    skipped_idempotent += 1
+                    continue
+            renewals.append(_trigger_renewal(
+                cert, tenant_id=tenant_id,
+                urgency=cert.get("urgency", "warning"),
+                days=cert.get("days_until_expiry", 0),
+            ))
+
+    summary = {
+        "tenant_id": tenant_id,
+        "swept": len(expiring),
+        "by_urgency": by_urgency,
+        "due_for_renewal": len(due),
+        "renewals_triggered": len(renewals),
+        "skipped_idempotent": skipped_idempotent,
+        "renewals": renewals,
+        "dry_run": dry_run,
+    }
+    _emit_audit(
+        "CERT_EXPIRY_SWEEP",
+        tenant_id=tenant_id,
+        resource="cert/fleet",
+        detail={k: summary[k] for k in
+                ("swept", "by_urgency", "due_for_renewal", "renewals_triggered",
+                 "skipped_idempotent", "dry_run")},
+    )
+    return summary
+
+
+def list_renewals(*, tenant_id: str, limit: int = 200) -> list[dict[str, Any]]:
+    """Return recorded renewal actions for the tenant (most recent first)."""
+    init_db()
+    with _cursor() as cur:
+        rows = cur.execute(
+            """
+            SELECT renewal_id, certificate_id, expires_at, triggered_at,
+                   urgency, status, hook_results_json
+            FROM cert_renewals WHERE tenant_id = ?
+            ORDER BY triggered_at DESC LIMIT ?
+            """,
+            (tenant_id, limit),
+        ).fetchall()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        d = dict(r)
+        d["hook_results"] = json.loads(d.pop("hook_results_json") or "[]")
+        out.append(d)
+    return out
