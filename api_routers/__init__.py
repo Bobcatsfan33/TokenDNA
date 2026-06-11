@@ -11,7 +11,9 @@ from fastapi import APIRouter, FastAPI
 
 from api_routers.agents import router as agents_router
 from api_routers.compliance import router as compliance_router
+from api_routers.delegation import router as delegation_router
 from api_routers.enforcement import router as enforcement_router
+from api_routers.federation import router as federation_router
 from api_routers.intel import router as intel_router
 from api_routers.mcp import router as mcp_router
 from api_routers.policy_bundles import router as policy_bundles_router
@@ -22,7 +24,9 @@ from api_routers.threat_sharing import router as threat_sharing_router
 ALL_ROUTERS: tuple[APIRouter, ...] = (
     agents_router,
     compliance_router,
+    delegation_router,
     enforcement_router,
+    federation_router,
     intel_router,
     mcp_router,
     policy_bundles_router,
