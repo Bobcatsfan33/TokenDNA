@@ -3,7 +3,7 @@
 [![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL%201.1-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue)](https://www.python.org/)
 [![CI](https://github.com/Bobcatsfan33/TokenDNA/actions/workflows/ci.yml/badge.svg)](https://github.com/Bobcatsfan33/TokenDNA/actions/workflows/ci.yml)
-[![Security: FedRAMP-aligned](https://img.shields.io/badge/Security-FedRAMP%20High%20%7C%20IL6%20aligned-red)](SECURITY.md)
+[![Security: Designed toward FedRAMP High / IL4+](https://img.shields.io/badge/Security-Designed%20toward%20FedRAMP%20High%20%2F%20IL4%2B-red)](compliance/dod/control_matrix.json)
 [![PRs: owner approval required](https://img.shields.io/badge/PRs-owner%20approval%20required-yellow)](CONTRIBUTING.md)
 
 > **v3.0.0 — Runtime Risk Engine.** Closes the three RSA 2026 gaps no major vendor addressed: (1) agent self-modification of policy, (2) silent permission drift, (3) MCP intent-aware inspection. End-to-end demo arc shippable in 10 minutes against a fresh deployment.
@@ -272,7 +272,7 @@ LIMIT 20;
 
 ## Security & Compliance
 
-TokenDNA is built toward **FedRAMP High** and **DoD IL6** alignment. Key controls in v2.2.0:
+TokenDNA is **designed toward FedRAMP High and DoD IL4+** alignment; IL5/IL6 deployment profiles are on the roadmap and gated behind the customer-managed federal build. The implemented posture is tracked control-by-control in [`compliance/dod/control_matrix.json`](compliance/dod/control_matrix.json). Key controls in v2.2.0:
 
 | Control Family | Implementation |
 |---|---|
