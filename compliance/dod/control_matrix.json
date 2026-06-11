@@ -127,9 +127,18 @@
       "family": "System and Communications Protection",
       "title": "Transmission Confidentiality and Integrity",
       "owner": "shared",
-      "implementation_status": "partial",
-      "implementation_summary": "mTLS and TLS settings are documented and profile-gated for internal API, Redis, ClickHouse, and Postgres connectivity.",
-      "evidence_files": ["modules/security/mtls.py", "docs/operations/MTLS.md", "scripts/preflight_prod.py"]
+      "implementation_status": "implemented",
+      "implementation_summary": "mTLS is enforced for internal service-to-service traffic: data stores (Redis/ClickHouse/Postgres) via MTLSConfig, and the internal API plane (:8443) via a TLS 1.3-only, client-cert-REQUIRED listener (mtls_server) with SPIFFE peer authorization (mtls_peer.require_internal_peer). cert-manager issues and auto-rotates the internal PKI (internal-pki.yaml).",
+      "evidence_files": ["modules/security/mtls.py", "modules/security/mtls_server.py", "modules/security/mtls_peer.py", "deploy/helm/tokendna/templates/internal-pki.yaml", "docs/operations/MTLS.md", "tests/test_mtls_peer.py"]
+    },
+    {
+      "id": "IA-3",
+      "family": "Identification and Authentication",
+      "title": "Device Identification and Authentication",
+      "owner": "product",
+      "implementation_status": "implemented",
+      "implementation_summary": "Internal-plane peers authenticate with X.509 client certificates pinned to the internal CA; the peer's SPIFFE URI SAN is authorized against an allowlist (mtls_peer.require_internal_peer), so a valid cert is necessary but not sufficient. Mutual TLS is CERT_REQUIRED at the :8443 listener.",
+      "evidence_files": ["modules/security/mtls_peer.py", "modules/security/mtls_server.py", "deploy/helm/tokendna/templates/internal-pki.yaml", "tests/test_mtls_peer.py"]
     },
     {
       "id": "SC-12",
