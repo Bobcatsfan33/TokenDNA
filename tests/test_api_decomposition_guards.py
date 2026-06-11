@@ -92,12 +92,22 @@ def test_guard_update_writes_snapshot(tmp_path, monkeypatch):
 
 # ── registry scaffold ─────────────────────────────────────────────────────────
 
-def test_mount_all_is_noop_safe():
+def test_mount_all_mounts_registered_routers():
     import api_routers
     from fastapi import FastAPI
 
     app = FastAPI()
     before = len(app.routes)
-    api_routers.mount_all(app)  # empty registry -> no change
-    assert len(app.routes) == before
+    api_routers.mount_all(app)
+    expected_added = sum(len(r.routes) for r in api_routers.ALL_ROUTERS)
+    assert len(app.routes) == before + expected_added
     assert isinstance(api_routers.ALL_ROUTERS, tuple)
+
+
+def test_extracted_routes_present_via_registry():
+    # Sprint 1: the policy-guard routes are served from the router, not api.py.
+    import api_routers
+
+    paths = {route.path for r in api_routers.ALL_ROUTERS for route in r.routes}
+    assert "/api/policy/guard/evaluate" in paths
+    assert "/api/policy/guard/stats" in paths
