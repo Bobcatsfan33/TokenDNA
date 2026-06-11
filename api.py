@@ -235,6 +235,11 @@ async def _metrics_middleware(request, call_next):
 
 
 async def _startup_checks() -> None:
+    # Federal-profile fail-closed crypto gate (T-3, SC-13): refuse to start when
+    # REQUIRE_FIPS=true but the validated OpenSSL provider is not active.
+    from modules.security.fips import assert_fips_mode
+    assert_fips_mode()
+
     if DEV_MODE:
         logger.warning("DEV_MODE=true — JWT auth disabled. Not for production.")
     if not OIDC_ISSUER and not DEV_MODE:

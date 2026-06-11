@@ -145,9 +145,10 @@
       "family": "System and Communications Protection",
       "title": "Cryptographic Protection",
       "owner": "shared",
-      "implementation_status": "partial",
-      "implementation_summary": "FIPS mode is required by DoD/FedRAMP High profiles and TLS helpers restrict protocol posture; validation depends on the deployed cryptographic module and enclave.",
-      "evidence_files": ["modules/security/fips.py", "scripts/preflight_prod.py", ".env.production.example"]
+      "implementation_status": "implemented (federal flavor)",
+      "implementation_summary": "Federal build flavor (Dockerfile.fips, UBI9) runs the CMVP-validated Red Hat OpenSSL FIPS provider; modules.security.fips.assert_fips_mode() fail-closes (exit 78) at startup when REQUIRE_FIPS=true but the validated provider is not active. A CI grep gate forbids non-approved hash primitives in modules/, and the release fips-smoke job proves the commercial image fails the gate while the federal flavor is fail-closed. The commercial distroless flavor remains non-FIPS by design.",
+      "cmvp_certificate": "Red Hat Enterprise Linux 9 OpenSSL Cryptographic Module — CMVP #4746 (UBI9). PIN: confirm the certificate number against the exact openssl build in the released registry.access.redhat.com/ubi9 image digest at release time; the validated cert number is version-specific.",
+      "evidence_files": ["modules/security/fips.py", "Dockerfile.fips", ".github/workflows/release-docker.yml", ".github/workflows/ci.yml", "scripts/preflight_prod.py", ".env.production.example"]
     },
     {
       "id": "SC-28",
