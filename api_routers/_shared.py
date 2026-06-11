@@ -66,3 +66,30 @@ async def check_rate_limit_open(request: Request) -> None:
             detail=f"Rate limit exceeded ({RATE_LIMIT_OPEN_PER_MINUTE} req/min on open endpoint)",
             headers={"Retry-After": "60"},
         )
+
+
+# ── Cursor + SDK helpers (moved from api.py) ──────────────────────────────────
+import base64  # noqa: E402
+
+from modules.integrations.sdk_wrappers import sdk_create_attestation  # noqa: E402
+
+
+def _encode_cursor(value: str) -> str:
+    return base64.urlsafe_b64encode(value.encode("utf-8")).decode("utf-8")
+
+
+def _decode_cursor(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        raw = base64.urlsafe_b64decode(value.encode("utf-8"))
+        return raw.decode("utf-8")
+    except Exception:
+        return None
+
+
+def sdk_attest_agent(**kwargs):
+    """Thin alias — maps tenant_name->owner_org for sdk_create_attestation."""
+    if "tenant_name" in kwargs:
+        kwargs["owner_org"] = kwargs.pop("tenant_name")
+    return sdk_create_attestation(**kwargs)
