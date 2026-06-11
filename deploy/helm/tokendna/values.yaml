@@ -172,3 +172,15 @@ networkPolicy:
     - monitoring
   egressCidrs:
     - 0.0.0.0/0  # tighten in production; OTel + KMS endpoints typically need DNS + 443
+
+# -----------------------------------------------------------------------------
+# Internal mTLS PKI (T-2) — cert-manager-issued certs for the :8443 internal
+# plane. Requires cert-manager in the cluster and a one-time root CA secret
+# (rootSecretName). Certs rotate automatically; SPIFFE URI SANs are authorized
+# by modules.security.mtls_peer.require_internal_peer.
+# -----------------------------------------------------------------------------
+internalPKI:
+  enabled: false
+  rootSecretName: tokendna-internal-root  # created once — see deploy runbook
+  duration: 2160h      # 90 days
+  renewBefore: 720h    # 30 days

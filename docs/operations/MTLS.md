@@ -109,3 +109,43 @@ mTLS does **not** protect against:
 - A compromised root CA private key (treat `ca.key` like the most sensitive secret in the system; rotate on any suspected exposure)
 - A compromised service host (the leaf cert + key live alongside the process; if the host is owned, the cert is owned)
 - Application-layer abuse from a properly authenticated client (that's what `policy_guard` + `mcp_inspector` cover)
+
+---
+
+## Internal API plane (:8443) — peer authorization (T-2)
+
+The data-store mTLS above protects FastAPI ↔ Redis/ClickHouse/Postgres. The
+**internal API plane** adds a second listener so the collector, edge worker,
+and batch jobs reach the API itself over mutual TLS:
+
+| Port | Surface | Auth |
+|------|---------|------|
+| `:8000` | external API (ingress-terminated) | OIDC bearer |
+| `:8443` | internal plane | mutual TLS, client cert REQUIRED + SPIFFE peer allowlist |
+
+- **Listener**: `modules/security/mtls_server.py` builds a TLS 1.3-only,
+  `CERT_REQUIRED` context and runs `uvicorn` on `:8443`. Run it as a second
+  process in the image or a dedicated Deployment.
+- **Authorization (not just authentication)**: `modules/security/mtls_peer.py`
+  `require_internal_peer` checks the verified peer cert's SAN URI against the
+  SPIFFE allowlist (`spiffe://tokendna/{collector,edge-worker,migration-job}`,
+  overridable via `TLS_INTERNAL_PEER_ALLOWLIST`). A valid cert from the CA with
+  an unlisted identity still gets **403**. Mount it on internal routes:
+
+  ```python
+  from fastapi import APIRouter, Depends
+  from modules.security.mtls_peer import require_internal_peer
+  router = APIRouter(prefix="/internal", dependencies=[Depends(require_internal_peer)])
+  ```
+
+- **PKI + rotation**: `deploy/helm/tokendna/templates/internal-pki.yaml`
+  (enable with `internalPKI.enabled=true`) defines a cert-manager `Issuer` +
+  `Certificate`s (90d cert / 30d renew, ECDSA P-256). Deleting a leaf secret
+  triggers automatic reissue with no application restart.
+- **Collector client**: `collector/tokendna_collector/transport/internal_client.py`
+  presents the collector cert and verifies the API against the internal CA
+  (stdlib `ssl`, consistent with the collector's minimal-dependency design).
+
+**Negative tests** (`tests/test_mtls_peer.py`): no client cert → 403 (mTLS
+required); valid cert with unlisted SPIFFE URI → 403; listener context is TLS
+1.3-only and `CERT_REQUIRED`.
