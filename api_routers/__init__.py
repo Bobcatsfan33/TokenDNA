@@ -33,13 +33,15 @@ from __future__ import annotations
 
 from fastapi import APIRouter, FastAPI
 
-from api_routers.policy_guard import router as policy_guard_router  # /api/policy/guard (6)
+from api_routers.policy_bundles import router as policy_bundles_router  # /api/policy/bundles (9)
+from api_routers.policy_guard import router as policy_guard_router      # /api/policy/guard (6)
 
 # Routers are appended here one sprint at a time. Each addition moves its
 # handlers OUT of api.py (enforced by the monolith ratchet) and must keep the
 # route-surface guard green (no signature change).
 ALL_ROUTERS: tuple[APIRouter, ...] = (
     policy_guard_router,
+    policy_bundles_router,
 )
 
 
