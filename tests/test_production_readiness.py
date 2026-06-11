@@ -288,9 +288,10 @@ class TestCheckRateLimitOpen:
     def test_under_limit_does_not_raise(self):
         import asyncio
         import api as api_mod
+        import api_routers._shared as _shared_mod
 
         # increment_rate returns 1 (well under limit)
-        with patch.object(api_mod, "increment_rate", return_value=1):
+        with patch.object(_shared_mod, "increment_rate", return_value=1):
             req = self._make_request()
             # Should not raise
             asyncio.run(api_mod.check_rate_limit_open(req))
@@ -299,9 +300,10 @@ class TestCheckRateLimitOpen:
         from fastapi import HTTPException
         import asyncio
         import api as api_mod
+        import api_routers._shared as _shared_mod
 
         # increment_rate returns 9999 (way over limit)
-        with patch.object(api_mod, "increment_rate", return_value=9999):
+        with patch.object(_shared_mod, "increment_rate", return_value=9999):
             req = self._make_request()
             with pytest.raises(HTTPException) as exc_info:
                 asyncio.run(api_mod.check_rate_limit_open(req))
@@ -312,8 +314,9 @@ class TestCheckRateLimitOpen:
         """count == limit should be allowed; count > limit is the trigger."""
         import asyncio
         import api as api_mod
+        import api_routers._shared as _shared_mod
 
-        with patch.object(api_mod, "increment_rate", return_value=30):
+        with patch.object(_shared_mod, "increment_rate", return_value=30):
             req = self._make_request()
             # Should not raise — 30 == limit, not 30 > limit
             asyncio.run(api_mod.check_rate_limit_open(req))
@@ -322,8 +325,9 @@ class TestCheckRateLimitOpen:
         from fastapi import HTTPException
         import asyncio
         import api as api_mod
+        import api_routers._shared as _shared_mod
 
-        with patch.object(api_mod, "increment_rate", return_value=31):
+        with patch.object(_shared_mod, "increment_rate", return_value=31):
             req = self._make_request()
             with pytest.raises(HTTPException) as exc_info:
                 asyncio.run(api_mod.check_rate_limit_open(req))
@@ -333,6 +337,7 @@ class TestCheckRateLimitOpen:
         """Open rate limiter uses '_open_' tenant namespace, not a real tenant."""
         import asyncio
         import api as api_mod
+        import api_routers._shared as _shared_mod
 
         captured: dict = {}
 
@@ -340,7 +345,7 @@ class TestCheckRateLimitOpen:
             captured["tenant_id"] = tenant_id
             return 1
 
-        with patch.object(api_mod, "increment_rate", side_effect=mock_increment):
+        with patch.object(_shared_mod, "increment_rate", side_effect=mock_increment):
             req = self._make_request()
             asyncio.run(api_mod.check_rate_limit_open(req))
 
@@ -350,6 +355,7 @@ class TestCheckRateLimitOpen:
         """If request.client is None, uses 'unknown' as key."""
         import asyncio
         import api as api_mod
+        import api_routers._shared as _shared_mod
 
         captured: dict = {}
 
@@ -357,7 +363,7 @@ class TestCheckRateLimitOpen:
             captured["key"] = key
             return 1
 
-        with patch.object(api_mod, "increment_rate", side_effect=mock_increment):
+        with patch.object(_shared_mod, "increment_rate", side_effect=mock_increment):
             req = MagicMock()
             req.client = None
             asyncio.run(api_mod.check_rate_limit_open(req))
@@ -382,6 +388,7 @@ class TestOpenEndpointsHaveRateLimiting:
         ``dependencies=[Depends(...)]`` at the decorator level.
         """
         import api as api_mod
+        import api_routers._shared as _shared_mod
 
         for route in api_mod.app.routes:
             if hasattr(route, "path") and route.path == path:
@@ -476,6 +483,7 @@ class TestDbBackendRegression:
 class TestApiImportsOpenRateLimit:
     def test_api_imports_open_rate_limit_constant(self):
         import api as api_mod
+        import api_routers._shared as _shared_mod
 
         assert hasattr(api_mod, "RATE_LIMIT_OPEN_PER_MINUTE") or hasattr(
             api_mod, "check_rate_limit_open"
@@ -484,6 +492,7 @@ class TestApiImportsOpenRateLimit:
     def test_check_rate_limit_open_is_async(self):
         import asyncio
         import api as api_mod
+        import api_routers._shared as _shared_mod
 
         assert asyncio.iscoroutinefunction(api_mod.check_rate_limit_open)
 
