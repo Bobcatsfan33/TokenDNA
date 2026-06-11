@@ -112,6 +112,16 @@ class AuditEventType(str, Enum):
     REMEDIATION_APPLIED = "remediation.applied"
     REMEDIATION_FAILED  = "remediation.failed"
 
+    # Agent lifecycle (T-4)
+    AGENT_REGISTERED       = "agent.registered"
+    AGENT_SUSPENDED        = "agent.suspended"
+    AGENT_REACTIVATED      = "agent.reactivated"
+    AGENT_DECOMMISSIONED   = "agent.decommissioned"
+
+    # Certificate lifecycle (T-4)
+    CERT_EXPIRY_SWEEP      = "cert.expiry_sweep"
+    CERT_RENEWAL_TRIGGERED = "cert.renewal_triggered"
+
     # Tenant management
     TENANT_CREATED      = "tenant.created"
     TENANT_DELETED      = "tenant.deleted"

@@ -1324,6 +1324,56 @@ def record_policy_governance(tenant_id: str, policy_label: str,
             conn.close()
 
 
+def record_lifecycle_transition(
+    tenant_id: str,
+    agent_id: str,
+    to_state: str,
+    from_state: str | None = None,
+    actor: str | None = None,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    """Reflect an agent lifecycle transition in the trust graph (T-4).
+
+    Upserts the agent node (carrying its current lifecycle status in meta) and
+    a ``transitioned_to`` edge agent -> ``lifecycle_state:<to_state>``, so the
+    graph is the single source of truth for who is active / suspended /
+    decommissioned. Terminal decommission also stores an anomaly so ghost-agent
+    offboarding surfaces in get_anomalies / dashboards.
+
+    Returns a descriptor of the recorded edge. Caller-best-effort: never raises
+    into the lifecycle write path.
+    """
+    init_db()
+    now = _now()
+    nodes = [
+        ("agent", agent_id, json.dumps({"lifecycle_status": to_state, "actor": actor})),
+        ("lifecycle_state", to_state, "{}"),
+    ]
+    edges = [("agent", agent_id, "lifecycle_state", to_state, "transitioned_to")]
+    _upsert_nodes(tenant_id, nodes, now)
+    _upsert_edges(tenant_id, edges, now)
+
+    agent_node = _node_id(tenant_id, "agent", agent_id)
+    if to_state == "decommissioned":
+        store_anomaly(GraphAnomaly(
+            anomaly_type="AGENT_DECOMMISSIONED",
+            tenant_id=tenant_id,
+            detected_at=now,
+            subject_node=agent_node,
+            detail=f"agent {agent_id} decommissioned" + (f": {reason}" if reason else ""),
+            severity="medium",
+            context={"from_state": from_state, "actor": actor, "reason": reason},
+        ))
+
+    state_node = _node_id(tenant_id, "lifecycle_state", to_state)
+    return {
+        "agent_id": agent_id,
+        "from_state": from_state,
+        "to_state": to_state,
+        "edge_id": _edge_id(tenant_id, agent_node, state_node, "transitioned_to"),
+    }
+
+
 def record_permission_scope(tenant_id: str, agent_label: str,
                              policy_label: str, scope: list[str],
                              source_event: str | None = None) -> None:

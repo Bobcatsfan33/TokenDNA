@@ -29,8 +29,8 @@
       "title": "Least Privilege",
       "owner": "product",
       "implementation_status": "implemented",
-      "implementation_summary": "API keys default to readonly, legacy keys are migrated to readonly, and only owner actors can mint owner keys.",
-      "evidence_files": ["modules/tenants/models.py", "modules/tenants/store.py", "modules/storage/migrations.py", "tests/test_storage_migrations.py"]
+      "implementation_summary": "API keys default to readonly, legacy keys are migrated to readonly, and only owner actors can mint owner keys. Per-route OAuth scopes (modules/auth/scopes.require_scopes, from the JWT scp/scope claim) harden RBAC into auditable least privilege; a log-only rollout emits would-deny AuditEvents before enforcement flips via TOKENDNA_SCOPES_ENFORCE.",
+      "evidence_files": ["modules/tenants/models.py", "modules/tenants/store.py", "modules/auth/scopes.py", "modules/storage/migrations.py", "tests/test_storage_migrations.py", "tests/test_scopes.py"]
     },
     {
       "id": "AU-2",
