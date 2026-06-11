@@ -42,7 +42,7 @@ Please include:
 
 ## Security Design Principles
 
-Aegis Security is built toward **FedRAMP High** and **DoD IL6** authorization. Our security principles:
+Aegis Security is **designed toward FedRAMP High and DoD IL4+** authorization; IL5/IL6 remain roadmap targets reachable via the customer-managed federal build. Implemented posture is tracked in [`compliance/dod/control_matrix.json`](compliance/dod/control_matrix.json). Our security principles:
 
 1. **Zero trust by default** — no implicit trust between components
 2. **Least privilege** — RBAC enforced at every API endpoint
@@ -53,13 +53,16 @@ Aegis Security is built toward **FedRAMP High** and **DoD IL6** authorization. O
 
 ## Known Security Limitations (Current)
 
-These are documented gaps on our path to full FedRAMP High / IL6 authorization:
+These are documented gaps on our path to full FedRAMP High / IL4+ authorization (IL5/IL6 deployment profiles remain roadmap targets). The **Closed by** column links each gap to the workstream that remediates it.
 
-- **FIPS 140-2 validated cryptography**: Not yet enforced platform-wide. Planned for v2.3.
-- **CAC/PIV authentication**: Not yet supported. Planned for v3.0 (government edition).
-- **Encryption at rest**: Data tier (Redis, ClickHouse) requires operator-configured encryption. Platform does not enforce this automatically.
-- **mTLS between services**: Not yet enforced for internal service-to-service calls. Planned for v2.3.
-- **RBAC**: Basic implementation in v2.2; full ABAC (attribute-based) access control planned for v3.0.
+| Limitation | Status | Closed by |
+|------------|--------|-----------|
+| **FIPS 140-3 validated cryptography** — runtime `FIPSEnforcer` ships, but the validated OpenSSL provider was not delivered as a build flavor | Closing | **T-3** — `Dockerfile.fips` (UBI9 CMVP-validated OpenSSL) + fail-closed `assert_fips_mode()` startup gate + `fips-smoke` CI job |
+| **mTLS between internal services** — application-layer mTLS shipped for Redis/ClickHouse/Postgres; the internal API plane and SPIFFE-style peer authorization were not enforced | Closing | **T-2** — `:8443` mutual-TLS listener + `require_internal_peer` SAN allowlist + cert-manager `internal-pki.yaml` rotation |
+| **Scope-based authorization** — RBAC roles enforced at every endpoint, but per-route OAuth scopes (least privilege) were not | Closing | **T-4** — `modules/auth/scopes.py` `require_scopes()`, log-only rollout then enforce |
+| **CAC/PIV authentication** | Open | Planned v3.0 (government edition) |
+| **Encryption at rest** | Operator-configured | Field-level crypto shipped (`modules/security/field_crypto.py`); data-tier volume encryption remains operator responsibility |
+| **Full ABAC** | Open | Planned v3.0; scope-based authorization (T-4) is the intermediate step |
 
 ## Dependency Security
 
