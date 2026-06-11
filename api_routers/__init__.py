@@ -19,6 +19,7 @@ from api_routers.federation import router as federation_router
 from api_routers.identity_surface import router as identity_surface_router
 from api_routers.intel import router as intel_router
 from api_routers.mcp import router as mcp_router
+from api_routers.misc import router as misc_router
 from api_routers.passport import router as passport_router
 from api_routers.policy_bundles import router as policy_bundles_router
 from api_routers.policy_guard import router as policy_guard_router
@@ -39,6 +40,7 @@ ALL_ROUTERS: tuple[APIRouter, ...] = (
     identity_surface_router,
     intel_router,
     mcp_router,
+    misc_router,
     passport_router,
     policy_bundles_router,
     policy_guard_router,
