@@ -213,6 +213,12 @@ app.add_middleware(
     allow_credentials=False,  # explicit — never wildcard credentials
 )
 
+# T-1 decomposition registry: mount every extracted domain router. No-op while
+# api_routers.ALL_ROUTERS is empty; routers are added one sprint at a time and
+# their handlers are removed from this file (enforced by the monolith ratchet).
+from api_routers import mount_all as _mount_routers  # noqa: E402
+_mount_routers(app)
+
 
 # Prometheus latency / count middleware. Records every served request,
 # falls back to a no-op when prometheus_client is not installed.
