@@ -56,9 +56,9 @@ These existed before today's audit; CLAUDE.md previously listed them as "not sta
 | `policy_guard.py` | 569 | 48 / 102 asserts | 11 | `ent.enforcement_plane` | ✅ **shipped** Sprint A | — |
 | `policy_advisor.py` | 990 | 48 / 90 asserts | 11 | `ent.enforcement_plane` | ✅ **shipped** Sprint A | — |
 | `permission_drift.py` | 641 | 50 / ~115 asserts | 13 | `ent.behavioral_dna` | ✅ **shipped** Sprint A | — |
-| `agent_lifecycle.py` | 679 | 30 / 37 asserts | 19 | `ent.behavioral_dna` | **~70%** *(deferred)* | no trust_graph integration; thin tests |
+| `agent_lifecycle.py` | 679 | 40 / 47 asserts | 19 | `ent.behavioral_dna` | ✅ **shipped** T-4 | trust_graph lifecycle edges + AGENT_DECOMMISSIONED anomaly + SOC2 audit on every transition |
 | `mcp_inspector.py` | 907 | 49 / ~150 asserts | 8 | `ent.mcp_gateway` | ✅ **shipped** MCP Sprint | — |
-| `cert_dashboard.py` | 659 | 28 / 37 asserts | 17 refs | `ent.enforcement_plane` | **~55%** *(deferred)* | essentially CRUD; lifecycle automation missing |
+| `cert_dashboard.py` | 659 | 38 / 47 asserts | 19 refs | `ent.enforcement_plane` | ✅ **shipped** T-4 | adaptive `run_expiry_sweep` + renewal-hook registry + idempotency + audit (replaces CRUD-only) |
 
 ### Production hardening — shipped (last 24 hrs)
 

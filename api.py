@@ -241,6 +241,11 @@ async def _metrics_middleware(request, call_next):
 
 
 async def _startup_checks() -> None:
+    # Federal-profile fail-closed crypto gate (T-3, SC-13): refuse to start when
+    # REQUIRE_FIPS=true but the validated OpenSSL provider is not active.
+    from modules.security.fips import assert_fips_mode
+    assert_fips_mode()
+
     if DEV_MODE:
         logger.warning("DEV_MODE=true — JWT auth disabled. Not for production.")
     if not OIDC_ISSUER and not DEV_MODE:
@@ -4211,6 +4216,37 @@ async def api_certs_expiring(
         limit=limit,
     )
     return {"expiring": certs, "count": len(certs), "within_days": within_days}
+
+
+@app.post("/api/certs/sweep")
+async def api_certs_sweep(
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    """Run the adaptive certificate-lifecycle sweep (T-4 automation).
+
+    Classifies the fleet, refreshes expiry alerts, and triggers registered
+    renewal hooks for certs inside the renewal window — idempotently.
+    Body: {"renew_within_days": int?, "dry_run": bool?}.
+    """
+    cert_dashboard.init_db()
+    renew_within = body.get("renew_within_days")
+    return cert_dashboard.run_expiry_sweep(
+        tenant_id=tenant.tenant_id,
+        renew_within_days=int(renew_within) if renew_within is not None else cert_dashboard.RENEWAL_THRESHOLD_DAYS,
+        dry_run=bool(body.get("dry_run", False)),
+    )
+
+
+@app.get("/api/certs/renewals")
+async def api_certs_renewals(
+    limit: int = 200,
+    tenant: TenantContext = Depends(require_feature("ent.enforcement_plane")),
+):
+    """List recorded certificate renewal actions for the tenant (T-4)."""
+    cert_dashboard.init_db()
+    renewals = cert_dashboard.list_renewals(tenant_id=tenant.tenant_id, limit=limit)
+    return {"renewals": renewals, "count": len(renewals)}
 
 
 @app.post("/api/certs/expiry-alerts/{alert_id}/acknowledge")

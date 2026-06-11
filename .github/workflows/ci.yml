@@ -61,6 +61,33 @@ jobs:
       - name: API route-surface guard (decomposition preserves the surface — T-1)
         run: python scripts/ci/openapi_route_guard.py
 
+      - name: FIPS crypto-primitive gate (SC-13)
+        run: |
+          # No non-approved hashlib primitive may be requested for security in
+          # product modules. Allow markers: `usedforsecurity=False` (caller
+          # opted out of security use) and `noqa: S324` (the deliberate FIPS
+          # probe in modules/security/fips.py, which MUST raise under FIPS).
+          if git grep -nE "hashlib\.(md5|sha1)\(" -- modules/ \
+               | grep -vE "usedforsecurity|noqa: S324"; then
+            echo "::error::non-approved hash primitive used for security in modules/ (SC-13). Add usedforsecurity=False or route through modules.security.fips."
+            exit 1
+          fi
+          echo "FIPS crypto-primitive gate OK"
+
+      - name: FIPS fail-closed gate must hold on a non-FIPS host
+        run: |
+          # With REQUIRE_FIPS=true on this (non-FIPS) runner, assert_fips_mode()
+          # must exit 78 (fail-closed). Unset, it must be a no-op.
+          set +e
+          REQUIRE_FIPS=true python -c "from modules.security.fips import assert_fips_mode; assert_fips_mode()"
+          code=$?
+          set -e
+          if [ "$code" != "78" ]; then
+            echo "::error::expected assert_fips_mode() to exit 78 under REQUIRE_FIPS=true on a non-FIPS host, got $code"; exit 1
+          fi
+          REQUIRE_FIPS=false python -c "from modules.security.fips import assert_fips_mode; assert_fips_mode(); print('no-op OK when REQUIRE_FIPS unset')"
+          echo "FIPS fail-closed gate OK"
+
       - name: Import verification
         run: |
           python -c "

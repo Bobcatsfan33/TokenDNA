@@ -1,0 +1,17 @@
+# .github/workflows/security.yml — this repo's caller of the shared workflow.
+#
+# The org-level reusable workflow (CodeQL, Trivy image gating, CycloneDX SBOMs,
+# cosign keyless signing, SLSA v1 provenance) is maintained once in
+# Bobcatsfan33/.github and consumed here with ~12 lines. See SH-1 in the
+# portfolio roadmap and docs/governance/SECURITY_WORKFLOW.md.
+name: security
+on:
+  push: { branches: [main] }
+  pull_request: { branches: [main] }
+jobs:
+  suite:
+    uses: Bobcatsfan33/.github/.github/workflows/security-reusable.yml@main
+    with:
+      image: ghcr.io/bobcatsfan33/tokendna
+      languages: '["python"]'
+      dockerfile: Dockerfile
