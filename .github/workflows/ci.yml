@@ -55,6 +55,12 @@ jobs:
           print("All product modules use the shared storage backend.")
           PY
 
+      - name: Monolith ratchet (api.py may only shrink — T-1)
+        run: python scripts/ci/api_monolith_ratchet.py
+
+      - name: API route-surface guard (decomposition preserves the surface — T-1)
+        run: python scripts/ci/openapi_route_guard.py
+
       - name: FIPS crypto-primitive gate (SC-13)
         run: |
           # No non-approved hashlib primitive may be requested for security in
