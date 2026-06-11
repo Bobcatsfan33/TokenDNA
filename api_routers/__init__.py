@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, FastAPI
 
+from api_routers.agents import router as agents_router
 from api_routers.compliance import router as compliance_router
 from api_routers.enforcement import router as enforcement_router
 from api_routers.mcp import router as mcp_router
@@ -17,6 +18,7 @@ from api_routers.policy_guard import router as policy_guard_router
 from api_routers.policy_suggestions import router as policy_suggestions_router
 
 ALL_ROUTERS: tuple[APIRouter, ...] = (
+    agents_router,
     compliance_router,
     enforcement_router,
     mcp_router,
