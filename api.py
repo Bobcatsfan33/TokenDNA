@@ -1,129 +1,39 @@
 """
-TokenDNA Identity Backbone -- FastAPI v2.5.0
+TokenDNA Identity Backbone -- FastAPI app factory (v2.5.0).
 
-Endpoints
-─────────
-GET  /                          health check (unauthenticated)
-GET  /dashboard                 admin dashboard SPA (unauthenticated)
+This module is the APP FACTORY only (T-1 decomposition complete). It builds the
+FastAPI app, wires middleware + lifespan + startup checks, and mounts every
+product domain router via ``api_routers.mount_all``. The 305 product routes live
+in ``api_routers/<domain>.py`` — one router per domain, each declaring its own
+auth + tier-gate dependencies. The CI ratchet
+(``scripts/ci/api_monolith_ratchet.py``) keeps this file from regrowing; new
+endpoints are born in ``api_routers/``, never here.
 
-GET  /api/stats                 KPI counters for current tenant
-GET  /api/events                recent session events for current tenant
-GET  /api/events/hourly         hourly volume for past 24h (chart data)
-GET  /api/threats               threat signal breakdown for past 24h
-GET  /api/health                detailed system health
-
-GET  /secure                    main token integrity check
-GET  /profile/{uid}             inspect user adaptive profile
-DELETE /profile/{uid}           reset user profile
-POST /revoke                    manually revoke token by jti
-
-POST /admin/tenants             create tenant  (returns raw API key, show once)
-GET  /admin/tenants             list all tenants
-GET  /admin/tenants/{id}/keys   list API keys for a tenant
-POST /admin/tenants/{id}/keys   rotate / add API key
-DELETE /admin/tenants/{id}/keys/{kid}  revoke a key
-
-POST /onboarding/aws/external-id   generate ExternalId for CloudFormation
-POST /onboarding/aws/test          test IAM role + quick posture scan
-
-POST /api/uis/normalize            normalize a protocol event into UIS v1.0
-POST /api/agent/attest             generate 4D agent attestation record
-POST /api/mcp/verify               verify MCP server integrity/capabilities
+Only infrastructure endpoints remain in this file:
+  GET /          service info / health
+  GET /healthz   Kubernetes liveness
+  GET /readyz    Kubernetes readiness (503 when a dependency is down)
+  GET /metrics   Prometheus exposition
 """
 from __future__ import annotations
 
 import asyncio
-import datetime
-import json
 import logging
 import os
-import uuid
 from contextlib import asynccontextmanager
-from pathlib import Path
-from typing import Optional
 
-from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import JSONResponse
 
-from auth import verify_token
-from config import DEV_MODE, OIDC_ISSUER, RATE_LIMIT_PER_MINUTE, RATE_LIMIT_OPEN_PER_MINUTE
-from modules.identity import async_pipeline, geo_intel, ml_model, scoring, session_graph, threat_intel
-from modules.identity.alerts import handle_block, handle_revoke, handle_step_up
-from modules.identity.cache_redis import (
-    TenantRedis,
-    get_baseline,
-    get_event_counters,
-    get_redis,
-    increment_event_counter,
-    increment_rate,
-    is_token_revoked,
-    push_baseline_history,
-    revoke_token,
-    set_baseline,
-)
-from modules.identity.scoring import RiskTier
-from modules.identity.token_dna import generate_dna, migrate_dna
-from modules.identity.uis import normalize_from_protocol, validate_uis_event
-from modules.identity.uis_protocol import get_uis_spec, normalize_with_adapter
-from modules.identity.attestation import create_attestation_record
-from modules.identity.mcp_attestation import verify_mcp_server
-from modules.identity.attestation_certificates import issue_certificate, revoke_certificate, verify_certificate
-from modules.identity.certificate_status import build_crl, certificate_status_payload
-from modules.identity.edge_enforcement import evaluate_runtime_enforcement
-from modules.identity.trust_authority import list_key_configs
-from modules.identity.attestation_drift import build_drift_event, DriftAssessment, assess_runtime_drift
-from modules.identity import schema_registry
-from modules.identity import trust_graph
-from modules.identity import blast_radius
-from modules.identity import policy_guard
-from modules.identity import permission_drift
-from modules.identity import intent_correlation
-from modules.identity import policy_bundles
-from modules.identity import agent_lifecycle
-from modules.identity import mcp_inspector
-from modules.identity import mcp_gateway
-from modules.identity import agent_discovery
-from modules.identity import enforcement_plane
-from modules.identity import behavioral_dna
-from modules.identity import compliance_engine
-from modules.identity import cert_dashboard
-from modules.identity import policy_advisor
-from modules.identity import network_intel
-from modules.identity import compliance
-from modules.identity import attestation_store
-from modules.identity import uis_store
-from modules.identity import decision_audit
-from modules.identity import trust_federation
-from modules.identity import certificate_transparency as ct_log
+from config import DEV_MODE, OIDC_ISSUER
+from modules.identity import threat_intel
 from modules.identity import clickhouse_client
-from modules.integrations.siem_taxii import build_taxii_bundle
-from modules.integrations.idp_events import adapt_idp_event
-from modules.integrations.sdk_wrappers import (
-    build_adapter_normalize_request,
-    build_attestation_request,
-    sdk_create_attestation,
-    sdk_normalize_event,
-)
 
 # alias used in /api/oss/sdk/attest route
-from modules.product import metering as feature_metering
-from modules.product.commercial_tiers import (
-    list_features as list_commercial_features,
-    require_feature,
-    tier_for_plan,
-)
-from modules.product.feature_gates import PlanTier, evaluate_feature_access, list_feature_matrix
-from modules.storage import db_backend
-from modules.identity.uis_narrative import enrich_event as uis_enrich_event
-from modules.tenants import store as tenant_store
-from modules.tenants.middleware import get_tenant
-from modules.tenants.models import Plan, TenantContext
 from modules.security.audit_log import AuditEventType, AuditOutcome, log_event
 from modules.security.headers import RequestValidationMiddleware, SecurityHeadersMiddleware
-from modules.security.rbac import Role, require_role
-from modules.security.fips import fips, FIPSError
-from modules.identity.hvip import HVIPEnforcer, HVIPRole, HVIPAction, HVIPError
+from modules.security.fips import fips
 
 logging.basicConfig(
     level=logging.INFO,
@@ -131,36 +41,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 from api_routers._shared import APP_VERSION  # noqa: E402
-
-def _plan_tier_from_tenant(tenant: TenantContext) -> PlanTier:
-    plan_value = str(
-        getattr(tenant, "plan", Plan.FREE).value if hasattr(tenant.plan, "value") else tenant.plan
-    ).lower()
-    if plan_value in {p.value for p in PlanTier}:
-        return PlanTier(plan_value)
-    return PlanTier.FREE
-
-
-def _record_decision_audit(
-    *,
-    tenant: TenantContext,
-    request_id: str,
-    source_endpoint: str,
-    actor_subject: str,
-    evaluation_input: dict,
-    enforcement: dict,
-    policy_bundle: dict | None = None,
-) -> dict:
-    return decision_audit.record_decision(
-        tenant_id=tenant.tenant_id,
-        request_id=request_id,
-        source_endpoint=source_endpoint,
-        actor_subject=actor_subject,
-        evaluation_input=evaluation_input,
-        enforcement_result=enforcement,
-        policy_bundle=policy_bundle,
-    )
-
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -278,7 +158,6 @@ async def _startup_checks() -> None:
 
 # ── Rate limiting dependency ──────────────────────────────────────────────────
 
-from api_routers._shared import check_rate_limit, check_rate_limit_open  # noqa: E402
 # ── Health / dashboard (unauthenticated) ─────────────────────────────────────
 
 @app.get("/")
@@ -324,130 +203,3 @@ async def metrics_endpoint():
     from modules.observability.metrics import render_metrics
     body, content_type = render_metrics()
     return Response(content=body, media_type=content_type)
-
-
-# ── Enterprise SAML SSO (alpha) ───────────────────────────────────────────────
-
-
-# ── SCIM 2.0 (alpha) ──────────────────────────────────────────────────────────
-
-
-# ── Dashboard data API (tenant-scoped, real data) ────────────────────────────
-
-# ── Consolidation endpoints: UIS + Agent Attestation + MCP Verification ──────
-
-# ── Main integrity check ──────────────────────────────────────────────────────
-
-# ── Profile endpoints ─────────────────────────────────────────────────────────
-
-# ── Manual revocation ─────────────────────────────────────────────────────────
-
-# ── Tenant management (admin) ─────────────────────────────────────────────────
-
-# ── AWS onboarding ────────────────────────────────────────────────────────────
-
-# ── Session Intelligence (/api/sessions) ──────────────────────────────────────
-
-# ── Cloud Posture Findings (/api/cloud-findings) ───────────────────────────────
-
-# ── Audit Log endpoint (OWNER only) ────────────────────────────────────────────
-
-# ── Trust Graph endpoints ──────────────────────────────────────────────────────
-
-# ── Blast Radius Simulator endpoints ──────────────────────────────────────────
-
-# ── Intent Correlation endpoints ───────────────────────────────────────────────
-
-# ── ZTIX Exchange endpoints ───────────────────────────────────────────────────
-
-# ── Permission Drift Tracker (Sprint 5-2) ─────────────────────────────────
-
-# ── Sprint 5-3: Ghost Agent Offboarding Enforcement ───────────────────────────
-
-# ── Sprint 5-4: MCP Intent-Aware Inspection ───────────────────────────────────
-
-# ── Sprint 6-1: Agent Attestation Certificate Lifecycle Dashboard ─────────────
-
-# ==========================================================================
-# Policy Advisor — Adaptive Policy Suggestion Engine (Sprint 6-2)
-# ==========================================================================
-
-
-# ==========================================================================
-# Agent Identity Passport (Sprint 3-1) — restored 2026-04-21
-# ==========================================================================
-
-from modules.identity import passport as passport_module
-
-
-# ==========================================================================
-# Verifier Reputation Network (Sprint 3-2) — restored 2026-04-21
-# ==========================================================================
-
-from modules.identity import verifier_reputation as reputation_module
-
-
-# ==========================================================================
-# ZTIX Continuous Proof-of-Control (Expansion #2) — Sprint 7-B
-# ==========================================================================
-
-from modules.identity import proof_of_control as poc_module
-
-
-# ── Phase 5-1: MCP Security Gateway ──────────────────────────────────────────
-
-
-# ── Phase 5-2: Agent Discovery & Inventory ────────────────────────────────────
-
-
-# ── Phase 5-3: Enforcement Plane ─────────────────────────────────────────────
-
-
-# ── Phase 5-3: Behavioral DNA ─────────────────────────────────────────────────
-
-
-# ── Phase 5-4: Compliance Engine ─────────────────────────────────────────────
-
-
-# ── Commercial Tier Entitlements ──────────────────────────────────────────────
-# Ungated — community tenants need to see what they're locked out of.
-
-# ── Threat Sharing Network ────────────────────────────────────────────────────
-# Cross-tenant threat-intel sharing built on top of intent_correlation.
-# Gated behind ent.intent_correlation since the network is an extension of
-# that feature.
-
-# ── Delegation Receipts ───────────────────────────────────────────────────────
-# Cryptographic paper trail for agent delegation chains. Gated behind
-# ent.enforcement_plane — receipts are an authorization-enforcement primitive.
-
-# ── Threat Sharing Flywheel ───────────────────────────────────────────────────
-# Network-effect loops on top of /api/threat-sharing: hit recording, catalog
-# scoring, industry digest, auto-subscribe.
-
-# ── Workflow Attestation ──────────────────────────────────────────────────────
-# Multi-hop signed DAG with replay + drift detection. Gated behind
-# ent.enforcement_plane — workflow attestation is the chain-of-custody
-# layer above per-receipt delegation.
-
-# ── Compliance Posture & Incident Reconstruction ──────────────────────────────
-# Auditor-facing surfaces. compliance.py owns the framework definitions;
-# this is the operator's "prove our posture as of now" deliverable.
-
-# ── Honeypot Mesh / Active Deception ──────────────────────────────────────────
-# Active counterpart to deception_mesh: emit attestation-valid decoys,
-# harvest attacker TTPs. Gated behind ent.enforcement_plane.
-
-# ── Staged Rollout / Allowlist Admin ──────────────────────────────────────────
-# Per-tenant feature allowlists for design-partner / beta / staged-rollout
-# scenarios. Admin-only. require_feature() consults this transparently;
-# tier-based entitlement remains the default.
-
-# ── Edge enforcement parity (Cloudflare Worker snapshot endpoints) ────────────
-#
-# Pulled by edge/index.js scheduled() handler every 60s and cached in KV so
-# the request-path edge checks (cert revocation + drift score gating) are
-# O(1) and never block on the backend.  Authenticates via a shared
-# X-Edge-Sync-Token header (set as a Cloudflare Worker secret).
-
-
