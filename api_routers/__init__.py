@@ -15,6 +15,7 @@ from api_routers.compliance import router as compliance_router
 from api_routers.delegation import router as delegation_router
 from api_routers.discovery import router as discovery_router
 from api_routers.enforcement import router as enforcement_router
+from api_routers.enterprise import router as enterprise_router
 from api_routers.federation import router as federation_router
 from api_routers.identity_surface import router as identity_surface_router
 from api_routers.intel import router as intel_router
@@ -36,6 +37,7 @@ ALL_ROUTERS: tuple[APIRouter, ...] = (
     delegation_router,
     discovery_router,
     enforcement_router,
+    enterprise_router,
     federation_router,
     identity_surface_router,
     intel_router,
