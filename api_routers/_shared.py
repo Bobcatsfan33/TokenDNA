@@ -109,3 +109,39 @@ def _edge_sync_authorized(request: Request) -> bool:
         return False
     presented = (request.headers.get("X-Edge-Sync-Token") or "").strip()
     return bool(presented) and _edge_hmac.compare_digest(presented, expected)
+
+
+# ── SCIM + dashboard + tenant-subject helpers (moved from api.py) ─────────────
+from pathlib import Path  # noqa: E402
+
+from fastapi.responses import JSONResponse  # noqa: E402
+
+# Repo-root-relative (this file lives in api_routers/, so go up one level).
+_DASHBOARD_PATH = Path(__file__).resolve().parent.parent / "dashboard" / "index.html"
+
+
+def _tenant_subject(tenant: TenantContext) -> str:
+    return str(getattr(tenant, "owner_email", "") or tenant.api_key_id or tenant.tenant_id)
+
+
+def _scim_response(body: dict, status: int = 200):
+    return JSONResponse(
+        content=body,
+        status_code=status,
+        media_type="application/scim+json",
+    )
+
+
+def _scim_handle(coro):  # decorator-like wrapper
+    """Translate SCIMError into a SCIM-formatted JSON response."""
+    from functools import wraps
+    from modules.auth.scim import SCIMError
+
+    @wraps(coro)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await coro(*args, **kwargs)
+        except SCIMError as exc:
+            return _scim_response(exc.to_response(), status=exc.status)
+
+    return wrapper

@@ -147,7 +147,7 @@ def test_oidc_group_role_map(monkeypatch):
 
 
 def test_key_lifecycle_routes_emit_audit(monkeypatch):
-    import api
+    import api_routers.enterprise as api
     from modules.tenants.models import Plan, TenantContext
 
     tenant = TenantContext(
@@ -187,7 +187,7 @@ def test_key_lifecycle_routes_emit_audit(monkeypatch):
 
 
 def test_only_runtime_secure_endpoint_depends_on_bearer_verify_token():
-    api_source = Path(__file__).resolve().parents[1].joinpath("api.py").read_text()
+    api_source = Path(__file__).resolve().parents[1].joinpath("api_routers/enterprise.py").read_text()
 
     assert api_source.count("Depends(verify_token)") == 1
     assert "async def secure(" in api_source
