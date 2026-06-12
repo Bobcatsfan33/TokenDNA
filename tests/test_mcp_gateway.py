@@ -567,8 +567,8 @@ class TestAPIRouteRegistration(unittest.TestCase):
     requiring a live FastAPI app instance."""
 
     def test_api_module_imports_mcp_gateway(self):
-        import api as api_mod
-        assert hasattr(api_mod, "mcp_gateway"), "api.py should import mcp_gateway"
+        import api_routers.mcp as _r
+        assert hasattr(_r, "mcp_gateway"), "api.py should import mcp_gateway"
 
     def test_gateway_routes_exist_in_api(self):
         """Confirm the expected route paths are registered on the FastAPI app."""

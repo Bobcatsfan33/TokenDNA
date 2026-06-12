@@ -504,8 +504,8 @@ class TestShadowAlerts(unittest.TestCase):
 class TestAPIRouteRegistration(unittest.TestCase):
 
     def test_api_module_imports_agent_discovery(self):
-        import api as api_mod
-        assert hasattr(api_mod, "agent_discovery")
+        import api_routers.agents as _r
+        assert hasattr(_r, "agent_discovery")
 
     def test_discovery_routes_registered(self):
         try:

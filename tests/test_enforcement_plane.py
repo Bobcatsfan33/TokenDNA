@@ -396,8 +396,8 @@ class TestKillSwitch(unittest.TestCase):
 class TestAPIRouteRegistration(unittest.TestCase):
 
     def test_api_imports_enforcement_plane(self):
-        import api as api_mod
-        assert hasattr(api_mod, "enforcement_plane")
+        import api_routers.enforcement as _r
+        assert hasattr(_r, "enforcement_plane")
 
     def test_enforcement_routes_registered(self):
         try:
