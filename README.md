@@ -6,15 +6,17 @@
 [![Security: Designed toward FedRAMP High / IL4+](https://img.shields.io/badge/Security-Designed%20toward%20FedRAMP%20High%20%2F%20IL4%2B-red)](compliance/dod/control_matrix.json)
 [![PRs: owner approval required](https://img.shields.io/badge/PRs-owner%20approval%20required-yellow)](CONTRIBUTING.md)
 
-> **v3.0.0 — Runtime Risk Engine.** Closes the three RSA 2026 gaps no major vendor addressed: (1) agent self-modification of policy, (2) silent permission drift, (3) MCP intent-aware inspection. End-to-end demo arc shippable in 10 minutes against a fresh deployment.
+> **v3.0.0 — Runtime Risk Engine.** Targets three runtime-security gaps highlighted at RSA 2026: (1) agent self-modification of policy, (2) silent permission drift, (3) MCP intent-aware inspection. End-to-end demo arc shippable in 10 minutes against a fresh deployment.
+
+> **Project status.** Early-stage, single-maintainer project. The code is functional and CI-gated, but it has **not** had an independent security audit or penetration test, has no production deployments or reference customers yet, and all compliance references describe control *mappings and design intent* — not third-party certification or accreditation. Evaluate accordingly.
 
 ## TokenDNA Runtime Risk Engine
 
-**The first integrated runtime risk engine for AI agents in the enterprise.**
+**An integrated runtime risk engine for AI agents.**
 
-OAuth tells you *who* called a tool. TokenDNA tells you *whether the call is what it claims to be, whether the agent is allowed to make it, and what happens to your blast radius if it turns out it isn't.*
+OAuth tells you *who* called a tool. TokenDNA aims to tell you *whether the call is what it claims to be, whether the agent is allowed to make it, and what happens to your blast radius if it turns out it isn't.*
 
-### What it catches that nobody else does
+### What it's designed to catch
 
 | Gap (RSA 2026) | Detection | Severity |
 |---|---|---|
@@ -41,7 +43,7 @@ OAuth tells you *who* called a tool. TokenDNA tells you *whether the call is wha
 ```
 
 Every state-changing operation in every security module emits an `AuditEvent`
-into a tamper-evident hash-chained log — SOC 2 review-ready on day one.
+into a tamper-evident hash-chained log, intended to provide SOC 2-relevant audit evidence.
 
 ### 10-minute demo
 
@@ -58,7 +60,7 @@ Walks through baseline → drift → self-modification → MCP chain → decepti
 
 ---
 
-> **Underlying platform** — v2.2.0 hardening: RBAC, immutable audit log, security headers middleware, HMAC-SHA256 IP fingerprinting, secrets manager backend, CIS Docker hardening, Postgres + Helm + Grafana + SAML/SCIM all production-ready.
+> **Underlying platform** — v2.2.0 hardening: RBAC, immutable audit log, security headers middleware, HMAC-SHA256 IP fingerprinting, secrets manager backend, CIS Docker hardening, Postgres + Helm + Grafana + SAML/SCIM all implemented.
 
 **Zero-Trust token integrity and session behavioral analytics.**
 
@@ -272,7 +274,7 @@ LIMIT 20;
 
 ## Security & Compliance
 
-TokenDNA is **designed toward FedRAMP High and DoD IL4+** alignment; IL5/IL6 deployment profiles are on the roadmap and gated behind the customer-managed federal build. The implemented posture is tracked control-by-control in [`compliance/dod/control_matrix.json`](compliance/dod/control_matrix.json). Key controls in v2.2.0:
+TokenDNA is **designed toward FedRAMP High and DoD IL4+** alignment; IL5/IL6 deployment profiles are on the roadmap and gated behind the customer-managed federal build. These are design targets, not accreditations — no control has been assessed or authorized by a third party. The implemented posture is tracked control-by-control in [`compliance/dod/control_matrix.json`](compliance/dod/control_matrix.json). Key controls in v2.2.0:
 
 | Control Family | Implementation |
 |---|---|
