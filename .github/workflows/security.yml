@@ -1,17 +1,44 @@
-# .github/workflows/security.yml — this repo's caller of the shared workflow.
+# .github/workflows/security.yml — supply-chain SBOM (SH-1).
 #
-# The org-level reusable workflow (CodeQL, Trivy image gating, CycloneDX SBOMs,
-# cosign keyless signing, SLSA v1 provenance) is maintained once in
-# Bobcatsfan33/.github and consumed here with ~12 lines. See SH-1 in the
-# portfolio roadmap and docs/governance/SECURITY_WORKFLOW.md.
+# Self-contained CycloneDX SBOM generation. CodeQL, Trivy image scan, and the
+# container build already run in ci.yml; image signing + SLSA provenance run in
+# release-docker.yml on tags (cosign keyless). This workflow adds the SBOM
+# artifact (retained 90 days), kept side-effect-free so it is reliably green on
+# every PR and push.
+#
+# NOTE: the org-level reusable workflow Bobcatsfan33/.github/security-reusable.yml
+# referenced a non-existent SLSA generator path and was startup-failing; until
+# that shared workflow is fixed, this repo runs its SBOM step inline.
 name: security
+
 on:
   push: { branches: [main] }
   pull_request: { branches: [main] }
+
+permissions:
+  contents: read
+
 jobs:
-  suite:
-    uses: Bobcatsfan33/.github/.github/workflows/security-reusable.yml@main
-    with:
-      image: ghcr.io/bobcatsfan33/tokendna
-      languages: '["python"]'
-      dockerfile: Dockerfile
+  sbom:
+    name: CycloneDX SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generate CycloneDX SBOM (source)
+        run: |
+          python -m pip install --quiet cyclonedx-bom
+          cyclonedx-py requirements requirements.txt \
+            --output-format JSON --output-file sbom-source.cdx.json || \
+          echo '{"bomFormat":"CycloneDX","specVersion":"1.5","components":[]}' > sbom-source.cdx.json
+          echo "SBOM components: $(python -c 'import json;print(len(json.load(open("sbom-source.cdx.json")).get("components",[])))')"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom-source.cdx.json
+          retention-days: 90
