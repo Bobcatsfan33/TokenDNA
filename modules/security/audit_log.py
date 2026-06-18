@@ -133,6 +133,9 @@ class AuditEventType(str, Enum):
     RETRIEVAL_ALLOWED   = "retrieval.allowed"
     RETRIEVAL_DENIED    = "retrieval.denied"
 
+    # Cross-session/agent/model campaign correlation (Gap roadmap A1)
+    CAMPAIGN_DETECTED   = "campaign.detected"
+
     # Tenant management
     TENANT_CREATED      = "tenant.created"
     TENANT_DELETED      = "tenant.deleted"
