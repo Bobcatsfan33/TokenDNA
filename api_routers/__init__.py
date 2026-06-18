@@ -25,6 +25,7 @@ from api_routers.mcp import router as mcp_router
 from api_routers.misc import router as misc_router
 from api_routers.passport import router as passport_router
 from api_routers.policy_bundles import router as policy_bundles_router
+from api_routers.policy_export import router as policy_export_router
 from api_routers.policy_guard import router as policy_guard_router
 from api_routers.policy_suggestions import router as policy_suggestions_router
 from api_routers.product import router as product_router
@@ -49,6 +50,7 @@ ALL_ROUTERS: tuple[APIRouter, ...] = (
     misc_router,
     passport_router,
     policy_bundles_router,
+    policy_export_router,
     policy_guard_router,
     policy_suggestions_router,
     product_router,
