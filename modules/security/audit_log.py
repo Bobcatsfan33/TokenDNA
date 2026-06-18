@@ -122,6 +122,13 @@ class AuditEventType(str, Enum):
     CERT_EXPIRY_SWEEP      = "cert.expiry_sweep"
     CERT_RENEWAL_TRIGGERED = "cert.renewal_triggered"
 
+    # Real-time credential rip / revocation fan-out (Gap roadmap D2)
+    KILL_RIP_INITIATED     = "kill.rip.initiated"
+    KILL_PLANE_REVOKED     = "kill.plane.revoked"
+    KILL_PLANE_FAILED      = "kill.plane.failed"
+    KILL_RIP_REVERSED      = "kill.rip.reversed"
+    KILL_CASCADE_INITIATED = "kill.cascade.initiated"
+
     # Tenant management
     TENANT_CREATED      = "tenant.created"
     TENANT_DELETED      = "tenant.deleted"
