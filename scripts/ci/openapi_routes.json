@@ -173,6 +173,7 @@
   "GET /api/workflow/{workflow_id}/replay",
   "GET /console",
   "GET /dashboard",
+  "GET /demo",
   "GET /healthz",
   "GET /metrics",
   "GET /profile/{user_id}",

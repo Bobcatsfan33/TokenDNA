@@ -166,3 +166,15 @@ class EntraConnector(_IdPConnector):
 # Self-register so the planes appear (gated by is_connected) after reset.
 revocation_bus.register_default_factory(OktaConnector)
 revocation_bus.register_default_factory(EntraConnector)
+
+
+def configure_demo_idp(tenant_id: str) -> None:
+    """Demo helper: register Okta + Entra connectors as 'connected' for a tenant
+    with no agent mappings, so the kill-switch planes show available and a rip is
+    a clean no-op (no real network calls). Demo/dev only — never call in prod.
+    """
+    set_idp_config(tenant_id, IdPConfig(provider="okta", base_url="https://demo.okta.com",
+                                        api_token="demo", agents={}))
+    set_idp_config(tenant_id, IdPConfig(provider="entra",
+                                        base_url="https://graph.microsoft.com/v1.0",
+                                        api_token="demo", agents={}))
