@@ -129,6 +129,10 @@ class AuditEventType(str, Enum):
     KILL_RIP_REVERSED      = "kill.rip.reversed"
     KILL_CASCADE_INITIATED = "kill.cascade.initiated"
 
+    # Governed retrieval (Gap roadmap B3)
+    RETRIEVAL_ALLOWED   = "retrieval.allowed"
+    RETRIEVAL_DENIED    = "retrieval.denied"
+
     # Tenant management
     TENANT_CREATED      = "tenant.created"
     TENANT_DELETED      = "tenant.deleted"

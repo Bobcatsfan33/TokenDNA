@@ -29,6 +29,7 @@ from api_routers.policy_export import router as policy_export_router
 from api_routers.policy_guard import router as policy_guard_router
 from api_routers.policy_suggestions import router as policy_suggestions_router
 from api_routers.product import router as product_router
+from api_routers.retrieval import router as retrieval_router
 from api_routers.threat_sharing import router as threat_sharing_router
 from api_routers.verifier import router as verifier_router
 from api_routers.workflow import router as workflow_router
@@ -54,6 +55,7 @@ ALL_ROUTERS: tuple[APIRouter, ...] = (
     policy_guard_router,
     policy_suggestions_router,
     product_router,
+    retrieval_router,
     threat_sharing_router,
     verifier_router,
     workflow_router,
