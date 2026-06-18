@@ -62,6 +62,34 @@ async def kill_rip(
     return receipt.as_dict()
 
 
+@router.post("/{agent_id}/cascade")
+async def kill_cascade(
+    agent_id: str,
+    body: dict = Body(default={}),
+    tenant: TenantContext = Depends(require_role(Role.OWNER)),
+):
+    """Cascade rip: the agent + every agent/workload in its blast radius.
+
+    OWNER-gated (step-up). Body must set {"confirm": true, "reason": str}.
+    """
+    reason = str(body.get("reason", "")).strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="'reason' is required for a cascade kill")
+    if body.get("confirm") is not True:
+        raise HTTPException(status_code=400, detail="cascade kill requires explicit {\"confirm\": true}")
+    planes = body.get("planes")
+    if planes is not None and not isinstance(planes, list):
+        raise HTTPException(status_code=400, detail="'planes' must be a list of plane names")
+    return revocation_bus.cascade_rip(
+        tenant.tenant_id, agent_id,
+        actor=_actor(tenant),
+        reason=reason,
+        planes=planes,
+        context={"jtis": body.get("jtis") or []},
+        max_hops=int(body.get("max_hops", 6)),
+    )
+
+
 @router.post("/{agent_id}/reverse")
 async def kill_reverse(
     agent_id: str,
