@@ -244,6 +244,7 @@
   "POST /api/intel/rules",
   "POST /api/intent/playbooks",
   "POST /api/kill/{agent_id}",
+  "POST /api/kill/{agent_id}/cascade",
   "POST /api/kill/{agent_id}/reverse",
   "POST /api/mcp/anomaly/alerts/{alert_id}/acknowledge",
   "POST /api/mcp/fingerprint/alerts/{alert_id}/resolve",
