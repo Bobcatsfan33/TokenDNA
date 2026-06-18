@@ -200,6 +200,18 @@ _DEFAULT_FACTORIES: list[Callable[[], RevocationConnector]] = [
 _connectors: dict[str, RevocationConnector] = {}
 
 
+def register_default_factory(factory: Callable[[], RevocationConnector]) -> None:
+    """Add a connector factory to the default set (idempotent).
+
+    Optional connector modules (IdP, MCP, session, data planes) call this at
+    import so they are present after every ``reset_connectors()`` — gated by
+    each connector's ``is_connected()`` so unconfigured planes are skipped.
+    """
+    if factory not in _DEFAULT_FACTORIES:
+        _DEFAULT_FACTORIES.append(factory)
+        reset_connectors()
+
+
 def reset_connectors() -> None:
     """Re-install the default connector set (used by tests + at import)."""
     _connectors.clear()
