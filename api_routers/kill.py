@@ -11,6 +11,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 
 from modules.identity import revocation_bus
 from modules.identity import idp_revocation  # noqa: F401 — self-registers IdP connectors
+from modules.identity import mcp_revocation  # noqa: F401 — self-registers MCP connector
 from modules.security.rbac import Role, require_role
 from modules.tenants.models import TenantContext
 
