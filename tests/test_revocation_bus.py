@@ -177,12 +177,17 @@ def test_decision_connector_reversible():
     assert enforcement_plane.get_kill_switch_status("tenant-y", "agent-y")["active"] is False
 
 
-def test_edge_connector_revokes_provided_jtis():
-    from modules.identity import cache_redis
+def test_edge_connector_revokes_provided_jtis(monkeypatch):
+    # Assert the connector calls revoke_token per jti (no live Redis dependency —
+    # cache_redis is best-effort and swallows connection errors).
+    import modules.identity.cache_redis as cache_redis
+    calls = []
+    monkeypatch.setattr(cache_redis, "revoke_token",
+                        lambda jti, **kw: calls.append((jti, kw.get("tenant_id"))))
     c = rb.EdgeJWTConnector()
     detail = c.revoke("t", "agent", {"actor": "ops", "jtis": ["jti-1", "jti-2"]})
     assert "2 token" in detail
-    assert cache_redis.is_token_revoked("jti-1", tenant_id="t")
+    assert ("jti-1", "t") in calls and ("jti-2", "t") in calls
 
 
 def test_edge_connector_no_tokens():

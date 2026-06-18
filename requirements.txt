@@ -4,11 +4,11 @@
 # ── Web framework ─────────────────────────────────────────────────────────────
 fastapi==0.115.6
 uvicorn[standard]==0.29.0
-python-multipart==0.0.27
+python-multipart==0.0.31
 
 # ── JWT / OIDC ────────────────────────────────────────────────────────────────
 python-jose[cryptography]==3.4.0
-cryptography==46.0.7
+cryptography==48.0.1
 
 # ── HTTP client (JWKS fetch, webhooks, AbuseIPDB, ip-api) ────────────────────
 requests==2.33.0
