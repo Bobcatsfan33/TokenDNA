@@ -10,6 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, FastAPI
 
 from api_routers.agents import router as agents_router
+from api_routers.assets import router as assets_router
 from api_routers.certs import router as certs_router
 from api_routers.compliance import router as compliance_router
 from api_routers.delegation import router as delegation_router
@@ -33,6 +34,7 @@ from api_routers.workflow import router as workflow_router
 
 ALL_ROUTERS: tuple[APIRouter, ...] = (
     agents_router,
+    assets_router,
     certs_router,
     compliance_router,
     delegation_router,
