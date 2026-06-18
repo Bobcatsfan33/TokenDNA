@@ -14,6 +14,7 @@ from api_routers.assets import router as assets_router
 from api_routers.campaigns import router as campaigns_router
 from api_routers.certs import router as certs_router
 from api_routers.compliance import router as compliance_router
+from api_routers.console import router as console_router
 from api_routers.delegation import router as delegation_router
 from api_routers.discovery import router as discovery_router
 from api_routers.enforcement import router as enforcement_router
@@ -42,6 +43,7 @@ ALL_ROUTERS: tuple[APIRouter, ...] = (
     campaigns_router,
     certs_router,
     compliance_router,
+    console_router,
     delegation_router,
     discovery_router,
     enforcement_router,

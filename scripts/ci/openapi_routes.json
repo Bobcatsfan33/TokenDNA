@@ -171,6 +171,7 @@
   "GET /api/workflow/{workflow_id}",
   "GET /api/workflow/{workflow_id}/observations",
   "GET /api/workflow/{workflow_id}/replay",
+  "GET /console",
   "GET /dashboard",
   "GET /healthz",
   "GET /metrics",
