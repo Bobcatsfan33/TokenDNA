@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TokenDNA — Interactive Demo Console</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root{--bg:#0b0d10;--panel:#14181d;--line:#1f262e;--text:#e6e8eb;--muted:#8a939c;
+    --accent:#3aa9ff;--ok:#34d399;--warn:#f59e0b;--bad:#ef4444}
+  *,*::before,*::after{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+  a{color:var(--accent);text-decoration:none}
+  header{border-bottom:1px solid var(--line);padding:12px 18px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  header .logo{font-weight:700;letter-spacing:.5px}.logo .dot{color:var(--accent)}
+  header .links{display:flex;gap:14px;font-size:13px}
+  header .stat{margin-left:auto;color:var(--muted);font-size:12px}
+  main{display:flex;height:calc(100vh - 50px)}
+  nav{width:230px;border-right:1px solid var(--line);overflow:auto;padding:10px 0;background:var(--panel)}
+  nav button{display:block;width:100%;text-align:left;background:none;border:none;color:var(--text);
+    padding:9px 18px;cursor:pointer;font-size:13px;border-left:3px solid transparent}
+  nav button:hover{background:#0f1318}
+  nav button.active{border-left-color:var(--accent);background:#0f1318;font-weight:600}
+  nav .cat{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em;padding:12px 18px 4px}
+  section{flex:1;overflow:auto;padding:22px 26px}
+  section h1{font-size:19px;margin:0 0 4px}
+  section .desc{color:var(--muted);margin:0 0 18px;font-size:13px;max-width:760px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+  .card .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .m{font-weight:700;font-size:11px;padding:2px 7px;border-radius:5px}
+  .m.GET{background:rgba(52,211,153,.15);color:var(--ok)}
+  .m.POST{background:rgba(58,169,255,.15);color:var(--accent)}
+  .m.DELETE,.m.PATCH,.m.PUT{background:rgba(245,158,11,.15);color:var(--warn)}
+  .path{font-family:ui-monospace,Menlo,monospace;font-size:13px}
+  .gate{margin-left:auto;font-size:11px;color:var(--muted);border:1px solid var(--line);padding:1px 7px;border-radius:10px}
+  .card .label{font-size:13px;color:var(--text);margin:8px 0 2px}
+  .card textarea{width:100%;background:#0f1318;color:var(--text);border:1px solid var(--line);
+    border-radius:7px;padding:9px;font-family:ui-monospace,Menlo,monospace;font-size:12px;min-height:64px;resize:vertical}
+  .card input.param{background:#0f1318;color:var(--text);border:1px solid var(--line);border-radius:6px;
+    padding:5px 8px;font-size:12px;margin:0 4px;font-family:ui-monospace,Menlo,monospace}
+  .run{margin-top:9px;background:var(--accent);color:#00131f;border:none;border-radius:7px;
+    padding:8px 16px;font-weight:600;cursor:pointer;font-size:13px}
+  .run:hover{filter:brightness(1.1)}
+  .resp{margin-top:10px;background:#0f1318;border:1px solid var(--line);border-radius:7px;
+    padding:10px;font-family:ui-monospace,Menlo,monospace;font-size:12px;white-space:pre-wrap;
+    max-height:340px;overflow:auto;display:none}
+  .status{font-weight:700;font-size:12px;margin-right:8px}
+  .status.ok{color:var(--ok)}.status.bad{color:var(--bad)}
+  .hint{color:var(--muted);font-size:12px;margin:6px 0 0}
+</style>
+</head>
+<body>
+<header>
+  <span class="logo">Token<span class="dot">DNA</span> · Interactive Demo</span>
+  <div class="links">
+    <a href="/console">▸ Kill-Switch Graph</a>
+    <a href="/dashboard">▸ Legacy Dashboard</a>
+  </div>
+  <span class="stat" id="stat">connecting…</span>
+</header>
+<main>
+  <nav id="nav"></nav>
+  <section id="panel"><h1>Loading…</h1></section>
+</main>
+
+<script>
+"use strict";
+const API = "";
+const TOKEN = localStorage.getItem("tokendna_token") || "";
+function headers(){return Object.assign({"Content-Type":"application/json"}, TOKEN?{"Authorization":"Bearer "+TOKEN}:{});}
+
+// Each endpoint: m(ethod), p(ath, with {param}), g(ate), b(ody example), n(ote)
+const CATALOG = [
+ {cat:"OVERVIEW", group:"Dashboard & Stats", desc:"Live platform stats, KPIs, and threat feed — the at-a-glance view.", items:[
+   {m:"GET",p:"/api/stats",g:"public"},
+   {m:"GET",p:"/api/health",g:"public"},
+   {m:"GET",p:"/api/events/hourly",g:"public"},
+   {m:"GET",p:"/api/threats",g:"public"},
+   {m:"GET",p:"/api/threat-intel/feed",g:"public"},
+   {m:"GET",p:"/api/product/entitlements",g:"public"},
+ ]},
+ {cat:"KILL SWITCH", group:"Real-time Credential Rip", desc:"Click-a-rogue-agent → rip its credentials across every plane (decision, edge JWT, IdP OAuth, MCP, live sessions). The differentiator. Try the visual version at /console.", items:[
+   {m:"GET",p:"/api/kill/{agent_id}/preview",g:"ANALYST",params:{agent_id:"triage-agent"},n:"which planes will be revoked"},
+   {m:"POST",p:"/api/kill/{agent_id}",g:"ANALYST",params:{agent_id:"triage-agent"},b:{reason:"demo: rogue agent"},n:"rip across all planes"},
+   {m:"POST",p:"/api/kill/{agent_id}/reverse",g:"ANALYST",params:{agent_id:"triage-agent"},b:{reason:"false positive"}},
+   {m:"POST",p:"/api/kill/{agent_id}/cascade",g:"OWNER",params:{agent_id:"triage-agent"},b:{reason:"contain blast radius",confirm:true}},
+   {m:"GET",p:"/api/enforcement/killswitch",g:"ANALYST",n:"internal kill switches"},
+ ]},
+ {cat:"ASSET MGMT", group:"AI Workflow Scanner", desc:"Scan an agent workflow → inventory of Agents / Tools / MCP Servers / Vulnerabilities (NSA MCP advisory rules).", items:[
+   {m:"GET",p:"/api/assets/scans",g:"ANALYST"},
+   {m:"POST",p:"/api/assets/scan",g:"ent.agent_discovery",b:{source:"my-workflow",definition:{framework:"langgraph",nodes:[{name:"planner",tools:["search","update_policy"]},{name:"worker",tools:["http_get"]}],mcp_servers:[{name:"crm-mcp",auth:"none"}]}},n:"returns inventory + vulns"},
+ ]},
+ {cat:"GOVERNANCE", group:"Policy Generator → Bedrock", desc:"Emit AWS Bedrock Guardrails (JSON + CLI), OpenAI, or generic policy from a spec or advisor suggestions.", items:[
+   {m:"GET",p:"/api/policy/export/targets",g:"ent.enforcement_plane"},
+   {m:"POST",p:"/api/policy/export",g:"ent.enforcement_plane",b:{target:"bedrock",name:"airline-guard",spec:{denied_topics:[{name:"data_exfiltration",definition:"bulk export of customer records"}],blocked_words:["DROP TABLE","s3:*"],pii_entities:["EMAIL","US_SOCIAL_SECURITY_NUMBER"]}}},
+ ]},
+ {cat:"GOVERNANCE", group:"Governed Retrieval", desc:"Agents may query only approved sources (fail-closed). Add a source, then check a retrieval.", items:[
+   {m:"GET",p:"/api/retrieval/sources",g:"ent.enforcement_plane"},
+   {m:"POST",p:"/api/retrieval/sources",g:"ent.enforcement_plane",b:{agent_id:"triage-agent",pattern:"https://api.flights.example.com/*"}},
+   {m:"POST",p:"/api/retrieval/check",g:"ent.enforcement_plane",b:{agent_id:"triage-agent",source:"https://api.flights.example.com/v1/search"},n:"allow"},
+   {m:"POST",p:"/api/retrieval/check",g:"ent.enforcement_plane",b:{agent_id:"triage-agent",source:"snowflake://secrets/keys"},n:"deny (not in allow-list)"},
+ ]},
+ {cat:"DETECTION", group:"Campaign Correlation", desc:"Reassemble multi-session/agent/model attacks — 'harm only exists in the reassembly'.", items:[
+   {m:"GET",p:"/api/campaigns",g:"ent.intent_correlation"},
+   {m:"POST",p:"/api/campaigns/build",g:"ent.intent_correlation",b:{signals:[{signal_id:"s1",ts:1700000000,agent_id:"triage-agent",session_id:"a",model_id:"gpt-4o",technique:"recon",severity:"high"},{signal_id:"s2",ts:1700000120,agent_id:"booking-agent",session_id:"b",model_id:"claude",technique:"exfil",severity:"critical"}]}},
+ ]},
+ {cat:"DETECTION", group:"Policy Guard", desc:"Constitutional rules: an agent cannot expand its own scope or modify governing policy. Returns allow/flag/block.", items:[
+   {m:"GET",p:"/api/policy/guard/violations",g:"ent.enforcement_plane"},
+   {m:"GET",p:"/api/policy/guard/stats",g:"ent.enforcement_plane"},
+   {m:"POST",p:"/api/policy/guard/evaluate",g:"ent.enforcement_plane",b:{actor_id:"payment-agent",actor_type:"agent",action_type:"update",target_policy_id:"pol-001",target_policy_name:"payment-policy",scope_delta:["iam:*"],metadata:{governed_agent:"payment-agent"}},n:"self-modification → BLOCK"},
+ ]},
+ {cat:"DETECTION", group:"Permission Drift", desc:"Silent scope growth without attestation (PERMISSION_WEIGHT_DRIFT).", items:[
+   {m:"GET",p:"/api/drift/alerts",g:"ent.behavioral_dna"},
+   {m:"GET",p:"/api/drift/summary",g:"ent.behavioral_dna"},
+   {m:"POST",p:"/api/drift/record",g:"ent.behavioral_dna",b:{agent_id:"payment-agent",policy_id:"pol-001",scope:["s3:read","s3:write","iam:PassRole","secrets:read"],has_attestation:false}},
+ ]},
+ {cat:"DETECTION", group:"MCP Inspector & Gateway", desc:"Intent-aware inspection of every MCP tool call; chain-pattern detection (read→exfil).", items:[
+   {m:"GET",p:"/api/mcp/tools",g:"ent.mcp_gateway"},
+   {m:"GET",p:"/api/mcp/violations",g:"ent.mcp_gateway"},
+   {m:"POST",p:"/api/mcp/inspect",g:"ent.mcp_gateway",b:{tool_name:"read_file",session_id:"sess-demo",params:{path:"/etc/passwd"},agent_id:"triage-agent"}},
+   {m:"GET",p:"/api/mcp/gateway/enforcements",g:"ANALYST"},
+ ]},
+ {cat:"DETECTION", group:"Trust Graph & Blast Radius", desc:"Who can a compromised agent reach? Impact score + reachable set.", items:[
+   {m:"GET",p:"/api/graph/stats",g:"public"},
+   {m:"GET",p:"/api/graph/data",g:"public"},
+   {m:"GET",p:"/api/graph/anomalies",g:"public"},
+   {m:"POST",p:"/api/simulate/blast_radius",g:"ent.blast_radius",b:{agent_label:"payment-agent",max_hops:4}},
+ ]},
+ {cat:"DETECTION", group:"Intent Correlation", desc:"Kill-chain playbooks mapping agent behavior to MITRE ATT&CK.", items:[
+   {m:"GET",p:"/api/intent/matches",g:"ent.intent_correlation"},
+   {m:"GET",p:"/api/intent/playbooks",g:"ent.intent_correlation"},
+ ]},
+ {cat:"DETECTION", group:"Honeypot / Deception", desc:"Plant honeytokens; any use after decommission is an active-threat signal.", items:[
+   {m:"GET",p:"/api/honeypot/decoys",g:"ent.enforcement_plane"},
+   {m:"GET",p:"/api/honeypot/hits",g:"ent.enforcement_plane"},
+   {m:"POST",p:"/api/honeypot/decoy/honeytoken",g:"ent.enforcement_plane",b:{kind:"honeytoken_credential"}},
+ ]},
+ {cat:"OBSERVABILITY", group:"SIEM Export", desc:"Standardized per-MCP-call schema → ECS / Splunk / Sentinel (params hashed, never raw).", items:[
+   {m:"GET",p:"/api/siem/schema",g:"ent.mcp_gateway"},
+   {m:"GET",p:"/api/siem/mcp-calls?target=ecs",g:"ent.mcp_gateway",n:"Elastic Common Schema"},
+   {m:"GET",p:"/api/siem/mcp-calls?target=splunk",g:"ent.mcp_gateway"},
+   {m:"GET",p:"/api/siem/mcp-calls?target=sentinel",g:"ent.mcp_gateway"},
+ ]},
+ {cat:"OBSERVABILITY", group:"Decision Audit", desc:"Tamper-evident, hash-chained record of every state change.", items:[
+   {m:"GET",p:"/api/audit",g:"OWNER"},
+   {m:"GET",p:"/api/decision-audit",g:"ANALYST"},
+ ]},
+ {cat:"IDENTITY", group:"Agent Inventory & Lifecycle", desc:"Every agent, its lifecycle state, and ghost-agent offboarding.", items:[
+   {m:"GET",p:"/api/agents/inventory",g:"public"},
+   {m:"GET",p:"/api/agents/orphans",g:"public"},
+   {m:"POST",p:"/api/agents/register",g:"public",b:{display_name:"Demo Bot",platform:"aws",owner:"ops@acme.io"}},
+   {m:"POST",p:"/api/agents/suspend/{agent_id}",g:"public",params:{agent_id:"triage-agent"},b:{actor:"ops",reason:"demo"}},
+ ]},
+ {cat:"IDENTITY", group:"Agent Attestation & Certs", desc:"4D agent attestation + certificate fleet with expiry automation.", items:[
+   {m:"GET",p:"/api/certs/fleet",g:"ent.enforcement_plane"},
+   {m:"GET",p:"/api/certs/fleet/summary",g:"ent.enforcement_plane"},
+   {m:"GET",p:"/api/certs/expiring",g:"ent.enforcement_plane"},
+   {m:"POST",p:"/api/certs/sweep",g:"ent.enforcement_plane",b:{dry_run:true}},
+   {m:"POST",p:"/api/agent/attest",g:"public",b:{agent_id:"demo-agent",declared_purpose:"booking assistant",scope:["flights:read"]}},
+ ]},
+ {cat:"IDENTITY", group:"Agent Passport", desc:"Verifiable agent identity passports (request → approve → issue → verify).", items:[
+   {m:"GET",p:"/api/passport/",g:"ANALYST"},
+   {m:"POST",p:"/api/passport/request",g:"public",b:{agent_id:"demo-agent",owner_org:"acme",display_name:"Demo Bot",agent_dna_fingerprint:"abc123",permissions:["flights:read"]}},
+ ]},
+ {cat:"IDENTITY", group:"Discovery", desc:"Continuous agent discovery + shadow-AI inventory.", items:[
+   {m:"GET",p:"/api/discovery/agents",g:"ANALYST"},
+   {m:"GET",p:"/api/discovery/agents/summary",g:"ANALYST"},
+   {m:"GET",p:"/api/discovery/shadow",g:"ANALYST"},
+ ]},
+ {cat:"FEDERATION", group:"Federated Agent Trust", desc:"Cross-org agent trust via verifier networks + quorum attestation.", items:[
+   {m:"GET",p:"/api/federation/verifiers",g:"ANALYST"},
+   {m:"GET",p:"/api/verifier/reputation/leaderboard",g:"ANALYST"},
+   {m:"GET",p:"/api/threat-sharing/status",g:"ent.intent_correlation"},
+   {m:"GET",p:"/api/threat-sharing/network",g:"ent.intent_correlation"},
+ ]},
+ {cat:"COMPLIANCE", group:"Compliance & Posture", desc:"Framework crosswalks, evidence packages, and posture statements (SOC2 / NIST / EU AI Act).", items:[
+   {m:"GET",p:"/api/compliance/frameworks",g:"public"},
+   {m:"GET",p:"/api/compliance/evidence/packages",g:"public"},
+   {m:"GET",p:"/api/compliance/posture/statements",g:"ent.enforcement_plane"},
+   {m:"POST",p:"/api/compliance/evidence/generate",g:"public",b:{framework:"disa_stig"}},
+ ]},
+];
+
+// ── Render ──────────────────────────────────────────────────────────────────
+const nav = document.getElementById("nav");
+const panel = document.getElementById("panel");
+let lastCat = null;
+CATALOG.forEach((grp, i)=>{
+  if(grp.cat !== lastCat){ const c=document.createElement("div"); c.className="cat"; c.textContent=grp.cat; nav.appendChild(c); lastCat=grp.cat; }
+  const b=document.createElement("button"); b.textContent=grp.group; b.dataset.i=i;
+  b.onclick=()=>select(i); nav.appendChild(b);
+});
+
+function select(i){
+  document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active", b.dataset.i==i));
+  const grp = CATALOG[i];
+  panel.innerHTML = `<h1>${grp.group}</h1><p class="desc">${grp.desc}</p>`;
+  grp.items.forEach(it=>panel.appendChild(card(it)));
+}
+
+function card(it){
+  const el=document.createElement("div"); el.className="card";
+  const params = it.params||{};
+  const paramInputs = Object.entries(params).map(([k,v])=>
+    `<input class="param" data-k="${k}" value="${v}" title="${k}">`).join("");
+  let displayPath = it.p;
+  Object.keys(params).forEach(k=> displayPath = displayPath.replace("{"+k+"}", `<span class="ph">{${k}}</span>`));
+  el.innerHTML =
+    `<div class="top"><span class="m ${it.m}">${it.m}</span>
+       <span class="path">${displayPath}</span>
+       <span class="gate">${it.g}</span></div>`+
+    (Object.keys(params).length? `<div class="label">Path params</div>${paramInputs}`:"")+
+    (it.b!==undefined? `<div class="label">Request body (JSON)</div>
+       <textarea>${JSON.stringify(it.b,null,2)}</textarea>`:"")+
+    (it.n? `<div class="hint">↳ ${it.n}</div>`:"")+
+    `<button class="run">Run ▸</button><div class="resp"></div>`;
+  const respBox = el.querySelector(".resp");
+  el.querySelector(".run").onclick = async ()=>{
+    let path = it.p;
+    el.querySelectorAll("input.param").forEach(inp=> path = path.replace("{"+inp.dataset.k+"}", encodeURIComponent(inp.value)));
+    const opts = {method: it.m, headers: headers()};
+    const ta = el.querySelector("textarea");
+    if(ta){ try{ opts.body = JSON.stringify(JSON.parse(ta.value)); }catch(e){ alert("Invalid JSON body"); return; } }
+    respBox.style.display="block"; respBox.textContent="…";
+    try{
+      const r = await fetch(API+path, opts);
+      const txt = await r.text(); let body;
+      try{ body = JSON.stringify(JSON.parse(txt), null, 2); }catch{ body = txt; }
+      respBox.innerHTML = `<span class="status ${r.ok?'ok':'bad'}">${r.status}</span>`+
+        body.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    }catch(e){ respBox.innerHTML = `<span class="status bad">ERR</span>${e}`; }
+  };
+  return el;
+}
+
+// header stat
+fetch(API+"/api/stats",{headers:headers()}).then(r=>r.json()).then(s=>{
+  const bits=[]; if(s.total_events!=null)bits.push(s.total_events+" events");
+  if(s.agents!=null)bits.push(s.agents+" agents");
+  document.getElementById("stat").textContent = bits.length? bits.join(" · ")+" · DEV_MODE":"connected · DEV_MODE";
+}).catch(()=>{document.getElementById("stat").textContent="API unreachable — start with scripts/demo.sh";});
+
+select(0);
+</script>
+</body>
+</html>
