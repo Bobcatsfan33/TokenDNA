@@ -187,6 +187,7 @@
   "GET /scim/v2/Users",
   "GET /scim/v2/Users/{user_id}",
   "GET /secure",
+  "GET /trust-graph",
   "PATCH /api/discovery/agents/{agent_id}",
   "PATCH /api/enforcement/policies/{policy_id}",
   "PATCH /scim/v2/Groups/{group_id}",

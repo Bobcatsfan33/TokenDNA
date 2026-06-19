@@ -14,8 +14,10 @@ from fastapi.responses import FileResponse, HTMLResponse
 
 router = APIRouter(tags=["console"])
 
-# dashboard/console.html lives at the repo root (this file is in api_routers/).
-_CONSOLE_PATH = Path(__file__).resolve().parent.parent / "dashboard" / "console.html"
+# dashboard/*.html live at the repo root (this file is in api_routers/).
+_DASHBOARD_DIR = Path(__file__).resolve().parent.parent / "dashboard"
+_CONSOLE_PATH = _DASHBOARD_DIR / "console.html"
+_TRUSTGRAPH_PATH = _DASHBOARD_DIR / "trustgraph.html"
 
 
 @router.get("/console", response_class=HTMLResponse)
@@ -23,3 +25,11 @@ async def console():
     if not _CONSOLE_PATH.exists():
         raise HTTPException(status_code=404, detail="console not found")
     return FileResponse(_CONSOLE_PATH)
+
+
+@router.get("/trust-graph", response_class=HTMLResponse)
+async def trust_graph():
+    """Clean trust-graph explorer — toggle Nodes / Edges / Anomalies / Correlate."""
+    if not _TRUSTGRAPH_PATH.exists():
+        raise HTTPException(status_code=404, detail="trust graph view not found")
+    return FileResponse(_TRUSTGRAPH_PATH)

@@ -162,6 +162,44 @@ def seed_gap(tenant_id: str = DEMO_TENANT) -> dict[str, Any]:
         return len(camps)
     _try(summary, "campaigns", _campaign)
 
+    # ── Intent correlation feed: complete real playbooks so matches appear ────
+    def _intent_feed():
+        from datetime import datetime, timedelta, timezone
+        from modules.identity import intent_correlation as ic
+        ic.init_db()
+        base = datetime.now(timezone.utc) - timedelta(minutes=30)
+
+        def feed(subject, steps):
+            """steps: list of (category, mitre, confidence, risk_tier). Feeds in order."""
+            done = 0
+            for i, (cat, mitre, conf, tier) in enumerate(steps):
+                ev = {
+                    "event_id": f"intent-{subject}-{i}",
+                    "event_timestamp": (base + timedelta(seconds=i * 60)).isoformat(),
+                    "identity": {"subject": subject},
+                    "uis_narrative": {"category": cat, "mitre_technique": mitre,
+                                      "confidence": conf, "objective": "", "pivot": ""},
+                    "threat": {"risk_tier": tier},
+                }
+                done += len(ic.correlate_event(tenant_id, ev))
+            return done
+
+        total = 0
+        # Each sequence completes a built-in playbook (MITRE-mapped).
+        total += feed("payment-agent", [("credential_abuse", "T1110.004", 0.7, "high"),
+                                        ("auth_anomaly", "T1078", 0.7, "high")])
+        total += feed("booking-agent", [("auth_anomaly", "T1078", 0.8, "high"),
+                                        ("privilege_escalation", "T1548", 0.8, "high")])
+        total += feed("data-loader-2", [("credential_abuse", "T1528", 0.7, "high"),
+                                        ("privilege_escalation", "T1098", 0.7, "high"),
+                                        ("exfiltration", "T1048", 0.7, "critical")])
+        total += feed("triage-agent", [("privilege_escalation", "T1548", 0.7, "high"),
+                                       ("lateral_movement", "T1021", 0.7, "critical")])
+        total += feed("ops-runner-1", [("privilege_escalation", "T1098", 0.6, "high"),
+                                       ("exfiltration", "T1537", 0.7, "critical")])
+        return total
+    _try(summary, "intent_matches", _intent_feed)
+
     # ── Agent inventory + lifecycle (so the inventory panel + actions work) ───
     def _inventory():
         from modules.identity import agent_lifecycle as al
