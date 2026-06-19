@@ -4,10 +4,8 @@
 <meta charset="utf-8">
 <title>TokenDNA — AI Asset Management Console</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<!-- Hierarchical DAG via Cytoscape + dagre (deterministic left->right layout). -->
-<script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
+<!-- Fully offline: dependency-free SVG DAG renderer served locally, no CDN. -->
+<script src="/static/trustgraph-engine.js"></script>
 <style>
   :root{
     --bg:#0b0d10;--panel:#14181d;--line:#1f262e;--text:#e6e8eb;--muted:#8a939c;
@@ -86,36 +84,23 @@ const TOKEN = localStorage.getItem("tokendna_token") || "";
 function headers(extra){ return Object.assign({"Content-Type":"application/json",
   ...(TOKEN ? {"Authorization":"Bearer "+TOKEN} : {})}, extra||{}); }
 
-const RISK_COLORS = {low:"#34d399",medium:"#f59e0b",high:"#fb923c",critical:"#ef4444",unknown:"#8a939c"};
-const TYPE_COLORS = {start:"#3aa9ff",end:"#3aa9ff",agent:"#a78bfa",workload:"#a78bfa",
-  tool:"#38bdf8",mcp_server:"#f472b6",guardrail:"#34d399",vulnerability:"#ef4444",tenant:"#8a939c"};
+const gcol = window.TrustGraphEngine.gcol;
+const RISK = {};   // label -> risk tier (engine colours by type; risk shown in panel)
 
-cytoscape.use(window.cytoscapeDagre);
-
-let cy = cytoscape({
-  container: document.getElementById("cy"),
-  wheelSensitivity: 0.2,
-  style: [
-    {selector:"node", style:{
-      "background-color": e=>TYPE_COLORS[e.data("ntype")]||"#8a939c",
-      "label":"data(label)","color":"#e6e8eb","font-size":"10px",
-      "text-valign":"bottom","text-margin-y":4,"width":"mapData(impact,0,40,18,46)",
-      "height":"mapData(impact,0,40,18,46)",
-      "border-width":3,"border-color": e=>RISK_COLORS[e.data("risk")]||"#1f262e"}},
-    {selector:"node.revoked", style:{"background-color":"#3a3f46","border-color":"#ef4444",
-      "border-style":"dashed","opacity":0.6}},
-    {selector:"edge", style:{"width":1.5,"line-color":"#2a323b","target-arrow-color":"#2a323b",
-      "target-arrow-shape":"triangle","curve-style":"bezier","arrow-scale":0.8}},
-    {selector:"edge.dim", style:{"opacity":0.2}},
-    {selector:":selected", style:{"border-color":"#3aa9ff","border-width":4}},
-  ],
-  layout: {name:"dagre", rankDir:"LR", nodeSep:30, rankSep:80},
+// ── Dependency-free DAG engine ──────────────────────────────────────────────
+const eng = new window.TrustGraphEngine(document.getElementById("cy"), {
+  onSelectNode: (d) => { if (d.ntype === "agent") showAgent(d.name, d); else showInfo(d); },
+  onSelectEdge: () => {},
+  onBackground: () => {},
+  onToggleGroup: (id) => { expanded[id] = !expanded[id]; eng.update({ graphData: GRAPH, anomalies: [], hidden: {}, expanded }); },
 });
+let GRAPH = { nodes: [], edges: [] };
+let expanded = {};
 
 // ── Legend ────────────────────────────────────────────────────────────────
 document.getElementById("legend").innerHTML =
   Object.entries({agent:"Agent",tool:"Tool",mcp_server:"MCP Server",guardrail:"Guardrail",vulnerability:"Vulnerability"})
-  .map(([k,v])=>`<div class="item"><span class="dot" style="background:${TYPE_COLORS[k]}"></span>${v}</div>`).join("");
+  .map(([k,v])=>`<div class="item"><span class="dot" style="background:${gcol(k)}"></span>${v}</div>`).join("");
 
 // ── Render a scan inventory as a hierarchical DAG ───────────────────────────
 function renderScan(scan){
@@ -129,51 +114,47 @@ function renderScan(scan){
   document.getElementById("scan-meta").textContent =
     `Scan ${(meta.scan_id||"").slice(0,8)} · ${meta.framework||"?"} · ${meta.source||""} · ${(meta.scanned_at||"").slice(0,19)}`;
 
-  const els = [{data:{id:"__start",label:"start",ntype:"start",impact:10,risk:"low"}}];
+  const nodes = [{node_id:"__start",label:"start",node_type:"start"}];
+  const edges = [];
   const vulnByTarget = {};
   (inv.vulnerability||[]).forEach(v=>{ (vulnByTarget[v.target]=vulnByTarget[v.target]||[]).push(v); });
 
   (inv.agent||[]).forEach(a=>{
-    const risk = vulnByTarget[a.name] ? "high" : "low";
-    els.push({data:{id:"a:"+a.name,label:a.name,ntype:"agent",impact:(a.tool_count||1)*6,risk}});
-    els.push({data:{source:"__start",target:"a:"+a.name}});
+    RISK[a.name] = vulnByTarget[a.name] ? "high" : "low";
+    nodes.push({node_id:"a:"+a.name,label:a.name,node_type:"agent"});
+    edges.push({src_node:"__start",dst_node:"a:"+a.name,edge_type:"runs",src_label:"start",dst_label:a.name});
   });
   (inv.tool||[]).forEach(t=>{
-    els.push({data:{id:"t:"+t.name,label:t.name,ntype:"tool",impact:8,
-      risk:vulnByTarget[t.name]?"medium":"low"}});
-    (inv.agent||[]).forEach(a=> els.push({data:{source:"a:"+a.name,target:"t:"+t.name}}));
+    RISK[t.name] = vulnByTarget[t.name] ? "medium" : "low";
+    nodes.push({node_id:"t:"+t.name,label:t.name,node_type:"tool"});
+    (inv.agent||[]).forEach(a=> edges.push({src_node:"a:"+a.name,dst_node:"t:"+t.name,edge_type:"invokes",src_label:a.name,dst_label:t.name,src_type:"agent",dst_type:"tool"}));
   });
   (inv.mcp_server||[]).forEach(m=>{
-    els.push({data:{id:"m:"+m.name,label:m.name,ntype:"mcp_server",impact:14,
-      risk:vulnByTarget[m.name]?"critical":"medium"}});
-    (inv.agent||[]).forEach(a=> els.push({data:{source:"a:"+a.name,target:"m:"+m.name}}));
+    RISK[m.name] = vulnByTarget[m.name] ? "critical" : "medium";
+    nodes.push({node_id:"m:"+m.name,label:m.name,node_type:"mcp_server"});
+    (inv.agent||[]).forEach(a=> edges.push({src_node:"a:"+a.name,dst_node:"m:"+m.name,edge_type:"invokes",src_label:a.name,dst_label:m.name,src_type:"agent",dst_type:"mcp_server"}));
   });
 
-  cy.elements().remove();
-  cy.add(els);
-  cy.layout({name:"dagre",rankDir:"LR",nodeSep:30,rankSep:90}).run();
+  GRAPH = { nodes, edges };
+  expanded = {};
+  eng.update({ graphData: GRAPH, anomalies: [], hidden: {}, expanded });
+  eng.fit();
 }
 
-// ── Side panel: identity card + kill flow ───────────────────────────────────
-cy.on("tap","node",ev=>{
-  const n = ev.target.data();
-  if(!n.id.startsWith("a:")){ showInfo(n); return; }
-  const agentId = n.label;
-  showAgent(agentId, n);
-});
-
 function showInfo(n){
+  const risk = RISK[n.name] || "low";
   document.getElementById("panel").innerHTML =
-    `<h2>${n.label}</h2><div class="sub">${n.ntype}</div>
+    `<h2>${n.name}</h2><div class="sub">${n.ntype}</div>
      <div class="card"><div class="row"><span>Type</span><span>${n.ntype}</span></div>
-     <div class="row"><span>Risk</span><span class="pill ${n.risk}">${n.risk}</span></div></div>`;
+     <div class="row"><span>Risk</span><span class="pill ${risk}">${risk}</span></div></div>`;
 }
 
 function showAgent(agentId, n){
+  const risk = RISK[agentId] || "low";
   const panel = document.getElementById("panel");
   panel.innerHTML =
     `<h2>${agentId}</h2><div class="sub">agent · risk
-       <span class="pill ${n.risk}">${n.risk}</span></div>
+       <span class="pill ${risk}">${risk}</span></div>
      <div class="card" id="preview"><div class="sub">Loading kill preview…</div></div>
      <button class="btn btn-danger" id="rip">⚡ Rip Credentials</button>
      <button class="btn btn-warn" id="cascade">⚡ Cascade Rip (blast radius)</button>
@@ -207,8 +188,6 @@ function rip(agentId, cascade){
       box.innerHTML = `<div class="sub">${cascade?("cascade · "+(res.reachable_count||0)+" downstream · "):""}${root.overall}</div>`+
         (root.planes||[]).map(pl=>`<div class="plane"><span>${pl.plane}</span>
           <span class="chip ${pl.status}">${pl.status}</span></div>`).join("");
-      cy.$(`#a\\:${cssEsc(agentId)}`).addClass("revoked");
-      cy.$(`#a\\:${cssEsc(agentId)}`).connectedEdges().addClass("dim");
     }).catch(e=>{box.innerHTML='<div class="sub">kill failed: '+e+'</div>';});
 }
 
@@ -221,10 +200,8 @@ function reverse(agentId){
       box.innerHTML=`<div class="sub">restore · ${res.overall}</div>`+
         (res.planes||[]).map(pl=>`<div class="plane"><span>${pl.plane}</span>
           <span class="chip ${pl.status}">${pl.status}</span></div>`).join("");
-      cy.$(`#a\\:${cssEsc(agentId)}`).removeClass("revoked");
     });
 }
-function cssEsc(s){ return String(s).replace(/[^a-zA-Z0-9_-]/g,"_"); }
 
 // ── Bootstrap: load the latest scan, else a built-in sample ─────────────────
 const SAMPLE = {scan:{framework:"sample",source:"airline-agent-demo",scanned_at:new Date().toISOString(),

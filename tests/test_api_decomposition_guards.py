@@ -100,7 +100,11 @@ def test_mount_all_mounts_registered_routers():
     before = len(app.routes)
     api_routers.mount_all(app)
     expected_added = sum(len(r.routes) for r in api_routers.ALL_ROUTERS)
-    assert len(app.routes) == before + expected_added
+    # mount_all also mounts the local /static dashboard assets (offline support),
+    # which adds one Mount on top of the registered routers.
+    static_mounts = [r for r in app.routes if getattr(r, "name", None) == "static"]
+    assert len(app.routes) == before + expected_added + len(static_mounts)
+    assert len(static_mounts) == 1
     assert isinstance(api_routers.ALL_ROUTERS, tuple)
 
 
