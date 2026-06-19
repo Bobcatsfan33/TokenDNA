@@ -7,6 +7,10 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js"></script>
+<!-- Trust Graph: Cytoscape + dagre hierarchical layout (graceful fallback if CDN blocked) -->
+<script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
 <style>
   :root {
     --bg:       #060a10;
@@ -250,6 +254,40 @@
   .data-table td { padding: 10px 14px; font-size: 13px; border-bottom: 1px solid var(--border); }
   .data-table tr:last-child td { border-bottom: none; }
   .data-table tr:hover { background: var(--surface2); }
+
+  /* ── Trust Graph (Cytoscape) ── */
+  .tg-wrap { position: relative; }
+  .tg-canvas { width: 100%; height: 520px; background: var(--surface2); border-radius: 8px; }
+  .tg-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .tg-btn { background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+  .tg-btn:hover { border-color: var(--muted); }
+  .tg-legend { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tg-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--surface2); border: 1px solid var(--border); border-radius: 14px; padding: 4px 10px; font-size: 11px; cursor: pointer; user-select: none; transition: opacity .12s; }
+  .tg-chip.off { opacity: .4; text-decoration: line-through; }
+  .tg-chip .dot { width: 9px; height: 9px; border-radius: 50%; }
+  .tg-hint { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(15,20,30,.92); border: 1px solid var(--accent); border-radius: 8px; padding: 6px 12px; font-size: 11px; color: var(--text); pointer-events: none; }
+  .clickable { cursor: pointer; transition: border-color .12s, transform .08s; }
+  .clickable:hover { border-color: var(--accent); }
+  .kpi-card.clickable:hover, .gstat.clickable:hover { border-color: var(--accent); }
+  .gstat.clickable:hover { background: var(--surface3); }
+
+  /* ── Slide-over context panel ── */
+  .slideover { position: fixed; top: 0; right: 0; height: 100vh; width: 380px; background: var(--surface); border-left: 1px solid var(--border); z-index: 1100; box-shadow: -8px 0 30px rgba(0,0,0,.4); display: flex; flex-direction: column; }
+  .slideover-head { padding: 18px 20px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; gap: 12px; }
+  .slideover-body { padding: 18px 20px; overflow-y: auto; flex: 1; }
+  .so-kv { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .so-kv .k { color: var(--muted); }
+  .so-kv .v { text-align: right; word-break: break-all; }
+  .so-section { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin: 16px 0 8px; }
+  .so-neighbor { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: var(--surface2); border-radius: 6px; margin-bottom: 4px; font-size: 12px; cursor: pointer; }
+  .so-neighbor:hover { background: var(--surface3); }
+  .so-action { display: block; width: 100%; text-align: center; padding: 9px; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; margin-top: 8px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); }
+  .so-action:hover { border-color: var(--muted); }
+  .so-action.danger { background: var(--red); border-color: var(--red); color: #fff; }
+  .so-action.danger:hover { filter: brightness(1.1); }
+  .so-action.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .anomaly-card.clickable:hover { background: var(--surface3); }
+  .intent-row.clickable:hover { filter: brightness(1.15); }
 </style>
 </head>
 <body>
@@ -297,6 +335,9 @@ function useApi(path, fallback, interval = 0) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const SEV_COLOR = { critical: "#dc2626", high: "#ef4444", medium: "#f59e0b", low: "#10b981" };
+const SEV_RANK = { critical: 4, high: 3, medium: 2, low: 1 };
+// Cross-page navigation (KPI cards on Overview jump to the relevant page).
+function gotoPage(p){ window.dispatchEvent(new CustomEvent("tokendna:nav", { detail: p })); }
 
 function Badge({ sev }) {
   return h("span", { className: `badge ${sev}` }, sev);
@@ -459,18 +500,18 @@ function OverviewPage() {
         h("div", { className: `kpi-value blue` }, stats.total_events?.toLocaleString() || "0"),
         h("div", { className: "kpi-sub" }, "UIS v1.1 normalized"),
       ),
-      h("div", { className: "kpi-card" },
-        h("div", { className: "kpi-label" }, "Graph Nodes"),
+      h("div", { className: "kpi-card clickable", onClick:()=>gotoPage("graph"), title:"Open Trust Graph" },
+        h("div", { className: "kpi-label" }, "Graph Nodes ▸"),
         h("div", { className: "kpi-value blue" }, gstats.node_count || "0"),
         h("div", { className: "kpi-sub" }, `${gstats.edge_count || 0} edges`),
       ),
-      h("div", { className: "kpi-card" },
-        h("div", { className: "kpi-label" }, "Anomalies Detected"),
+      h("div", { className: "kpi-card clickable", onClick:()=>gotoPage("graph"), title:"Open Trust Graph" },
+        h("div", { className: "kpi-label" }, "Anomalies Detected ▸"),
         h("div", { className: `kpi-value ${anoms.length ? "red" : "green"}` }, gstats.anomaly_count || "0"),
         h("div", { className: "kpi-sub" }, "Trust graph signals"),
       ),
-      h("div", { className: "kpi-card" },
-        h("div", { className: "kpi-label" }, "Intent Matches"),
+      h("div", { className: "kpi-card clickable", onClick:()=>gotoPage("intent"), title:"Open Intent Detection" },
+        h("div", { className: "kpi-label" }, "Intent Matches ▸"),
         h("div", { className: `kpi-value ${mtchs.length ? "red" : "green"}` }, matches.count || "0"),
         h("div", { className: "kpi-sub" }, "Attack sequences"),
       ),
@@ -751,6 +792,7 @@ function IntentPage() {
   const [matches] = useApi("/api/intent/matches?limit=50", { matches:[], count:0 }, 8000);
   const [playbooks] = useApi("/api/intent/playbooks", { playbooks:[], count:0 }, 30000);
   const [tab, setTab] = useState("feed");
+  const [selMatch, setSelMatch] = useState(null);
 
   const mtchs = matches.matches || [];
   const pbs   = playbooks.playbooks || [];
@@ -784,7 +826,7 @@ function IntentPage() {
     tab === "feed" && h("div", null,
       mtchs.length === 0
         ? h("div",{className:"empty"}, h("div",{className:"empty-icon"},"🎯"), h("div",{className:"empty-msg"},"No attack sequences detected yet"), h("div",{className:"empty-hint"},"Run demo_seed.py to simulate a multi-stage attack"))
-        : mtchs.map((m,i) => h("div",{key:i,className:`intent-row ${m.severity}`},
+        : mtchs.map((m,i) => h("div",{key:i,className:`intent-row clickable ${m.severity}`,onClick:()=>setSelMatch(m)},
             h("div",{className:"flex-row",style:{marginBottom:6}},
               h("div",{className:"intent-name"},m.playbook_name),
               h("div",{className:"ml-auto",style:{display:"flex",gap:8,alignItems:"center"}},
@@ -818,273 +860,477 @@ function IntentPage() {
         ),
       ))
     ),
+
+    selMatch && h(IntentMatchModal,{ match:selMatch, onClose:()=>setSelMatch(null) }),
   );
 }
 
-// ── Trust Graph ───────────────────────────────────────────────────────────────
 
-// Simple force-directed layout (no external library)
-function forceLayout(nodes, edges, width, height, iterations) {
-  // Initialise positions in a circle
-  const pos = {};
-  const cx = width / 2, cy = height / 2, r = Math.min(width, height) * 0.35;
-  nodes.forEach((n, i) => {
-    const angle = (2 * Math.PI * i) / nodes.length;
-    pos[n.node_id] = { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle), vx: 0, vy: 0 };
+// ── Trust Graph (Cytoscape + dagre) ─────────────────────────────────────────
+const GTYPE = {
+  agent:{c:"#6366f1",g:"A",p:"Agents"}, issuer:{c:"#f59e0b",g:"I",p:"Issuers"},
+  verifier:{c:"#ef4444",g:"V",p:"Verifiers"}, tool:{c:"#10b981",g:"T",p:"Tools"},
+  workload:{c:"#3b82f6",g:"W",p:"Workloads"}, mcp_server:{c:"#ec4899",g:"M",p:"MCP Servers"},
+  lifecycle_state:{c:"#94a3b8",g:"L",p:"Lifecycle"}, tenant:{c:"#8b5cf6",g:"O",p:"Tenants"},
+};
+const gcol = t => (GTYPE[t]||{}).c || "#6366f1";
+const gglyph = t => (GTYPE[t]||{}).g || "?";
+const cyReady = () => typeof window.cytoscape === "function";
+const COLLAPSE_MIN = 4;
+const COLLAPSIBLE = { verifier:1, tool:1, issuer:1, lifecycle_state:1 };
+
+// subject_node may be a node_id hash OR a label — index by both.
+function indexAnomalies(anoms, nodes){
+  const byKey = {};
+  (anoms||[]).forEach(a => { (byKey[a.subject_node] = byKey[a.subject_node] || []).push(a); });
+  return { byKey, forNode(n){ return (byKey[n.node_id]||[]).concat(byKey[n.label]||[]); } };
+}
+function resolveAgentLabel(subjectNode, nodes){
+  const n = (nodes||[]).find(x => x.node_id === subjectNode || x.label === subjectNode);
+  return n ? { label:n.label, type:n.node_type } : { label:subjectNode, type:null };
+}
+async function killSwitch(agentId, reason){
+  const r = await apiFetch(`/api/enforcement/killswitch/${encodeURIComponent(agentId)}`, {
+    method:"POST", headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({ activated_by:"dashboard-operator", reason: reason || "operator action from trust graph" }),
   });
-  const edgeSet = edges.map(e => ({ s: e.src_node, d: e.dst_node }));
-  const k = Math.sqrt((width * height) / Math.max(nodes.length, 1));
-  for (let iter = 0; iter < iterations; iter++) {
-    const temp = 20 * (1 - iter / iterations);
-    // Repulsion
-    for (let i = 0; i < nodes.length; i++) {
-      let fx = 0, fy = 0;
-      const pi = pos[nodes[i].node_id];
-      for (let j = 0; j < nodes.length; j++) {
-        if (i === j) continue;
-        const pj = pos[nodes[j].node_id];
-        const dx = pi.x - pj.x, dy = pi.y - pj.y;
-        const d = Math.max(Math.sqrt(dx*dx + dy*dy), 0.01);
-        const f = (k * k) / d;
-        fx += (dx / d) * f; fy += (dy / d) * f;
-      }
-      pi.vx = (pi.vx + fx) * 0.5; pi.vy = (pi.vy + fy) * 0.5;
-    }
-    // Attraction
-    edgeSet.forEach(({ s, d }) => {
-      const ps = pos[s], pd = pos[d];
-      if (!ps || !pd) return;
-      const dx = pd.x - ps.x, dy = pd.y - ps.y;
-      const dist = Math.max(Math.sqrt(dx*dx + dy*dy), 0.01);
-      const f = (dist * dist) / k;
-      const fx = (dx / dist) * f, fy = (dy / dist) * f;
-      ps.vx += fx; ps.vy += fy; pd.vx -= fx; pd.vy -= fy;
-    });
-    // Apply + clamp to canvas
-    nodes.forEach(n => {
-      const p = pos[n.node_id];
-      const speed = Math.sqrt(p.vx*p.vx + p.vy*p.vy);
-      if (speed > temp) { p.vx = p.vx/speed*temp; p.vy = p.vy/speed*temp; }
-      p.x = Math.max(40, Math.min(width-40,  p.x + p.vx));
-      p.y = Math.max(30, Math.min(height-30, p.y + p.vy));
-    });
-  }
-  return pos;
+  return { ok:r.ok, status:r.status, body: await r.json().catch(()=>({})) };
 }
 
-function GraphCanvas({ graphData }) {
-  const W = 780, H = 380;
-  const typeColors = { agent:"#6366f1", issuer:"#f59e0b", verifier:"#ef4444", tool:"#10b981", workload:"#3b82f6", tenant:"#8b5cf6" };
-  const [hovered, setHovered] = useState(null);
+function buildElements(graphData, expanded, hidden, idx){
+  const rawNodes = (graphData.nodes||[]).filter(n=>!hidden[n.node_type]);
+  const byId={}; rawNodes.forEach(n=>byId[n.node_id]=n);
+  const rawEdges = (graphData.edges||[]).filter(e=>byId[e.src_node]&&byId[e.dst_node]);
+  const incident={}; rawNodes.forEach(n=>incident[n.node_id]=[]);
+  rawEdges.forEach(e=>{ incident[e.src_node].push(e.dst_node); incident[e.dst_node].push(e.src_node); });
+  const deg={}; rawNodes.forEach(n=>deg[n.node_id]=incident[n.node_id].length);
+  const groups={}, groupOfMember={};
+  rawNodes.forEach(n=>{
+    if(deg[n.node_id]===1 && COLLAPSIBLE[n.node_type]){
+      const parent=incident[n.node_id][0], key="grp:"+parent+":"+n.node_type;
+      (groups[key]=groups[key]||{parent,type:n.node_type,members:[]}).members.push(n.node_id);
+    }
+  });
+  const collapsed={};
+  Object.entries(groups).forEach(([key,g])=>{
+    g.members.forEach(m=>{ groupOfMember[m]=key; });
+    if(g.members.length>=COLLAPSE_MIN && !expanded[key]) g.members.forEach(m=>{ collapsed[m]=key; });
+  });
+  const els=[];
+  rawNodes.forEach(n=>{
+    if(collapsed[n.node_id]) return;
+    const an=idx.forNode(n);
+    els.push({ data:{ id:n.node_id, name:(n.label||"").replace(/^attest:/,""), glyph:gglyph(n.node_type),
+      ntype:n.node_type, sz:22+Math.min(deg[n.node_id]*2,24), anom:an.length>0 },
+      classes: an.length? "anom":"" });
+  });
+  Object.entries(groups).forEach(([key,g])=>{
+    if(!(g.members.length>=COLLAPSE_MIN && !expanded[key])) return;
+    const anyAnom = g.members.some(m=> byId[m] && idx.forNode(byId[m]).length>0);
+    const plural=(GTYPE[g.type]||{}).p||g.type;
+    els.push({ data:{ id:key, name:`${plural} ×${g.members.length}`, glyph:gglyph(g.type), ntype:g.type,
+      group:true, count:g.members.length, sz:34+Math.min(g.members.length,26), anom:anyAnom },
+      classes: anyAnom?"anom group":"group" });
+    els.push({ data:{ id:key+"|e", source:g.parent, target:key, etype:"attested_by", weight:g.members.length } });
+  });
+  rawEdges.forEach((e,i)=>{
+    if(collapsed[e.src_node]||collapsed[e.dst_node]) return;
+    els.push({ data:{ id:"e"+i, source:e.src_node, target:e.dst_node, etype:e.edge_type,
+      weight:e.weight||1, srcLabel:e.src_label, dstLabel:e.dst_label } });
+  });
+  return { els, groupOfMember };
+}
 
-  if (!graphData || !graphData.nodes || graphData.nodes.length === 0) {
-    return h("div",{style:{textAlign:"center",padding:"60px 0",color:"var(--muted)"}},
-      h("div",{style:{fontSize:40,marginBottom:8}},"🕸"),
-      h("div",{style:{fontSize:14}},"Graph empty — run demo_seed.py to populate"),
-    );
-  }
+const CY_STYLE = [
+  { selector:"node", style:{
+    "background-color": e=>gcol(e.data("ntype")),
+    "label": e=> (e.hasClass("lbl")||e.data("group")) ? e.data("name") : e.data("glyph"),
+    "color": e=> (e.hasClass("lbl")||e.data("group")) ? "#cbd5e1" : "#ffffff",
+    "font-size":9, "font-weight":700,
+    "text-valign": e=> e.hasClass("lbl") ? "bottom" : "center",
+    "text-halign":"center", "text-margin-y": e=> e.hasClass("lbl")?4:0,
+    "text-background-color":"#0b1220", "text-background-opacity": e=> e.hasClass("lbl")?.8:0,
+    "text-background-padding":2,
+    "width": e=>e.data("sz"), "height": e=>e.data("sz"), "border-width":0 } },
+  { selector:"node[?group]", style:{ "shape":"round-rectangle", "background-opacity":.92 } },
+  { selector:"node.anom", style:{ "border-width":4, "border-color":"#f59e0b" } },
+  { selector:"node:selected", style:{ "border-width":4, "border-color":"#3b82f6" } },
+  { selector:"node.faded", style:{ "opacity":.1 } },
+  { selector:"edge", style:{ "width": e=>1+Math.min(e.data("weight")||1,5)*.25, "line-color":"#334155",
+    "target-arrow-color":"#334155", "target-arrow-shape":"triangle", "curve-style":"bezier",
+    "arrow-scale":.7, "opacity":.45 } },
+  { selector:"edge.faded", style:{ "opacity":.04 } },
+  { selector:"edge.hot", style:{ "opacity":1, "line-color":"#3b82f6", "target-arrow-color":"#3b82f6",
+    "width":2, "label": e=>e.data("etype"), "font-size":8, "color":"#94a3b8", "text-rotation":"autorotate" } },
+];
 
-  const pos = forceLayout(graphData.nodes, graphData.edges, W, H, 120);
+function CytoGraph({ graphData, anomalies, hidden, expanded, ctrl, handlers }){
+  const elRef = useRef(null), cyRef = useRef(null), sigRef = useRef(""), graphRef = useRef(graphData);
+  const memberRef = useRef({}), pendingRef = useRef(null), hRef = useRef(handlers);
+  const [fallback, setFallback] = useState(false);
+  hRef.current = handlers; graphRef.current = graphData;
 
-  return h("svg", { width:"100%", viewBox:`0 0 ${W} ${H}`,
-    style:{display:"block",background:"var(--surface2)",borderRadius:8,overflow:"visible"} },
-    // Arrow marker
-    h("defs", null,
-      h("marker",{id:"arr",markerWidth:8,markerHeight:6,refX:14,refY:3,orient:"auto"},
-        h("polygon",{points:"0 0, 8 3, 0 6",fill:"#475569"})
-      ),
-    ),
-    // Edges
-    graphData.edges.map((e, i) => {
-      const ps = pos[e.src_node], pd = pos[e.dst_node];
-      if (!ps || !pd) return null;
-      const isHov = hovered === e.src_node || hovered === e.dst_node;
-      return h("line", { key:i, x1:ps.x, y1:ps.y, x2:pd.x, y2:pd.y,
-        stroke: isHov ? "#94a3b8" : "#334155",
-        strokeWidth: isHov ? 1.5 : 1,
-        markerEnd: "url(#arr)",
-        style: { transition: "stroke .2s" },
-      });
-    }),
-    // Edge labels (only on hover)
-    graphData.edges.map((e, i) => {
-      const ps = pos[e.src_node], pd = pos[e.dst_node];
-      if (!ps || !pd) return null;
-      if (hovered !== e.src_node && hovered !== e.dst_node) return null;
-      return h("text", { key:`el${i}`, x:(ps.x+pd.x)/2, y:(ps.y+pd.y)/2-4,
-        fontSize:9, fill:"#94a3b8", textAnchor:"middle", style:{pointerEvents:"none"}
-      }, e.edge_type?.replace(/_/g," "));
-    }),
-    // Nodes
-    graphData.nodes.map(n => {
-      const p = pos[n.node_id];
-      if (!p) return null;
-      const col = typeColors[n.node_type] || "#6366f1";
-      const r = n.node_type === "agent" ? 18 : 13;
-      const isHov = hovered === n.node_id;
-      const shortLabel = (n.label || "").replace(/^attest:/, "").replace(/@.*/, "").slice(0, 16);
-      return h("g", { key:n.node_id,
-        style:{cursor:"pointer"},
-        onMouseEnter: () => setHovered(n.node_id),
-        onMouseLeave: () => setHovered(null),
+  useEffect(()=>{
+    if(!cyReady()){ setFallback(true); return; }
+    try { if(window.cytoscapeDagre) cytoscape.use(window.cytoscapeDagre); } catch(e){}
+    const cy = cytoscape({ container: elRef.current, style: CY_STYLE, elements: [],
+      wheelSensitivity:.25, minZoom:.15, maxZoom:3 });
+    cyRef.current = cy;
+    const focusNode = (node)=>{ cy.elements().unselect(); node.select();
+      cy.animate({ center:{eles:node}, zoom: Math.max(cy.zoom(),1.2) }, { duration:280 });
+      cy.elements().addClass("faded"); const hood=node.closedNeighborhood();
+      hood.removeClass("faded"); hood.edges().addClass("hot");
+      hood.nodes().addClass("lbl"); };
+    const clearHi = ()=>{ cy.elements().removeClass("faded hot"); cy.nodes().removeClass("lbl"); };
+    cy.on("tap","node", ev=>{ const d=ev.target.data();
+      if(d.group){ hRef.current.onToggleGroup && hRef.current.onToggleGroup(d.id); return; }
+      focusNode(ev.target); hRef.current.onSelectNode && hRef.current.onSelectNode(d); });
+    cy.on("tap","edge", ev=>{ const d=ev.target.data(); cy.elements().addClass("faded");
+      ev.target.removeClass("faded").addClass("hot"); ev.target.connectedNodes().removeClass("faded").addClass("lbl");
+      hRef.current.onSelectEdge && hRef.current.onSelectEdge(d); });
+    cy.on("tap", ev=>{ if(ev.target===cy){ clearHi(); hRef.current.onBackground && hRef.current.onBackground(); } });
+    cy.on("mouseover","node", ev=>ev.target.addClass("lbl"));
+    cy.on("mouseout","node", ev=>{ if(!ev.target.selected()) ev.target.removeClass("lbl"); });
+    ctrl.current = {
+      cy, fit:()=>cy.fit(undefined,40),
+      focusLabel:(label)=>{
+        let node=cy.nodes().filter(n=>!n.data("group") && (n.data("name")===label || n.id()===label)).first();
+        if(node && node.length){ focusNode(node); const nn=(graphRef.current.nodes||[]).find(x=>x.label===label||x.node_id===node.id());
+          hRef.current.onSelectNode && hRef.current.onSelectNode(node.data()); return; }
+        const src=(graphRef.current.nodes||[]).find(x=>x.label===label||x.node_id===label);
+        if(src){ const grp=memberRef.current[src.node_id];
+          if(grp){ pendingRef.current=src.node_id; hRef.current.onToggleGroup && hRef.current.onToggleGroup(grp); } }
       },
-        // Glow ring on hover
-        isHov && h("circle",{ cx:p.x, cy:p.y, r:r+6, fill:col, opacity:.15 }),
-        h("circle",{ cx:p.x, cy:p.y, r, fill:col, opacity: isHov ? 1 : 0.85,
-          stroke: isHov ? "white" : col, strokeWidth: isHov ? 2 : 0,
-          style:{ transition:"all .15s" }
-        }),
-        // Icon letter
-        h("text",{ x:p.x, y:p.y+1, textAnchor:"middle", dominantBaseline:"middle",
-          fontSize: r > 14 ? 10 : 8, fill:"white", fontWeight:700,
-          style:{pointerEvents:"none",userSelect:"none"}
-        }, n.node_type[0].toUpperCase()),
-        // Label below node
-        h("text",{ x:p.x, y:p.y+r+12, textAnchor:"middle",
-          fontSize:9, fill: isHov ? "var(--text)" : "var(--muted)",
-          style:{pointerEvents:"none",transition:"fill .15s"}
-        }, shortLabel),
-        // Tooltip on hover
-        isHov && h("g",{style:{pointerEvents:"none"}},
-          h("rect",{x:p.x+r+4,y:p.y-22,width:160,height:42,rx:5,fill:"#1e293b",stroke:"#334155",strokeWidth:1}),
-          h("text",{x:p.x+r+12,y:p.y-7,fontSize:10,fill:"white",fontWeight:600},n.label?.slice(0,22)+(n.label?.length>22?"…":"")),
-          h("text",{x:p.x+r+12,y:p.y+8,fontSize:9,fill:col},n.node_type, " · obs:", n.observation_count||0),
-        ),
-      );
-    }),
-    // Legend
-    Object.entries(typeColors).filter(([t]) => graphData.nodes.some(n=>n.node_type===t)).map(([t,c],i) =>
-      h("g",{key:t,transform:`translate(${10 + i * 90}, ${H-12})`},
-        h("circle",{cx:5,cy:0,r:4,fill:c,opacity:.85}),
-        h("text",{x:12,y:4,fontSize:9,fill:"var(--muted)"},t),
-      )
-    ),
-  );
+      focusEdgeNodes:(srcLabel)=>{ if(srcLabel) ctrl.current.focusLabel(srcLabel); },
+    };
+    return ()=>{ try{cy.destroy();}catch(e){} cyRef.current=null; };
+  }, []);
+
+  useEffect(()=>{
+    const cy=cyRef.current; if(!cy) return;
+    const idx=indexAnomalies(anomalies, graphData.nodes);
+    const { els, groupOfMember } = buildElements(graphData, expanded, hidden, idx);
+    memberRef.current = groupOfMember;
+    const sig = els.map(e=>e.data.id).sort().join("|");
+    if(sig !== sigRef.current){
+      const first = sigRef.current==="";
+      cy.json({ elements: els });
+      const layout = cy.layout(window.cytoscapeDagre
+        ? { name:"dagre", rankDir:"LR", nodeSep:22, rankSep:95, fit:first, padding:40 }
+        : { name:"breadthfirst", directed:true, fit:first, padding:40 });
+      layout.run();
+      sigRef.current = sig;
+      if(pendingRef.current){ const id=pendingRef.current; pendingRef.current=null;
+        const nd=cy.getElementById(id); if(nd && nd.length){ cy.animate({center:{eles:nd},zoom:1.4},{duration:280}); nd.select();
+          hRef.current.onSelectNode && hRef.current.onSelectNode(nd.data()); } }
+    } else {
+      els.forEach(e=>{ const ele=cy.getElementById(e.data.id); if(ele && ele.length){
+        if(e.data.anom!==undefined){ ele.data("anom",e.data.anom); ele.toggleClass("anom", !!e.data.anom);} } });
+    }
+  }, [graphData, anomalies, hidden, expanded]);
+
+  if(fallback) return h("div",{className:"empty"},
+    h("div",{className:"empty-icon"},"🕸"),
+    h("div",{className:"empty-msg"},"Graph engine (Cytoscape) failed to load"),
+    h("div",{className:"empty-hint"},"CDN blocked — check network access to jsdelivr.net"));
+  return h("div",{ref:elRef,className:"tg-canvas"});
+}
+
+// ── Context slide-over (node or edge) ───────────────────────────────────────
+function ContextPanel({ sel, graphData, anomalies, ctrl, onClose, onJump, onFindPaths, onKilled }){
+  if(!sel) return null;
+  const nodes = graphData.nodes||[], edges = graphData.edges||[];
+  if(sel.kind==="edge"){
+    const e=sel.data;
+    return h("div",{className:"slideover"},
+      h("div",{className:"slideover-head"},
+        h("div",{style:{flex:1}},
+          h("div",{className:"modal-title"},(e.etype||"edge").replace(/_/g," ")),
+          h("div",{style:{fontSize:11,color:"var(--muted)",marginTop:2}},"Trust relationship")),
+        h("div",{className:"modal-close",onClick:onClose},"✕")),
+      h("div",{className:"slideover-body"},
+        h("div",{className:"so-section"},"Direction"),
+        h("div",{className:"so-neighbor",onClick:()=>onJump(e.srcLabel)},
+          h("span",{className:"dot",style:{background:"var(--accent)",width:8,height:8,borderRadius:"50%"}}),
+          h("span",null,e.srcLabel||e.source)),
+        h("div",{style:{textAlign:"center",color:"var(--muted)",margin:"4px 0"}},"↓ "+(e.etype||"").replace(/_/g," ")),
+        h("div",{className:"so-neighbor",onClick:()=>onJump(e.dstLabel)},
+          h("span",{className:"dot",style:{background:"var(--green)",width:8,height:8,borderRadius:"50%"}}),
+          h("span",null,e.dstLabel||e.target)),
+      ));
+  }
+  const d=sel.data;
+  const myEdges = edges.filter(e=>e.src_label===d.name||e.dst_label===d.name||e.src_node===d.id||e.dst_node===d.id);
+  const inDeg = myEdges.filter(e=>e.dst_label===d.name||e.dst_node===d.id).length;
+  const outDeg = myEdges.length-inDeg;
+  const neighbors = []; const seen={};
+  myEdges.forEach(e=>{ const other = (e.src_label===d.name||e.src_node===d.id) ? {l:e.dst_label,t:e.dst_type,et:e.edge_type} : {l:e.src_label,t:e.src_type,et:e.edge_type};
+    if(other.l && !seen[other.l]){ seen[other.l]=1; neighbors.push(other); } });
+  const idx = indexAnomalies(anomalies, nodes);
+  const myAnoms = (idx.byKey[d.id]||[]).concat(idx.byKey[d.name]||[]);
+  const isAgent = d.ntype==="agent";
+  const doKill = async ()=>{
+    if(!window.confirm(`Quarantine / kill agent "${d.name}"? This activates the enforcement kill switch.`)) return;
+    const reason = window.prompt("Reason for kill switch:", "rogue agent — trust graph investigation");
+    if(reason===null) return;
+    const res = await killSwitch(d.name, reason);
+    console.log("killSwitch", d.name, res);
+    alert(res.ok ? `Kill switch ACTIVE for ${d.name}` : `Kill failed (HTTP ${res.status})`);
+    onKilled && onKilled(d.name, res);
+  };
+  return h("div",{className:"slideover"},
+    h("div",{className:"slideover-head"},
+      h("div",{style:{flex:1}},
+        h("div",{className:"modal-title"},d.name),
+        h("div",{style:{fontSize:11,marginTop:2}},
+          h("span",{style:{color:gcol(d.ntype),fontWeight:700,textTransform:"uppercase"}},d.ntype))),
+      h("div",{className:"modal-close",onClick:onClose},"✕")),
+    h("div",{className:"slideover-body"},
+      h("div",{className:"so-kv"},h("span",{className:"k"},"Node ID"),h("span",{className:"v mono"},(d.id||"").slice(0,18))),
+      h("div",{className:"so-kv"},h("span",{className:"k"},"Degree"),h("span",{className:"v"},`${myEdges.length} (${inDeg} in / ${outDeg} out)`)),
+      h("div",{className:"so-kv"},h("span",{className:"k"},"Anomalies"),h("span",{className:"v",style:{color:myAnoms.length?"var(--red)":"var(--green)"}},myAnoms.length)),
+      myAnoms.length>0 && h("div",null, h("div",{className:"so-section"},"Anomalies on this node"),
+        myAnoms.map((a,i)=>h("div",{key:i,style:{background:"rgba(239,68,68,.08)",borderLeft:"3px solid var(--red)",borderRadius:6,padding:"8px 10px",marginBottom:6,fontSize:11}},
+          h("div",{style:{fontWeight:700,color:"#fca5a5"}},a.anomaly_type?.replace(/_/g," ")),
+          h("div",{style:{color:"var(--muted)",marginTop:2}},a.detail)))),
+      h("div",{className:"so-section"},`Neighbors (${neighbors.length})`),
+      neighbors.length===0 ? h("div",{style:{fontSize:12,color:"var(--muted)"}},"None")
+        : neighbors.slice(0,30).map((nb,i)=>h("div",{key:i,className:"so-neighbor",onClick:()=>onJump(nb.l)},
+            h("span",{className:"dot",style:{background:gcol(nb.t),width:9,height:9,borderRadius:"50%"}}),
+            h("span",{style:{flex:1}},nb.l),
+            h("span",{style:{fontSize:10,color:"var(--muted)"}},(nb.et||"").replace(/_/g," ")))),
+      h("div",{className:"so-section"},"Actions"),
+      h("button",{className:"so-action",onClick:()=>ctrl.current.focusLabel && ctrl.current.focusLabel(d.name)},"🎯 Center on node"),
+      h("button",{className:"so-action primary",onClick:()=>onFindPaths(d.name)},"🔍 Find paths from here"),
+      isAgent && h("button",{className:"so-action danger",onClick:doKill},"⛔ Investigate / Kill agent"),
+    ));
+}
+
+// ── Generic modal wrapper ───────────────────────────────────────────────────
+function GModal({ title, sub, onClose, children, wide }){
+  return h("div",{className:"modal-backdrop",onClick:onClose},
+    h("div",{className:"modal-box",style:wide?null:{maxWidth:680,minHeight:"auto"},onClick:e=>e.stopPropagation()},
+      h("div",{className:"modal-head"},
+        h("div",{style:{flex:1}}, h("div",{className:"modal-title"},title), sub&&h("div",{style:{fontSize:12,color:"var(--muted)",marginTop:3}},sub)),
+        h("div",{className:"modal-close",onClick:onClose},"✕")),
+      h("div",{className:"modal-body"}, children)));
+}
+
+// ── Drill-in: nodes / edges tables ──────────────────────────────────────────
+function NodesModal({ graphData, anomalies, onClose, onPick }){
+  const [q,setQ]=useState(""); const [sort,setSort]=useState("degree");
+  const nodes=graphData.nodes||[], edges=graphData.edges||[];
+  const deg={}; edges.forEach(e=>{ deg[e.src_node]=(deg[e.src_node]||0)+1; deg[e.dst_node]=(deg[e.dst_node]||0)+1; });
+  const idx=indexAnomalies(anomalies,nodes);
+  let rows=nodes.map(n=>({n,degree:deg[n.node_id]||0,anom:idx.forNode(n).length}));
+  if(q) rows=rows.filter(r=>(r.n.label||"").toLowerCase().includes(q.toLowerCase())||r.n.node_type.includes(q.toLowerCase()));
+  rows.sort((a,b)=> sort==="label"? (a.n.label||"").localeCompare(b.n.label||"") : sort==="type"? a.n.node_type.localeCompare(b.n.node_type) : sort==="anom"? b.anom-a.anom : b.degree-a.degree);
+  return h(GModal,{title:`Nodes (${nodes.length})`,sub:"Click a row to center it in the graph",onClose,wide:true},
+    h("input",{value:q,onChange:e=>setQ(e.target.value),placeholder:"Search label or type…",
+      style:{width:"100%",background:"var(--surface2)",border:"1px solid var(--border)",color:"var(--text)",padding:"8px 12px",borderRadius:6,marginBottom:12,fontSize:13}}),
+    h("table",{className:"data-table"},
+      h("thead",null,h("tr",null,
+        ["label","type","degree","anom"].map(c=>h("th",{key:c,style:{cursor:"pointer"},onClick:()=>setSort(c)},
+          (c==="anom"?"anomaly":c)+(sort===c?" ▾":""))))),
+      h("tbody",null, rows.slice(0,400).map((r,i)=>h("tr",{key:i,style:{cursor:"pointer"},onClick:()=>onPick(r.n.label)},
+        h("td",{className:"mono"},r.n.label),
+        h("td",null,h("span",{style:{color:gcol(r.n.node_type)}},r.n.node_type)),
+        h("td",null,r.degree),
+        h("td",null,r.anom?h("span",{style:{color:"var(--red)"}},"⚠ "+r.anom):h("span",{style:{color:"var(--muted)"}},"—")))))));
+}
+function EdgesModal({ graphData, onClose, onPick }){
+  const [q,setQ]=useState("");
+  let rows=graphData.edges||[];
+  if(q) rows=rows.filter(e=>(e.src_label+e.dst_label+e.edge_type).toLowerCase().includes(q.toLowerCase()));
+  return h(GModal,{title:`Edges (${(graphData.edges||[]).length})`,sub:"Click a row to focus the source node",onClose,wide:true},
+    h("input",{value:q,onChange:e=>setQ(e.target.value),placeholder:"Search source / type / destination…",
+      style:{width:"100%",background:"var(--surface2)",border:"1px solid var(--border)",color:"var(--text)",padding:"8px 12px",borderRadius:6,marginBottom:12,fontSize:13}}),
+    h("table",{className:"data-table"},
+      h("thead",null,h("tr",null,h("th",null,"source"),h("th",null,"type"),h("th",null,"destination"))),
+      h("tbody",null, rows.slice(0,400).map((e,i)=>h("tr",{key:i,style:{cursor:"pointer"},onClick:()=>onPick(e.src_label)},
+        h("td",{className:"mono"},e.src_label),
+        h("td",null,h("span",{className:"chip"},(e.edge_type||"").replace(/_/g," "))),
+        h("td",{className:"mono"},e.dst_label))))));
+}
+
+// ── Anomaly detail modal (single) ───────────────────────────────────────────
+function AnomalyDetailModal({ anomaly, graphData, onClose, onView, onFindPaths, onAck, onKilled }){
+  const a=anomaly; const subj=resolveAgentLabel(a.subject_node, graphData.nodes||[]);
+  const isAgent = subj.type==="agent";
+  const doKill = async ()=>{
+    if(!isAgent){ alert("Kill switch applies to agents only. Subject is "+(subj.type||"unknown")+"."); return; }
+    if(!window.confirm(`Quarantine / kill agent "${subj.label}"?`)) return;
+    const reason = window.prompt("Reason:", a.anomaly_type+" — "+(a.detail||"").slice(0,60));
+    if(reason===null) return;
+    const res=await killSwitch(subj.label, reason); console.log("killSwitch", subj.label, res);
+    alert(res.ok?`Kill switch ACTIVE for ${subj.label}`:`Kill failed (HTTP ${res.status})`); onKilled&&onKilled();
+  };
+  return h(GModal,{title:(a.anomaly_type||"Anomaly").replace(/_/g," "),sub:"Trust graph anomaly",onClose},
+    h("div",{className:"risk-gauge"}, h(Badge,{sev:a.severity}),
+      h("span",{style:{fontSize:12,color:"var(--muted)",marginLeft:8}},ago(a.detected_at))),
+    h("div",{className:"so-kv"},h("span",{className:"k"},"Subject"),
+      h("span",{className:"v mono",style:{color:"var(--accent)",cursor:"pointer"},onClick:()=>onView(subj.label)},subj.label)),
+    h("div",{className:"so-kv"},h("span",{className:"k"},"Subject type"),h("span",{className:"v"},subj.type||"unknown")),
+    h("div",{style:{margin:"14px 0",fontSize:13,lineHeight:1.6,background:"var(--surface2)",padding:"12px 14px",borderRadius:8}},a.detail),
+    a.context && Object.keys(a.context).length>0 && h("div",null,
+      h("div",{className:"so-section"},"Context"),
+      Object.entries(a.context).map(([k,v])=>h("div",{key:k,className:"so-kv"},h("span",{className:"k"},k),h("span",{className:"v mono"},String(v))))),
+    h("div",{className:"so-section"},"Actions"),
+    h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}},
+      h("button",{className:"so-action",onClick:()=>onView(subj.label)},"🎯 View in graph"),
+      h("button",{className:"so-action",onClick:()=>onFindPaths(subj.label)},"🔍 Find trust paths"),
+      h("button",{className:"so-action",onClick:onAck},"✓ Acknowledge"),
+      h("button",{className:"so-action danger",onClick:doKill},"⛔ Quarantine / Kill")));
+}
+
+// ── Intent match detail modal ───────────────────────────────────────────────
+function IntentMatchModal({ match, onClose }){
+  const m=match;
+  return h(GModal,{title:m.playbook_name||"Intent Match",sub:"Correlated attack sequence",onClose},
+    h("div",{className:"risk-gauge"}, h(Badge,{sev:m.severity}),
+      h(ConfBar,{v:m.confidence||0}),
+      h("span",{style:{fontSize:12,color:"var(--muted)",marginLeft:8}},ago(m.detected_at))),
+    h("div",{className:"so-kv"},h("span",{className:"k"},"Subject"),h("span",{className:"v mono"},m.subject||"—")),
+    h("div",{className:"so-kv"},h("span",{className:"k"},"Severity"),h("span",{className:"v"},m.severity)),
+    h("div",{className:"so-kv"},h("span",{className:"k"},"Confidence"),h("span",{className:"v"},Math.round((m.confidence||0)*100)+"%")),
+    h("div",{className:"so-kv"},h("span",{className:"k"},"Matched events"),h("span",{className:"v"},(m.matched_events||[]).length)),
+    h("div",{className:"so-kv"},h("span",{className:"k"},"First seen"),h("span",{className:"v"},m.first_event_at||"—")),
+    h("div",{className:"so-kv"},h("span",{className:"k"},"Last seen"),h("span",{className:"v"},m.last_event_at||"—")),
+    h("div",{style:{margin:"14px 0",fontSize:13,lineHeight:1.6,background:"var(--surface2)",padding:"12px 14px",borderRadius:8}},m.detail),
+    (m.matched_events||[]).length>0 && h("div",null, h("div",{className:"so-section"},"Matched event IDs"),
+      h("div",{className:"mono",style:{fontSize:11,color:"var(--muted)",wordBreak:"break-all"}},(m.matched_events||[]).join(", "))));
 }
 
 function TrustGraphPage() {
-  const [stats]     = useApi("/api/graph/stats",           { node_count:0, edge_count:0, anomaly_count:0, node_types:{} }, 8000);
-  const [anomalies] = useApi("/api/graph/anomalies?limit=20", { anomalies:[] }, 8000);
-  const [graphData] = useApi("/api/graph/data",             { nodes:[], edges:[] }, 8000);
-  const [fromLabel, setFromLabel] = useState("agt-orchestrator");
-  const [toLabel,   setToLabel]   = useState("attest:att-orch-001");
+  const [stats]     = useApi("/api/graph/stats",            { node_count:0, edge_count:0, anomaly_count:0, node_types:{} }, 10000);
+  const [anomData]  = useApi("/api/graph/anomalies?limit=200", { anomalies:[] }, 10000);
+  const [graphData] = useApi("/api/graph/data",             { nodes:[], edges:[] }, 10000);
+  const [sel, setSel] = useState(null);              // {kind:'node'|'edge', data}
+  const [drill, setDrill] = useState(null);          // 'nodes'|'edges'|'anomalies'
+  const [anomDetail, setAnomDetail] = useState(null);
+  const [expanded, setExpanded] = useState({});
+  const [hidden, setHidden] = useState({});
+  const [acked, setAcked] = useState({});
+  const [fromLabel, setFromLabel] = useState("");
+  const [toLabel, setToLabel] = useState("");
   const [pathResult, setPathResult] = useState(null);
   const [pathLoading, setPathLoading] = useState(false);
+  const ctrl = useRef({});
+
+  const anoms = (anomData.anomalies||[]).filter(a=>!acked[a.id]);
+  const present = Object.keys(stats.node_types||{});
 
   const findPath = async () => {
+    if(!fromLabel||!toLabel) return;
     setPathLoading(true); setPathResult(null);
-    try {
-      const r = await fetch(`${API_BASE}/api/graph/path/${encodeURIComponent(fromLabel)}?to=${encodeURIComponent(toLabel)}`,
-        { headers: { "X-API-Key": "demo-key" } });
-      setPathResult(await r.json());
-    } catch(e) {}
+    try { const r=await apiFetch(`/api/graph/path/${encodeURIComponent(fromLabel)}?to=${encodeURIComponent(toLabel)}`); setPathResult(await r.json()); } catch(e){}
     setPathLoading(false);
   };
+  const jumpTo = (label)=>{ if(!label) return; setDrill(null); setAnomDetail(null);
+    if(ctrl.current.focusLabel) ctrl.current.focusLabel(label); };
+  const findPathsFrom = (label)=>{ setFromLabel(label); setSel(null); setAnomDetail(null); setDrill(null);
+    window.scrollTo({top:document.body.scrollHeight,behavior:"smooth"}); };
+  const toggleGroup = (id)=> setExpanded(p=>({ ...p, [id]: !p[id] }));
+  const toggleType = (t)=> setHidden(p=>({ ...p, [t]: !p[t] }));
 
-  // Populate path finder from click on a node (future: wire through GraphCanvas)
-  const nodeOptions = (graphData.nodes || []).map(n => n.label);
-  const typeColors = { agent:"#6366f1", issuer:"#f59e0b", verifier:"#ef4444", tool:"#10b981", workload:"#3b82f6", tenant:"#8b5cf6" };
-  const totalNodes = stats.node_count || 0;
-  const anoms = anomalies.anomalies || [];
+  const handlers = {
+    onSelectNode:(d)=>{ setSel({kind:"node",data:d}); },
+    onSelectEdge:(d)=>{ setSel({kind:"edge",data:d}); },
+    onBackground:()=> setSel(null),
+    onToggleGroup: toggleGroup,
+  };
 
   return h("div", null,
     h("div",{className:"section-head"},
       h("div",{className:"section-title"},"🕸 UIS Trust Graph"),
-      h("div",{className:"section-sub"},"Live graph of agents, issuers, verifiers and tools built from UIS events. Hover nodes to inspect."),
-    ),
+      h("div",{className:"section-sub"},"Hierarchical view of agents, issuers, verifiers and tools. Click any node, edge, anomaly or counter to drill in.")),
 
-    // KPI row
-    h("div",{className:"three-col",style:{marginBottom:20}},
-      h("div",{className:"gstat"}, h("div",{className:"gstat-num",style:{color:"var(--accent)"}},totalNodes), h("div",{className:"gstat-label"},"Nodes")),
-      h("div",{className:"gstat"}, h("div",{className:"gstat-num",style:{color:"var(--green)"}},stats.edge_count||0), h("div",{className:"gstat-label"},"Edges")),
-      h("div",{className:"gstat"}, h("div",{className:"gstat-num",style:{color:anoms.length?"var(--red)":"var(--green)"}},stats.anomaly_count||0), h("div",{className:"gstat-label"},"Anomalies")),
-    ),
+    // clickable stat strip
+    h("div",{className:"three-col",style:{marginBottom:16}},
+      h("div",{className:"gstat clickable",onClick:()=>setDrill("nodes")}, h("div",{className:"gstat-num",style:{color:"var(--accent)"}},stats.node_count||0), h("div",{className:"gstat-label"},"Nodes ▸")),
+      h("div",{className:"gstat clickable",onClick:()=>setDrill("edges")}, h("div",{className:"gstat-num",style:{color:"var(--green)"}},stats.edge_count||0), h("div",{className:"gstat-label"},"Edges ▸")),
+      h("div",{className:"gstat clickable",onClick:()=>setDrill("anomalies")}, h("div",{className:"gstat-num",style:{color:(stats.anomaly_count?"var(--red)":"var(--green)")}},stats.anomaly_count||0), h("div",{className:"gstat-label"},"Anomalies ▸"))),
 
-    // Graph canvas
+    // graph card
     h("div",{className:"card",style:{marginBottom:20}},
       h("div",{className:"card-head"},
         h("div",{className:"card-title"},"Live Trust Graph"),
-        h("span",{className:"chip",style:{fontSize:10}},`${totalNodes} nodes · ${stats.edge_count||0} edges`),
-      ),
+        h("span",{className:"chip",style:{fontSize:10}},`${stats.node_count||0} nodes · ${stats.edge_count||0} edges · verifier mass clustered`)),
       h("div",{style:{padding:"12px 16px 16px"}},
-        h(GraphCanvas, { graphData }),
-      ),
+        h("div",{className:"tg-toolbar"},
+          h("button",{className:"tg-btn",onClick:()=>ctrl.current.fit&&ctrl.current.fit()},"⤢ Fit / Reset view"),
+          h("button",{className:"tg-btn",onClick:()=>setExpanded({})},"⊟ Collapse all"),
+          h("div",{className:"tg-legend",style:{marginLeft:"auto"}},
+            present.map(t=>h("div",{key:t,className:`tg-chip${hidden[t]?" off":""}`,onClick:()=>toggleType(t)},
+              h("span",{className:"dot",style:{background:gcol(t)}}), t, h("span",{style:{color:"var(--muted)"}},stats.node_types[t]))))),
+        h("div",{className:"tg-wrap"},
+          h(CytoGraph,{ graphData, anomalies:anoms, hidden, expanded, ctrl, handlers }),
+          h("div",{className:"tg-hint"},"Hover a node for its label · click to inspect · click a group (▢) to expand"))),
     ),
 
-    // Bottom two-col: anomaly stream + path finder
+    // anomaly stream + path finder
     h("div",{className:"two-col"},
-      // Anomaly stream
       h("div",{className:"card"},
-        h("div",{className:"card-head"}, h("div",{className:"card-title"},"Anomaly Stream"), h("span",{className:"chip"},`${anoms.length} detected`)),
+        h("div",{className:"card-head"}, h("div",{className:"card-title"},"Live Anomaly Stream"),
+          h("span",{className:"chip"},`${anoms.length} detected`)),
         h("div",{className:"card-body"},
-          anoms.length === 0
-            ? h("div",{className:"empty",style:{padding:"24px"}}, h("div",{className:"empty-icon"},"✅"), h("div",{className:"empty-msg"},"No anomalies"), h("div",{className:"empty-hint"},"Graph looks normal"))
-            : anoms.map((a,i) => h("div",{key:i,className:"anomaly-card"},
-                h("div",{className:"anomaly-icon"}, a.severity==="high"||a.severity==="critical" ? "⚠️":"ℹ️"),
-                h("div",{className:"anomaly-body"},
-                  h("div",{className:"anomaly-type"},a.anomaly_type?.replace(/_/g," ")),
-                  h("div",{className:"anomaly-subject"},a.subject_node),
-                  h("div",{className:"anomaly-detail"},a.detail),
-                ),
-                h(Badge,{sev:a.severity}),
-              ))
-        ),
-      ),
+          anoms.length===0
+            ? h("div",{className:"empty",style:{padding:24}}, h("div",{className:"empty-icon"},"✅"), h("div",{className:"empty-msg"},"No anomalies"))
+            : anoms.slice().sort((a,b)=>(SEV_RANK[b.severity]||0)-(SEV_RANK[a.severity]||0)).map((a,i)=>
+                h("div",{key:a.id||i,className:"anomaly-card clickable",onClick:()=>setAnomDetail(a)},
+                  h("div",{className:"anomaly-icon"}, (a.severity==="high"||a.severity==="critical")?"⚠️":"ℹ️"),
+                  h("div",{className:"anomaly-body"},
+                    h("div",{className:"anomaly-type"},a.anomaly_type?.replace(/_/g," ")),
+                    h("div",{className:"anomaly-subject"},resolveAgentLabel(a.subject_node,graphData.nodes||[]).label),
+                    h("div",{className:"anomaly-detail"},a.detail)),
+                  h(Badge,{sev:a.severity}))))),
 
-      // Path finder
       h("div",{className:"card"},
         h("div",{className:"card-head"}, h("div",{className:"card-title"},"🔍 Trust Path Finder")),
         h("div",{className:"card-body"},
-          h("div",{style:{marginBottom:10,fontSize:11,color:"var(--muted)"}},
-            "Node labels: agents (e.g. agt-orchestrator), issuers (https://…), verifiers (attest:att-…)"),
-          h("div",{style:{display:"flex",gap:8,flexDirection:"column",marginBottom:12}},
-            h("div",null,
-              h("div",{style:{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:".7px"}},"From"),
-              h("select",{value:fromLabel,onChange:e=>setFromLabel(e.target.value),
-                style:{background:"var(--surface2)",border:"1px solid var(--border)",color:"var(--text)",padding:"7px 10px",borderRadius:6,fontSize:12,width:"100%",outline:"none"}},
-                nodeOptions.map(l => h("option",{key:l,value:l},l))
-              ),
-            ),
-            h("div",null,
-              h("div",{style:{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:".7px"}},"To"),
-              h("select",{value:toLabel,onChange:e=>setToLabel(e.target.value),
-                style:{background:"var(--surface2)",border:"1px solid var(--border)",color:"var(--text)",padding:"7px 10px",borderRadius:6,fontSize:12,width:"100%",outline:"none"}},
-                nodeOptions.map(l => h("option",{key:l,value:l},l))
-              ),
-            ),
-          ),
-          h("button",{onClick:findPath,disabled:pathLoading,
-            style:{background:"var(--accent)",color:"white",border:"none",padding:"8px 20px",borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",width:"100%"}},
-            pathLoading ? "Finding…" : "Find Path"),
+          h("div",{style:{marginBottom:10,fontSize:11,color:"var(--muted)"}},"Pick endpoints (or use “Find paths from here” on a node)."),
+          h("div",{style:{display:"flex",flexDirection:"column",gap:8,marginBottom:12}},
+            ["From","To"].map((lbl,ix)=>h("div",{key:lbl},
+              h("div",{style:{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:600,textTransform:"uppercase"}},lbl),
+              h("select",{value:ix?toLabel:fromLabel,onChange:e=>ix?setToLabel(e.target.value):setFromLabel(e.target.value),
+                style:{background:"var(--surface2)",border:"1px solid var(--border)",color:"var(--text)",padding:"7px 10px",borderRadius:6,fontSize:12,width:"100%"}},
+                h("option",{value:""},"— select —"),
+                (graphData.nodes||[]).map(n=>h("option",{key:n.node_id,value:n.label},n.label)))))),
+          h("button",{onClick:findPath,disabled:pathLoading||!fromLabel||!toLabel,
+            style:{background:"var(--accent)",color:"#fff",border:"none",padding:"8px 20px",borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",width:"100%",opacity:(!fromLabel||!toLabel)?.5:1}},
+            pathLoading?"Finding…":"Find Path"),
           pathResult && h("div",{style:{marginTop:14}},
             pathResult.found
-              ? h("div",null,
-                  h("div",{style:{fontSize:12,color:"var(--green)",marginBottom:10}},`✓ Path found — ${pathResult.length} hop${pathResult.length===1?"":"s"}`),
+              ? h("div",null, h("div",{style:{fontSize:12,color:"var(--green)",marginBottom:10}},`✓ Path found — ${pathResult.length} hop(s)`),
                   h("div",{style:{display:"flex",alignItems:"center",flexWrap:"wrap",gap:6}},
-                    (pathResult.path||[]).map((node,i) => h("div",{key:i,style:{display:"flex",alignItems:"center",gap:6}},
+                    (pathResult.path||[]).map((node,i)=>h("div",{key:i,style:{display:"flex",alignItems:"center",gap:6}},
                       h("div",{style:{background:"var(--surface3)",border:"1px solid var(--border)",borderRadius:6,padding:"5px 9px",fontSize:11}},
-                        h("div",{style:{color:typeColors[node.node_type]||"var(--accent)",fontSize:9,fontWeight:700,textTransform:"uppercase",marginBottom:2}},node.node_type),
-                        h("div",{style:{fontFamily:"monospace",fontSize:11}},node.label?.slice(0,20)+(node.label?.length>20?"…":"")),
-                      ),
-                      i < pathResult.path.length-1 && h("div",{style:{color:"var(--muted)",fontSize:16}},"→"),
-                    ))
-                  )
-                )
+                        h("div",{style:{color:gcol(node.node_type),fontSize:9,fontWeight:700,textTransform:"uppercase"}},node.node_type),
+                        h("div",{className:"mono",style:{fontSize:11}},(node.label||"").slice(0,20))),
+                      i<pathResult.path.length-1 && h("div",{style:{color:"var(--muted)"}},"→")))))
               : h("div",{style:{fontSize:12,color:"var(--muted)",marginTop:8}},
-                  pathResult.error === "one_or_both_nodes_not_found"
-                    ? "⚠ Node not found in graph."
-                    : pathResult.found === false
-                    ? "No path found between these nodes."
-                    : "Select nodes and click Find Path."
-                ),
-          ),
-        ),
-      ),
-    ),
+                  pathResult.error==="no_path_found"?"No path between these nodes.":pathResult.error==="one_or_both_nodes_not_found"?"⚠ Node not found.":"No path."))))),
+
+    // slide-over + modals
+    sel && h(ContextPanel,{ sel, graphData, anomalies:anoms, ctrl, onClose:()=>setSel(null), onJump:jumpTo, onFindPaths:findPathsFrom, onKilled:()=>{} }),
+    drill==="nodes" && h(NodesModal,{ graphData, anomalies:anoms, onClose:()=>setDrill(null), onPick:jumpTo }),
+    drill==="edges" && h(EdgesModal,{ graphData, onClose:()=>setDrill(null), onPick:jumpTo }),
+    drill==="anomalies" && h(GModal,{title:`Anomalies (${anoms.length})`,sub:"Click one for full detail + actions",onClose:()=>setDrill(null),wide:true},
+      anoms.slice().sort((a,b)=>(SEV_RANK[b.severity]||0)-(SEV_RANK[a.severity]||0)).map((a,i)=>
+        h("div",{key:a.id||i,className:"anomaly-card clickable",onClick:()=>{ setDrill(null); setAnomDetail(a); }},
+          h("div",{className:"anomaly-icon"},(a.severity==="high"||a.severity==="critical")?"⚠️":"ℹ️"),
+          h("div",{className:"anomaly-body"},
+            h("div",{className:"anomaly-type"},a.anomaly_type?.replace(/_/g," ")),
+            h("div",{className:"anomaly-subject"},resolveAgentLabel(a.subject_node,graphData.nodes||[]).label),
+            h("div",{className:"anomaly-detail"},a.detail)),
+          h(Badge,{sev:a.severity})))),
+    anomDetail && h(AnomalyDetailModal,{ anomaly:anomDetail, graphData,
+      onClose:()=>setAnomDetail(null), onView:jumpTo, onFindPaths:findPathsFrom,
+      onAck:()=>{ setAcked(p=>({...p,[anomDetail.id]:true})); console.log("acknowledge anomaly", anomDetail.id); setAnomDetail(null); },
+      onKilled:()=>setAnomDetail(null) }),
   );
 }
 
-// ── System ────────────────────────────────────────────────────────────────────
 function SystemPage() {
   const [health] = useApi("/api/health", {}, 15000);
   const [op]     = useApi("/api/operator/status", {}, 30000);
@@ -1846,6 +2092,12 @@ function UpsellModal() {
 
 function App() {
   const [page, setPage] = useState("overview");
+
+  useEffect(() => {
+    const onNav = (e) => { if (e.detail) setPage(e.detail); };
+    window.addEventListener("tokendna:nav", onNav);
+    return () => window.removeEventListener("tokendna:nav", onNav);
+  }, []);
 
   const navItems = [
     { section: "Monitor", items: [

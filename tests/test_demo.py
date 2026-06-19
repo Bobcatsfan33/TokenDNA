@@ -144,3 +144,45 @@ def test_trustgraph_route_serves(monkeypatch, tmp_path):
     r = TestClient(api.app).get("/trust-graph")
     assert r.status_code == 200
     assert "Trust Graph" in r.text
+
+
+# ── Dashboard Trust Graph rebuild (Cytoscape) ──────────────────────────────────
+
+DASHBOARD = ROOT / "dashboard" / "index.html"
+
+
+def test_dashboard_uses_cytoscape_dagre():
+    html = DASHBOARD.read_text()
+    assert "cytoscape@3" in html and "cytoscape-dagre" in html and "dagre@" in html
+    assert "function forceLayout" not in html  # old hairball layout removed
+    assert "function GraphCanvas" not in html
+
+
+def test_dashboard_graph_interactive_components():
+    html = DASHBOARD.read_text()
+    for marker in ("function CytoGraph", "function ContextPanel", "function NodesModal",
+                   "function EdgesModal", "function AnomalyDetailModal", "function IntentMatchModal",
+                   "buildElements", "COLLAPSE_MIN"):
+        assert marker in html, f"dashboard missing {marker}"
+
+
+def test_dashboard_wires_real_killswitch():
+    html = DASHBOARD.read_text()
+    assert "/api/enforcement/killswitch/" in html
+    assert "activated_by" in html
+
+
+def test_dashboard_clickable_cards_and_feeds():
+    html = DASHBOARD.read_text()
+    assert "gotoPage" in html and "tokendna:nav" in html
+    assert "h(IntentMatchModal" in html  # intent feed tiles open detail
+    assert 'setDrill("nodes")' in html and 'setDrill("anomalies")' in html
+
+
+def test_dashboard_route_serves_rebuilt_graph(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATA_DB_PATH", str(tmp_path / "dash.db"))
+    import api
+    from fastapi.testclient import TestClient
+    r = TestClient(api.app).get("/dashboard")
+    assert r.status_code == 200
+    assert "Live Trust Graph" in r.text and "cytoscape" in r.text
