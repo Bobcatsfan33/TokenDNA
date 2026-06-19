@@ -546,6 +546,53 @@
     }
   };
 
+  // Clear any path/selection highlight (back to the plain graph).
+  TrustGraphEngine.prototype.clearHighlight = function () {
+    this.selectedId = null;
+    this._clearHighlight();
+  };
+
+  // Isolate a path: light only the path's nodes + connecting edges, fade the
+  // rest, and frame the path. rawIds is the ordered list of node_ids on the path
+  // (collapsed members map to their group node so the chain stays visible).
+  TrustGraphEngine.prototype.showPath = function (rawIds) {
+    var self = this;
+    var ids = [];
+    (rawIds || []).forEach(function (rid) {
+      if (self.nodeEls[rid]) ids.push(rid);
+      else if (self.groupOfMember[rid] && self.nodeEls[self.groupOfMember[rid]]) ids.push(self.groupOfMember[rid]);
+    });
+    var idset = {}; ids.forEach(function (i) { idset[i] = 1; });
+    this.selectedId = null;
+    for (var nid in this.nodeEls) {
+      var el = this.nodeEls[nid];
+      if (idset[nid]) { el.classList.remove("dim"); el.classList.add("lbl"); }
+      else { el.classList.add("dim"); el.classList.remove("lbl", "sel"); }
+    }
+    for (var eid in this.edgeEls) {
+      var ed = this.edgeEls[eid].__data;
+      if (idset[ed.source] && idset[ed.target]) { this.edgeEls[eid].classList.add("hot"); this.edgeEls[eid].classList.remove("dim"); }
+      else { this.edgeEls[eid].classList.add("dim"); this.edgeEls[eid].classList.remove("hot"); }
+    }
+    this._fitToIds(ids);
+  };
+
+  TrustGraphEngine.prototype._fitToIds = function (ids) {
+    if (!ids || !ids.length) return;
+    var self = this, any = false;
+    var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    ids.forEach(function (id) {
+      var n = nodeById(self.nodes, id); if (!n) return; any = true;
+      minX = Math.min(minX, n.x - n.r); maxX = Math.max(maxX, n.x + n.r);
+      minY = Math.min(minY, n.y - n.r); maxY = Math.max(maxY, n.y + n.r);
+    });
+    if (!any) return;
+    var rect = this.container.getBoundingClientRect(), pad = 80;
+    var w = (maxX - minX) + pad * 2, hgt = (maxY - minY) + pad * 2;
+    var k = clamp(Math.min(rect.width / w, rect.height / hgt), this.minZoom, 1.8);
+    this._tweenTo(rect.width / 2 - ((minX + maxX) / 2) * k, rect.height / 2 - ((minY + maxY) / 2) * k, k);
+  };
+
   TrustGraphEngine.prototype.destroy = function () {
     try {
       this.svg.removeEventListener("wheel", this._onWheel);

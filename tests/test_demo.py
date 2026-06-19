@@ -293,6 +293,31 @@ def test_path_finder_constrains_to_reachable():
     assert "!reachable.has(toLabel)) setToLabel(\"\")" in html
 
 
+def test_find_path_isolates_path_in_graph():
+    """Clicking Find Path highlights only that path in the Live Trust Graph."""
+    html = DASHBOARD.read_text()
+    eng = ENGINE.read_text()
+    assert "prototype.showPath" in eng and "prototype._fitToIds" in eng
+    assert "ctrl.current.showPath" in html
+    assert "showPath:(ids)=>eng.showPath(ids)" in html
+    assert "clientShortestPath" in html  # works offline / when API unreachable
+
+
+def test_intent_playbooks_clickable():
+    html = DASHBOARD.read_text()
+    assert "function PlaybookModal" in html
+    assert "playbook-row clickable" in html
+    assert "setSelPlaybook" in html
+    assert "Attack sequence" in html
+
+
+def test_honeypot_tiles_clickable():
+    html = DASHBOARD.read_text()
+    assert "function DetailModal" in html
+    assert "setHitDetail" in html and "setDecoyDetail" in html
+    assert "h(DetailModal" in html
+
+
 # ── Dev caching: edits show up on a normal reload ──────────────────────────────
 
 def test_engine_grid_wraps_large_ranks():
