@@ -246,7 +246,85 @@ def test_static_assets_served_locally(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
     c = TestClient(api.app)
     for p in ("/static/trustgraph-engine.js", "/static/trustgraph-fixture.js",
+              "/static/workflow-fixtures.js",
               "/static/vendor/react.production.min.js", "/static/vendor/react-dom.production.min.js"):
         r = c.get(p)
         assert r.status_code == 200, f"{p} not served (HTTP {r.status_code})"
     assert "TrustGraphEngine" in c.get("/static/trustgraph-engine.js").text
+
+
+# ── Workflows page — staged agent pipeline (matches reference Example) ──────────
+
+WF_FIXTURES = STATIC / "workflow-fixtures.js"
+
+
+def test_workflow_fixtures_exist_and_are_staged():
+    assert WF_FIXTURES.exists()
+    js = WF_FIXTURES.read_text()
+    assert "WORKFLOW_FIXTURES" in js
+    # staged pipeline must use multiple ranks: start + agents + tools/mcp + guardrail + end
+    for t in ("start", "agent", "tool", "mcp_server", "guardrail", "end"):
+        assert '"' + t + '"' in js or "'" + t + "'" in js, f"fixture missing node type {t}"
+    assert "airline-agent-demo" in js  # the reference-style demo
+
+
+def test_workflows_page_renders_pipeline():
+    html = DASHBOARD.read_text()
+    assert "function WorkflowsPage" in html
+    assert "WORKFLOW_FIXTURES" in html and "/static/workflow-fixtures.js" in html
+    assert "workflows: WorkflowsPage" in html  # nav wired to the pipeline view
+    assert "h(CytoGraph" in html  # reuses the shared engine wrapper
+
+
+def test_pages_have_distinguishing_helper_text():
+    html = DASHBOARD.read_text()
+    assert "For a single staged agent pipeline, see Workflows." in html
+    assert "Staged left→right view of one agent workflow" in html
+
+
+# ── Dev caching: edits show up on a normal reload ──────────────────────────────
+
+def test_engine_grid_wraps_large_ranks():
+    """Star/bipartite data must spread in 2D, not collapse to a vertical line."""
+    eng = ENGINE.read_text()
+    assert "Math.ceil(Math.sqrt" in eng  # grid sub-columns for big ranks
+    assert "WRAP" in eng
+
+
+def test_dashboard_assets_are_version_busted():
+    html = DASHBOARD.read_text()
+    # local scripts carry a cache-busting version placeholder
+    assert "/static/trustgraph-engine.js?v=__ASSET_VER__" in html
+
+
+def test_html_served_with_no_store_and_version(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATA_DB_PATH", str(tmp_path / "c.db"))
+    import api
+    from fastapi.testclient import TestClient
+    c = TestClient(api.app)
+    for route in ("/dashboard", "/trust-graph", "/console"):
+        r = c.get(route)
+        assert r.status_code == 200
+        assert "no-store" in r.headers.get("cache-control", ""), f"{route} not no-store"
+        # placeholder must be replaced with a real version token in the served HTML
+        assert "__ASSET_VER__" not in r.text, f"{route} left an unresolved version placeholder"
+        assert "?v=" in r.text, f"{route} missing versioned script URLs"
+
+
+def test_static_assets_are_no_store(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATA_DB_PATH", str(tmp_path / "c2.db"))
+    import api
+    from fastapi.testclient import TestClient
+    r = TestClient(api.app).get("/static/trustgraph-engine.js")
+    assert r.status_code == 200
+    assert "no-store" in r.headers.get("cache-control", "")
+
+
+def test_asset_version_changes_on_edit(tmp_path, monkeypatch):
+    from api_routers import _shared
+    monkeypatch.setattr(_shared, "_STATIC_DIR", tmp_path)
+    (tmp_path / "a.js").write_text("x")
+    v1 = _shared.asset_version()
+    (tmp_path / "a.js").write_text("xy")  # content + size change
+    v2 = _shared.asset_version()
+    assert v1 != v2 and len(v1) == 12

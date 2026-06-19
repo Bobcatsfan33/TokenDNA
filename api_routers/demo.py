@@ -14,7 +14,9 @@ import os
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import HTMLResponse
+
+from api_routers._shared import serve_dashboard_html
 
 router = APIRouter(tags=["demo"])
 
@@ -35,4 +37,4 @@ if _demo_tenant:
 async def demo_console():
     if not _DEMO_PATH.exists():
         raise HTTPException(status_code=404, detail="demo console not found")
-    return FileResponse(_DEMO_PATH)
+    return serve_dashboard_html(_DEMO_PATH)

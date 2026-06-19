@@ -117,7 +117,45 @@ from pathlib import Path  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 
 # Repo-root-relative (this file lives in api_routers/, so go up one level).
-_DASHBOARD_PATH = Path(__file__).resolve().parent.parent / "dashboard" / "index.html"
+_DASHBOARD_DIR = Path(__file__).resolve().parent.parent / "dashboard"
+_DASHBOARD_PATH = _DASHBOARD_DIR / "index.html"
+_STATIC_DIR = _DASHBOARD_DIR / "static"
+
+import hashlib  # noqa: E402
+
+from fastapi.responses import HTMLResponse  # noqa: E402
+
+
+def asset_version() -> str:
+    """Cache-busting token derived from the static assets' size+mtime.
+
+    Any edit to a /static file changes this, so versioned script URLs
+    (``?v=<token>``) bust the browser cache automatically in dev.
+    """
+    h = hashlib.sha1()
+    if _STATIC_DIR.is_dir():
+        for p in sorted(_STATIC_DIR.rglob("*")):
+            if p.is_file():
+                st = p.stat()
+                h.update(p.name.encode())
+                h.update(str(st.st_mtime_ns).encode())
+                h.update(str(st.st_size).encode())
+    return h.hexdigest()[:12]
+
+
+def serve_dashboard_html(path: "Path"):
+    """Serve a dashboard HTML file with dev-friendly cache headers.
+
+    Injects the current asset version into ``?v=__ASSET_VER__`` placeholders and
+    returns the page with ``Cache-Control: no-store`` so edits to the HTML and
+    its local /static assets always show up on a normal reload (no hard-refresh).
+    """
+    html = Path(path).read_text(encoding="utf-8")
+    html = html.replace("__ASSET_VER__", asset_version())
+    return HTMLResponse(
+        html,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
 
 
 def _tenant_subject(tenant: TenantContext) -> str:

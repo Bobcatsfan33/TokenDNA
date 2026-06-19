@@ -7,10 +7,11 @@
 <!-- Fully offline: React + the trust-graph engine are served locally from
      127.0.0.1, no third-party CDN. The graph renderer is dependency-free
      (plain SVG, no cytoscape/dagre/d3). -->
-<script src="/static/vendor/react.production.min.js"></script>
-<script src="/static/vendor/react-dom.production.min.js"></script>
-<script src="/static/trustgraph-engine.js"></script>
-<script src="/static/trustgraph-fixture.js"></script>
+<script src="/static/vendor/react.production.min.js?v=__ASSET_VER__"></script>
+<script src="/static/vendor/react-dom.production.min.js?v=__ASSET_VER__"></script>
+<script src="/static/trustgraph-engine.js?v=__ASSET_VER__"></script>
+<script src="/static/trustgraph-fixture.js?v=__ASSET_VER__"></script>
+<script src="/static/workflow-fixtures.js?v=__ASSET_VER__"></script>
 <style>
   :root {
     --bg:       #060a10;
@@ -1181,7 +1182,7 @@ function TrustGraphPage() {
   return h("div", null,
     h("div",{className:"section-head"},
       h("div",{className:"section-title"},"🕸 UIS Trust Graph"),
-      h("div",{className:"section-sub"},"Hierarchical view of agents, issuers, verifiers and tools. Click any node, edge, anomaly or counter to drill in.")),
+      h("div",{className:"section-sub"},"Full population of agents and their attestations (issuers, verifiers, tools). Click any node, edge, anomaly or counter to drill in. For a single staged agent pipeline, see Workflows.")),
 
     // clickable stat strip
     h("div",{className:"three-col",style:{marginBottom:16}},
@@ -1963,6 +1964,77 @@ function HoneypotHitsPage() {
   );
 }
 
+// ── Workflows — staged agent pipeline view (matches the reference Example) ────
+function WorkflowsPage() {
+  const FX = window.WORKFLOW_FIXTURES || [];
+  const [idx, setIdx] = useState(0);
+  const [sel, setSel] = useState(null);
+  const [hidden, setHidden] = useState({});
+  const [expanded, setExpanded] = useState({});
+  const ctrl = useRef({});
+  const wf = FX[idx] || { name:"—", framework:"—", source:"—", scanned_at:"", counts:{}, graphData:{ nodes:[], edges:[] }, anomalies:[] };
+  const anoms = wf.anomalies || [];
+  const c = wf.counts || {};
+  const present = Array.from(new Set((wf.graphData.nodes||[]).map(n=>n.node_type)));
+
+  const handlers = {
+    onSelectNode:(d)=>setSel({kind:"node",data:d}),
+    onSelectEdge:(d)=>setSel({kind:"edge",data:d}),
+    onBackground:()=>setSel(null),
+    onToggleGroup:(id)=>setExpanded(p=>({ ...p, [id]: !p[id] })),
+  };
+  const jumpTo = (label)=>{ if(label && ctrl.current.focusLabel) ctrl.current.focusLabel(label); };
+  const Stat = (label, val, color)=>h("div",{className:"gstat",style:{padding:"8px 14px"}},
+    h("div",{className:"gstat-num",style:{fontSize:20,color:color||"var(--text)"}},val),
+    h("div",{className:"gstat-label"},label));
+
+  return h("div", null,
+    h("div",{className:"section-head"},
+      h("div",{className:"section-title"},"🔗 Agent Workflows"),
+      h("div",{className:"section-sub"},"Staged left→right view of one agent workflow (start → triage → sub-agents → tools/MCP → guardrail → end). For the full population of agents and their attestations, see Trust Graph.")),
+
+    // picker + scan stat strip
+    h("div",{className:"card",style:{marginBottom:16}},
+      h("div",{className:"card-head"},
+        h("div",{className:"card-title"},"Workflow"),
+        h("select",{value:idx,onChange:e=>{ setIdx(Number(e.target.value)); setSel(null); setExpanded({}); },
+          style:{marginLeft:"auto",background:"var(--surface2)",border:"1px solid var(--border)",color:"var(--text)",padding:"6px 10px",borderRadius:6,fontSize:13}},
+          FX.map((w,i)=>h("option",{key:i,value:i},w.name)))),
+      h("div",{style:{display:"flex",gap:18,flexWrap:"wrap",alignItems:"center",padding:"12px 16px"}},
+        h("div",{style:{fontSize:12,color:"var(--muted)"}},
+          h("div",null,"Framework: ",h("span",{style:{color:"var(--text)"}},wf.framework)),
+          h("div",null,"Source: ",h("span",{className:"mono",style:{color:"var(--text)"}},wf.source)),
+          h("div",null,"Scanned: ",h("span",{className:"mono",style:{color:"var(--text)"}},(wf.scanned_at||"").slice(0,19).replace("T"," ")))),
+        h("div",{style:{display:"flex",gap:12,marginLeft:"auto"}},
+          Stat("Agents", c.agents||0, "var(--accent)"),
+          Stat("Tools", c.tools||0, "var(--green)"),
+          Stat("MCP Servers", c.mcp_servers||0, "#ec4899"),
+          Stat("Vulnerabilities", c.vulnerabilities||0, (c.vulnerabilities?"var(--red)":"var(--green)"))))),
+
+    // pipeline graph
+    h("div",{className:"card",style:{marginBottom:20}},
+      h("div",{className:"card-head"},
+        h("div",{className:"card-title"},"Pipeline"),
+        h("span",{className:"chip",style:{fontSize:10}},`${(wf.graphData.nodes||[]).length} nodes · ${(wf.graphData.edges||[]).length} edges`)),
+      h("div",{style:{padding:"12px 16px 16px"}},
+        h("div",{className:"tg-toolbar"},
+          h("button",{className:"tg-btn",onClick:()=>ctrl.current.fit&&ctrl.current.fit()},"⤢ Fit / Reset view"),
+          h("button",{className:"tg-btn",onClick:()=>setExpanded({})},"⊟ Collapse all"),
+          h("div",{className:"tg-legend",style:{marginLeft:"auto"}},
+            present.map(t=>h("div",{key:t,className:`tg-chip${hidden[t]?" off":""}`,onClick:()=>setHidden(p=>({...p,[t]:!p[t]}))},
+              h("span",{className:"dot",style:{background:gcol(t)}}), t)))),
+        h("div",{className:"tg-wrap"},
+          h(CytoGraph,{ graphData:wf.graphData, anomalies:anoms, hidden, expanded, ctrl, handlers }),
+          h("div",{className:"tg-hint"},"Hover a node for its label · click a node or edge to inspect · click ⤢ to fit")))),
+
+    sel && h(ContextPanel,{ sel, graphData:wf.graphData, anomalies:anoms, ctrl,
+      onClose:()=>setSel(null), onJump:jumpTo, onFindPaths:jumpTo, onKilled:()=>{} }),
+
+    // secondary: real workflow attestation chain table
+    h(WorkflowDriftPage),
+  );
+}
+
 function WorkflowDriftPage() {
   const [workflows] = useApi("/api/workflow", { workflows: [] }, 30000);
   const items = workflows?.workflows || [];
@@ -2064,7 +2136,7 @@ function App() {
   const pageMap = {
     overview: OverviewPage, blast: BlastRadiusPage, intent: IntentPage, graph: TrustGraphPage,
     identity: IdentityCardPage, ztix: ZTIXExchangePage, system: SystemPage,
-    flywheel: FlywheelDigestPage, workflows: WorkflowDriftPage,
+    flywheel: FlywheelDigestPage, workflows: WorkflowsPage,
     honeypots: HoneypotHitsPage, posture: CompliancePosturePage,
   };
   const Page = pageMap[page] || OverviewPage;
