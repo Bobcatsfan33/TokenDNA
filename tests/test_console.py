@@ -17,10 +17,12 @@ def test_console_html_parses():
     HTMLParser().feed(CONSOLE.read_text())  # raises on malformed structure
 
 
-def test_console_uses_cytoscape_dagre():
+def test_console_uses_offline_engine():
     html = CONSOLE.read_text()
-    assert "cytoscape" in html and "dagre" in html
-    assert 'rankDir:"LR"' in html  # hierarchical left->right DAG
+    # dependency-free local renderer — no third-party CDN
+    assert "/static/trustgraph-engine.js" in html and "TrustGraphEngine" in html
+    for bad in ("jsdelivr", "cdnjs", "unpkg", "cdn."):
+        assert bad not in html, f"console still references a CDN ({bad})"
 
 
 def test_console_has_stat_strip():
@@ -56,4 +58,4 @@ def test_console_route_serves_page(client):
     r = client.get("/console")
     assert r.status_code == 200
     assert "AI Asset Management" in r.text
-    assert "cytoscape" in r.text
+    assert "TrustGraphEngine" in r.text and "jsdelivr" not in r.text

@@ -7,7 +7,10 @@ visible surface unchanged. See api_routers/MIGRATION.md.
 """
 from __future__ import annotations
 
+import pathlib
+
 from fastapi import APIRouter, FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from api_routers.agents import router as agents_router
 from api_routers.assets import router as assets_router
@@ -70,7 +73,18 @@ ALL_ROUTERS: tuple[APIRouter, ...] = (
 )
 
 
+_STATIC_DIR = pathlib.Path(__file__).resolve().parent.parent / "dashboard" / "static"
+
+
 def mount_all(app: FastAPI) -> None:
-    """Mount every registered domain router onto the app (called from api.py)."""
+    """Mount every registered domain router onto the app (called from api.py).
+
+    Also mounts the locally-vendored dashboard assets (React + the
+    dependency-free trust-graph engine) at /static so the dashboard runs fully
+    offline with zero third-party CDN requests. A StaticFiles ``Mount`` has no
+    ``methods`` attribute, so the route-surface guard skips it.
+    """
     for router in ALL_ROUTERS:
         app.include_router(router)
+    if _STATIC_DIR.is_dir():
+        app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")

@@ -133,8 +133,12 @@ def test_trustgraph_html_parses():
 def test_trustgraph_has_toggle_views():
     html = TRUSTGRAPH.read_text()
     for marker in ('data-mode="nodes"', 'data-mode="edges"', 'data-mode="anomalies"',
-                   'data-mode="correlate"', "/api/graph/data", "/api/graph/anomalies", "cytoscape"):
+                   'data-mode="correlate"', "/api/graph/data", "/api/graph/anomalies",
+                   "TrustGraphEngine", "/static/trustgraph-engine.js"):
         assert marker in html, f"trust graph missing {marker}"
+    # the standalone page must be fully offline — no third-party CDN
+    for bad in ("cytoscape", "jsdelivr", "cdnjs", "unpkg"):
+        assert bad not in html, f"trust graph still references {bad}"
 
 
 def test_trustgraph_route_serves(monkeypatch, tmp_path):
@@ -146,23 +150,61 @@ def test_trustgraph_route_serves(monkeypatch, tmp_path):
     assert "Trust Graph" in r.text
 
 
-# ── Dashboard Trust Graph rebuild (Cytoscape) ──────────────────────────────────
+# ── Dashboard Trust Graph — fully offline (no CDN) ─────────────────────────────
 
 DASHBOARD = ROOT / "dashboard" / "index.html"
+CONSOLE = ROOT / "dashboard" / "console.html"
+STATIC = ROOT / "dashboard" / "static"
+ENGINE = STATIC / "trustgraph-engine.js"
+FIXTURE = STATIC / "trustgraph-fixture.js"
+ALL_HTML = [DASHBOARD, TRUSTGRAPH, CONSOLE, DEMO_HTML]
 
 
-def test_dashboard_uses_cytoscape_dagre():
+def test_dashboard_assets_have_no_external_cdn():
+    """Every dashboard page must run fully offline — zero third-party URLs."""
+    for f in ALL_HTML:
+        html = f.read_text()
+        for bad in ("jsdelivr", "cdnjs", "unpkg", "cdn."):
+            assert bad not in html, f"{f.name} still references a CDN ({bad})"
+        # no remote <script> resources
+        assert 'src="http' not in html, f"{f.name} has a remote <script src>"
+        # no remote <link> stylesheet (a display-only literal URL is allowed)
+        for line in html.splitlines():
+            if 'href="http' in line:
+                assert "auth.acme.io" in line, f"{f.name} has a remote stylesheet: {line.strip()[:80]}"
+
+
+def test_dashboard_vendors_react_locally():
     html = DASHBOARD.read_text()
-    assert "cytoscape@3" in html and "cytoscape-dagre" in html and "dagre@" in html
-    assert "function forceLayout" not in html  # old hairball layout removed
-    assert "function GraphCanvas" not in html
+    assert "/static/vendor/react.production.min.js" in html
+    assert "/static/vendor/react-dom.production.min.js" in html
+    assert (STATIC / "vendor" / "react.production.min.js").exists()
+    assert (STATIC / "vendor" / "react-dom.production.min.js").exists()
+
+
+def test_dependency_free_engine_exists():
+    assert ENGINE.exists() and FIXTURE.exists()
+    eng = ENGINE.read_text()
+    # plain SVG renderer — no graph library calls, no module imports, no CDN
+    for bad in ("jsdelivr", "cdnjs", "unpkg", "cytoscape.use", "cytoscape(", "import ", "require("):
+        assert bad not in eng, f"engine should be dependency-free; found {bad}"
+    for marker in ("TrustGraphEngine", "buildElements", "COLLAPSE_MIN", "createElementNS", "focusLabel"):
+        assert marker in eng, f"engine missing {marker}"
+
+
+def test_dashboard_loads_local_engine_and_fixture():
+    html = DASHBOARD.read_text()
+    for marker in ("/static/trustgraph-engine.js", "/static/trustgraph-fixture.js",
+                   "TrustGraphEngine", "TRUSTGRAPH_FIXTURE"):
+        assert marker in html, f"dashboard missing {marker}"
+    # old cytoscape layout fully removed
+    assert "function forceLayout" not in html and "function GraphCanvas" not in html
 
 
 def test_dashboard_graph_interactive_components():
     html = DASHBOARD.read_text()
     for marker in ("function CytoGraph", "function ContextPanel", "function NodesModal",
-                   "function EdgesModal", "function AnomalyDetailModal", "function IntentMatchModal",
-                   "buildElements", "COLLAPSE_MIN"):
+                   "function EdgesModal", "function AnomalyDetailModal", "function IntentMatchModal"):
         assert marker in html, f"dashboard missing {marker}"
 
 
@@ -176,13 +218,35 @@ def test_dashboard_clickable_cards_and_feeds():
     html = DASHBOARD.read_text()
     assert "gotoPage" in html and "tokendna:nav" in html
     assert "h(IntentMatchModal" in html  # intent feed tiles open detail
+    assert "h(AnomalyDetailModal" in html  # anomaly stream tiles open detail
     assert 'setDrill("nodes")' in html and 'setDrill("anomalies")' in html
+    assert "gotoGraphNode" in html  # cross-page focus from feed modals
 
 
-def test_dashboard_route_serves_rebuilt_graph(monkeypatch, tmp_path):
+def test_console_uses_dependency_free_engine():
+    html = CONSOLE.read_text()
+    assert "/static/trustgraph-engine.js" in html and "TrustGraphEngine" in html
+    assert "cytoscape" not in html
+
+
+def test_dashboard_route_serves_offline_graph(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_DB_PATH", str(tmp_path / "dash.db"))
     import api
     from fastapi.testclient import TestClient
-    r = TestClient(api.app).get("/dashboard")
+    c = TestClient(api.app)
+    r = c.get("/dashboard")
     assert r.status_code == 200
-    assert "Live Trust Graph" in r.text and "cytoscape" in r.text
+    assert "Live Trust Graph" in r.text and "TrustGraphEngine" in r.text
+    assert "jsdelivr" not in r.text and "cdnjs" not in r.text and "cdn." not in r.text
+
+
+def test_static_assets_served_locally(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATA_DB_PATH", str(tmp_path / "s.db"))
+    import api
+    from fastapi.testclient import TestClient
+    c = TestClient(api.app)
+    for p in ("/static/trustgraph-engine.js", "/static/trustgraph-fixture.js",
+              "/static/vendor/react.production.min.js", "/static/vendor/react-dom.production.min.js"):
+        r = c.get(p)
+        assert r.status_code == 200, f"{p} not served (HTTP {r.status_code})"
+    assert "TrustGraphEngine" in c.get("/static/trustgraph-engine.js").text

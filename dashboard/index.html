@@ -4,13 +4,13 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>TokenDNA — Runtime Risk Engine</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js"></script>
-<!-- Trust Graph: Cytoscape + dagre hierarchical layout (graceful fallback if CDN blocked) -->
-<script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
+<!-- Fully offline: React + the trust-graph engine are served locally from
+     127.0.0.1, no third-party CDN. The graph renderer is dependency-free
+     (plain SVG, no cytoscape/dagre/d3). -->
+<script src="/static/vendor/react.production.min.js"></script>
+<script src="/static/vendor/react-dom.production.min.js"></script>
+<script src="/static/trustgraph-engine.js"></script>
+<script src="/static/trustgraph-fixture.js"></script>
 <style>
   :root {
     --bg:       #060a10;
@@ -338,6 +338,12 @@ const SEV_COLOR = { critical: "#dc2626", high: "#ef4444", medium: "#f59e0b", low
 const SEV_RANK = { critical: 4, high: 3, medium: 2, low: 1 };
 // Cross-page navigation (KPI cards on Overview jump to the relevant page).
 function gotoPage(p){ window.dispatchEvent(new CustomEvent("tokendna:nav", { detail: p })); }
+// Navigate to the Trust Graph and focus a node (or seed the path finder FROM).
+function gotoGraphNode(label, findPaths){
+  window.__tgFocus = { label, findPaths: !!findPaths };
+  gotoPage("graph");
+  window.dispatchEvent(new CustomEvent("tokendna:focus", { detail: { label, findPaths: !!findPaths } }));
+}
 
 function Badge({ sev }) {
   return h("span", { className: `badge ${sev}` }, sev);
@@ -482,6 +488,8 @@ function OverviewPage() {
   const [anom]    = useApi("/api/graph/anomalies?limit=5", { anomalies:[] }, 10000);
   const [events]  = useApi("/api/uis/events?limit=8", { events:[] }, 8000);
   const [inspectId, setInspectId] = useState(null);
+  const [anomDetail, setAnomDetail] = useState(null);
+  const [matchDetail, setMatchDetail] = useState(null);
 
   const anoms = anom.anomalies || [];
   const mtchs = matches.matches || [];
@@ -532,7 +540,7 @@ function OverviewPage() {
         h("div", { className: "card-body" },
           anoms.length === 0
             ? h("div", { className: "empty" }, h("div", { className: "empty-icon" }, "🔍"), h("div", { className: "empty-msg" }, "No anomalies detected"), h("div", { className: "empty-hint" }, "Run demo_seed.py to populate"))
-            : anoms.map((a, i) => h("div", { key: i, className: "anomaly-card" },
+            : anoms.map((a, i) => h("div", { key: i, className: "anomaly-card clickable", title:"Click for full detail + actions", onClick:()=>setAnomDetail(a) },
                 h("div", { className: "anomaly-icon" }, a.severity === "critical" || a.severity === "high" ? "⚠️" : "ℹ️"),
                 h("div", { className: "anomaly-body" },
                   h("div", { className: "anomaly-type" }, a.anomaly_type?.replace(/_/g," ")),
@@ -552,7 +560,7 @@ function OverviewPage() {
         h("div", { className: "card-body" },
           mtchs.length === 0
             ? h("div", { className: "empty" }, h("div", { className: "empty-icon" }, "🎯"), h("div", { className: "empty-msg" }, "No attack sequences detected"), h("div", { className: "empty-hint" }, "Matches appear when multi-step playbooks fire"))
-            : mtchs.map((m, i) => h("div", { key: i, className: `intent-row ${m.severity}` },
+            : mtchs.map((m, i) => h("div", { key: i, className: `intent-row clickable ${m.severity}`, title:"Click for full detail", onClick:()=>setMatchDetail(m) },
                 h("div", { className: "flex-row" },
                   h("div", { className: "intent-name" }, m.playbook_name),
                   h("div", { className: "ml-auto" }, h(Badge, { sev: m.severity })),
@@ -617,6 +625,15 @@ function OverviewPage() {
       ),
     ),
     inspectId && h(EventInspectorModal, { eventId: inspectId, onClose: () => setInspectId(null) }),
+    anomDetail && h(AnomalyDetailModal, { anomaly: anomDetail, graphData: { nodes:[], edges:[] },
+      onClose: () => setAnomDetail(null),
+      onView: (label) => { setAnomDetail(null); gotoGraphNode(label); },
+      onFindPaths: (label) => { setAnomDetail(null); gotoGraphNode(label, true); },
+      onAck: () => { console.log("acknowledge anomaly", anomDetail.id); setAnomDetail(null); },
+      onKilled: () => setAnomDetail(null) }),
+    matchDetail && h(IntentMatchModal, { match: matchDetail, onClose: () => setMatchDetail(null),
+      onView: (label) => { setMatchDetail(null); gotoGraphNode(label); },
+      onInvestigate: () => { setMatchDetail(null); gotoPage("intent"); } }),
   );
 }
 
@@ -875,9 +892,6 @@ const GTYPE = {
 };
 const gcol = t => (GTYPE[t]||{}).c || "#6366f1";
 const gglyph = t => (GTYPE[t]||{}).g || "?";
-const cyReady = () => typeof window.cytoscape === "function";
-const COLLAPSE_MIN = 4;
-const COLLAPSIBLE = { verifier:1, tool:1, issuer:1, lifecycle_state:1 };
 
 // subject_node may be a node_id hash OR a label — index by both.
 function indexAnomalies(anoms, nodes){
@@ -897,142 +911,41 @@ async function killSwitch(agentId, reason){
   return { ok:r.ok, status:r.status, body: await r.json().catch(()=>({})) };
 }
 
-function buildElements(graphData, expanded, hidden, idx){
-  const rawNodes = (graphData.nodes||[]).filter(n=>!hidden[n.node_type]);
-  const byId={}; rawNodes.forEach(n=>byId[n.node_id]=n);
-  const rawEdges = (graphData.edges||[]).filter(e=>byId[e.src_node]&&byId[e.dst_node]);
-  const incident={}; rawNodes.forEach(n=>incident[n.node_id]=[]);
-  rawEdges.forEach(e=>{ incident[e.src_node].push(e.dst_node); incident[e.dst_node].push(e.src_node); });
-  const deg={}; rawNodes.forEach(n=>deg[n.node_id]=incident[n.node_id].length);
-  const groups={}, groupOfMember={};
-  rawNodes.forEach(n=>{
-    if(deg[n.node_id]===1 && COLLAPSIBLE[n.node_type]){
-      const parent=incident[n.node_id][0], key="grp:"+parent+":"+n.node_type;
-      (groups[key]=groups[key]||{parent,type:n.node_type,members:[]}).members.push(n.node_id);
-    }
-  });
-  const collapsed={};
-  Object.entries(groups).forEach(([key,g])=>{
-    g.members.forEach(m=>{ groupOfMember[m]=key; });
-    if(g.members.length>=COLLAPSE_MIN && !expanded[key]) g.members.forEach(m=>{ collapsed[m]=key; });
-  });
-  const els=[];
-  rawNodes.forEach(n=>{
-    if(collapsed[n.node_id]) return;
-    const an=idx.forNode(n);
-    els.push({ data:{ id:n.node_id, name:(n.label||"").replace(/^attest:/,""), glyph:gglyph(n.node_type),
-      ntype:n.node_type, sz:22+Math.min(deg[n.node_id]*2,24), anom:an.length>0 },
-      classes: an.length? "anom":"" });
-  });
-  Object.entries(groups).forEach(([key,g])=>{
-    if(!(g.members.length>=COLLAPSE_MIN && !expanded[key])) return;
-    const anyAnom = g.members.some(m=> byId[m] && idx.forNode(byId[m]).length>0);
-    const plural=(GTYPE[g.type]||{}).p||g.type;
-    els.push({ data:{ id:key, name:`${plural} ×${g.members.length}`, glyph:gglyph(g.type), ntype:g.type,
-      group:true, count:g.members.length, sz:34+Math.min(g.members.length,26), anom:anyAnom },
-      classes: anyAnom?"anom group":"group" });
-    els.push({ data:{ id:key+"|e", source:g.parent, target:key, etype:"attested_by", weight:g.members.length } });
-  });
-  rawEdges.forEach((e,i)=>{
-    if(collapsed[e.src_node]||collapsed[e.dst_node]) return;
-    els.push({ data:{ id:"e"+i, source:e.src_node, target:e.dst_node, etype:e.edge_type,
-      weight:e.weight||1, srcLabel:e.src_label, dstLabel:e.dst_label } });
-  });
-  return { els, groupOfMember };
-}
-
-const CY_STYLE = [
-  { selector:"node", style:{
-    "background-color": e=>gcol(e.data("ntype")),
-    "label": e=> (e.hasClass("lbl")||e.data("group")) ? e.data("name") : e.data("glyph"),
-    "color": e=> (e.hasClass("lbl")||e.data("group")) ? "#cbd5e1" : "#ffffff",
-    "font-size":9, "font-weight":700,
-    "text-valign": e=> e.hasClass("lbl") ? "bottom" : "center",
-    "text-halign":"center", "text-margin-y": e=> e.hasClass("lbl")?4:0,
-    "text-background-color":"#0b1220", "text-background-opacity": e=> e.hasClass("lbl")?.8:0,
-    "text-background-padding":2,
-    "width": e=>e.data("sz"), "height": e=>e.data("sz"), "border-width":0 } },
-  { selector:"node[?group]", style:{ "shape":"round-rectangle", "background-opacity":.92 } },
-  { selector:"node.anom", style:{ "border-width":4, "border-color":"#f59e0b" } },
-  { selector:"node:selected", style:{ "border-width":4, "border-color":"#3b82f6" } },
-  { selector:"node.faded", style:{ "opacity":.1 } },
-  { selector:"edge", style:{ "width": e=>1+Math.min(e.data("weight")||1,5)*.25, "line-color":"#334155",
-    "target-arrow-color":"#334155", "target-arrow-shape":"triangle", "curve-style":"bezier",
-    "arrow-scale":.7, "opacity":.45 } },
-  { selector:"edge.faded", style:{ "opacity":.04 } },
-  { selector:"edge.hot", style:{ "opacity":1, "line-color":"#3b82f6", "target-arrow-color":"#3b82f6",
-    "width":2, "label": e=>e.data("etype"), "font-size":8, "color":"#94a3b8", "text-rotation":"autorotate" } },
-];
-
+// Dependency-free renderer (plain SVG, no cytoscape/dagre). The engine is
+// loaded locally from /static/trustgraph-engine.js. This React wrapper keeps
+// the same ctrl/handlers interface the panels and path-finder already use.
 function CytoGraph({ graphData, anomalies, hidden, expanded, ctrl, handlers }){
-  const elRef = useRef(null), cyRef = useRef(null), sigRef = useRef(""), graphRef = useRef(graphData);
-  const memberRef = useRef({}), pendingRef = useRef(null), hRef = useRef(handlers);
+  const elRef = useRef(null), engRef = useRef(null), hRef = useRef(handlers);
   const [fallback, setFallback] = useState(false);
-  hRef.current = handlers; graphRef.current = graphData;
+  hRef.current = handlers;
 
   useEffect(()=>{
-    if(!cyReady()){ setFallback(true); return; }
-    try { if(window.cytoscapeDagre) cytoscape.use(window.cytoscapeDagre); } catch(e){}
-    const cy = cytoscape({ container: elRef.current, style: CY_STYLE, elements: [],
-      wheelSensitivity:.25, minZoom:.15, maxZoom:3 });
-    cyRef.current = cy;
-    const focusNode = (node)=>{ cy.elements().unselect(); node.select();
-      cy.animate({ center:{eles:node}, zoom: Math.max(cy.zoom(),1.2) }, { duration:280 });
-      cy.elements().addClass("faded"); const hood=node.closedNeighborhood();
-      hood.removeClass("faded"); hood.edges().addClass("hot");
-      hood.nodes().addClass("lbl"); };
-    const clearHi = ()=>{ cy.elements().removeClass("faded hot"); cy.nodes().removeClass("lbl"); };
-    cy.on("tap","node", ev=>{ const d=ev.target.data();
-      if(d.group){ hRef.current.onToggleGroup && hRef.current.onToggleGroup(d.id); return; }
-      focusNode(ev.target); hRef.current.onSelectNode && hRef.current.onSelectNode(d); });
-    cy.on("tap","edge", ev=>{ const d=ev.target.data(); cy.elements().addClass("faded");
-      ev.target.removeClass("faded").addClass("hot"); ev.target.connectedNodes().removeClass("faded").addClass("lbl");
-      hRef.current.onSelectEdge && hRef.current.onSelectEdge(d); });
-    cy.on("tap", ev=>{ if(ev.target===cy){ clearHi(); hRef.current.onBackground && hRef.current.onBackground(); } });
-    cy.on("mouseover","node", ev=>ev.target.addClass("lbl"));
-    cy.on("mouseout","node", ev=>{ if(!ev.target.selected()) ev.target.removeClass("lbl"); });
+    if(typeof window.TrustGraphEngine !== "function"){ setFallback(true); return; }
+    const eng = new window.TrustGraphEngine(elRef.current, {
+      onSelectNode:(d)=>{ hRef.current.onSelectNode && hRef.current.onSelectNode(d); },
+      onSelectEdge:(d)=>{ hRef.current.onSelectEdge && hRef.current.onSelectEdge(d); },
+      onBackground:()=>{ hRef.current.onBackground && hRef.current.onBackground(); },
+      onToggleGroup:(id)=>{ hRef.current.onToggleGroup && hRef.current.onToggleGroup(id); },
+    });
+    engRef.current = eng;
     ctrl.current = {
-      cy, fit:()=>cy.fit(undefined,40),
-      focusLabel:(label)=>{
-        let node=cy.nodes().filter(n=>!n.data("group") && (n.data("name")===label || n.id()===label)).first();
-        if(node && node.length){ focusNode(node); const nn=(graphRef.current.nodes||[]).find(x=>x.label===label||x.node_id===node.id());
-          hRef.current.onSelectNode && hRef.current.onSelectNode(node.data()); return; }
-        const src=(graphRef.current.nodes||[]).find(x=>x.label===label||x.node_id===label);
-        if(src){ const grp=memberRef.current[src.node_id];
-          if(grp){ pendingRef.current=src.node_id; hRef.current.onToggleGroup && hRef.current.onToggleGroup(grp); } }
-      },
-      focusEdgeNodes:(srcLabel)=>{ if(srcLabel) ctrl.current.focusLabel(srcLabel); },
+      eng,
+      fit:()=>eng.fit(),
+      focusLabel:(label)=>eng.focusLabel(label),
+      focusEdgeNodes:(srcLabel)=>{ if(srcLabel) eng.focusLabel(srcLabel); },
     };
-    return ()=>{ try{cy.destroy();}catch(e){} cyRef.current=null; };
+    return ()=>{ try{ eng.destroy(); }catch(e){} engRef.current=null; };
   }, []);
 
   useEffect(()=>{
-    const cy=cyRef.current; if(!cy) return;
-    const idx=indexAnomalies(anomalies, graphData.nodes);
-    const { els, groupOfMember } = buildElements(graphData, expanded, hidden, idx);
-    memberRef.current = groupOfMember;
-    const sig = els.map(e=>e.data.id).sort().join("|");
-    if(sig !== sigRef.current){
-      const first = sigRef.current==="";
-      cy.json({ elements: els });
-      const layout = cy.layout(window.cytoscapeDagre
-        ? { name:"dagre", rankDir:"LR", nodeSep:22, rankSep:95, fit:first, padding:40 }
-        : { name:"breadthfirst", directed:true, fit:first, padding:40 });
-      layout.run();
-      sigRef.current = sig;
-      if(pendingRef.current){ const id=pendingRef.current; pendingRef.current=null;
-        const nd=cy.getElementById(id); if(nd && nd.length){ cy.animate({center:{eles:nd},zoom:1.4},{duration:280}); nd.select();
-          hRef.current.onSelectNode && hRef.current.onSelectNode(nd.data()); } }
-    } else {
-      els.forEach(e=>{ const ele=cy.getElementById(e.data.id); if(ele && ele.length){
-        if(e.data.anom!==undefined){ ele.data("anom",e.data.anom); ele.toggleClass("anom", !!e.data.anom);} } });
-    }
+    const eng=engRef.current; if(!eng) return;
+    eng.update({ graphData, anomalies, hidden, expanded });
   }, [graphData, anomalies, hidden, expanded]);
 
   if(fallback) return h("div",{className:"empty"},
     h("div",{className:"empty-icon"},"🕸"),
-    h("div",{className:"empty-msg"},"Graph engine (Cytoscape) failed to load"),
-    h("div",{className:"empty-hint"},"CDN blocked — check network access to jsdelivr.net"));
+    h("div",{className:"empty-msg"},"Graph engine failed to initialize"),
+    h("div",{className:"empty-hint"},"This should not happen offline — the renderer is bundled locally."));
   return h("div",{ref:elRef,className:"tg-canvas"});
 }
 
@@ -1184,27 +1097,42 @@ function AnomalyDetailModal({ anomaly, graphData, onClose, onView, onFindPaths, 
 }
 
 // ── Intent match detail modal ───────────────────────────────────────────────
-function IntentMatchModal({ match, onClose }){
+function IntentMatchModal({ match, onClose, onView, onInvestigate }){
   const m=match;
+  const mitre=(m.mitre||m.mitre_techniques||[]);
   return h(GModal,{title:m.playbook_name||"Intent Match",sub:"Correlated attack sequence",onClose},
     h("div",{className:"risk-gauge"}, h(Badge,{sev:m.severity}),
       h(ConfBar,{v:m.confidence||0}),
       h("span",{style:{fontSize:12,color:"var(--muted)",marginLeft:8}},ago(m.detected_at))),
-    h("div",{className:"so-kv"},h("span",{className:"k"},"Subject"),h("span",{className:"v mono"},m.subject||"—")),
+    h("div",{className:"so-kv"},h("span",{className:"k"},"Subject"),
+      h("span",{className:"v mono",style:onView?{color:"var(--accent)",cursor:"pointer"}:null,onClick:onView?()=>onView(m.subject):null},m.subject||"—")),
     h("div",{className:"so-kv"},h("span",{className:"k"},"Severity"),h("span",{className:"v"},m.severity)),
     h("div",{className:"so-kv"},h("span",{className:"k"},"Confidence"),h("span",{className:"v"},Math.round((m.confidence||0)*100)+"%")),
     h("div",{className:"so-kv"},h("span",{className:"k"},"Matched events"),h("span",{className:"v"},(m.matched_events||[]).length)),
     h("div",{className:"so-kv"},h("span",{className:"k"},"First seen"),h("span",{className:"v"},m.first_event_at||"—")),
     h("div",{className:"so-kv"},h("span",{className:"k"},"Last seen"),h("span",{className:"v"},m.last_event_at||"—")),
+    mitre.length>0 && h("div",{className:"so-kv"},h("span",{className:"k"},"MITRE ATT&CK"),
+      h("span",{className:"v"},mitre.map((t,i)=>h("span",{key:i,className:"chip",style:{marginLeft:i?4:0}},t)))),
     h("div",{style:{margin:"14px 0",fontSize:13,lineHeight:1.6,background:"var(--surface2)",padding:"12px 14px",borderRadius:8}},m.detail),
     (m.matched_events||[]).length>0 && h("div",null, h("div",{className:"so-section"},"Matched event IDs"),
-      h("div",{className:"mono",style:{fontSize:11,color:"var(--muted)",wordBreak:"break-all"}},(m.matched_events||[]).join(", "))));
+      h("div",{className:"mono",style:{fontSize:11,color:"var(--muted)",wordBreak:"break-all"}},(m.matched_events||[]).join(", "))),
+    (onView||onInvestigate) && h("div",null, h("div",{className:"so-section"},"Actions"),
+      h("div",{style:{display:"flex",gap:8}},
+        onView && h("button",{className:"so-action",onClick:()=>onView(m.subject)},"🎯 View in graph"),
+        onInvestigate && h("button",{className:"so-action primary",onClick:onInvestigate},"🔍 Investigate"))));
 }
 
 function TrustGraphPage() {
-  const [stats]     = useApi("/api/graph/stats",            { node_count:0, edge_count:0, anomaly_count:0, node_types:{} }, 10000);
-  const [anomData]  = useApi("/api/graph/anomalies?limit=200", { anomalies:[] }, 10000);
-  const [graphData] = useApi("/api/graph/data",             { nodes:[], edges:[] }, 10000);
+  const [statsLive] = useApi("/api/graph/stats",            { node_count:0, edge_count:0, anomaly_count:0, node_types:{} }, 10000);
+  const [anomLive]  = useApi("/api/graph/anomalies?limit=200", { anomalies:[] }, 10000);
+  const [graphLive] = useApi("/api/graph/data",             { nodes:[], edges:[] }, 10000);
+  // Offline-proof: fall back to the bundled demo fixture if the API is empty
+  // or unreachable, so the graph is never blank. Live data takes precedence.
+  const FX = window.TRUSTGRAPH_FIXTURE || { stats:{ node_count:0, edge_count:0, anomaly_count:0, node_types:{} }, graphData:{ nodes:[], edges:[] }, anomalies:[] };
+  const usingFixture = !((graphLive.nodes||[]).length);
+  const stats     = usingFixture ? FX.stats : statsLive;
+  const graphData = usingFixture ? FX.graphData : graphLive;
+  const anomData  = usingFixture ? { anomalies: FX.anomalies } : anomLive;
   const [sel, setSel] = useState(null);              // {kind:'node'|'edge', data}
   const [drill, setDrill] = useState(null);          // 'nodes'|'edges'|'anomalies'
   const [anomDetail, setAnomDetail] = useState(null);
@@ -1219,6 +1147,16 @@ function TrustGraphPage() {
 
   const anoms = (anomData.anomalies||[]).filter(a=>!acked[a.id]);
   const present = Object.keys(stats.node_types||{});
+
+  // Cross-page focus: Overview cards / feed modals can request centering a node
+  // here (or seeding the path finder FROM) after navigating to the graph.
+  const applyFocus = (req)=>{ if(!req) return; window.__tgFocus=null;
+    if(req.findPaths){ setFromLabel(req.label); window.scrollTo({top:document.body.scrollHeight,behavior:"smooth"}); }
+    else setTimeout(()=>{ if(ctrl.current.focusLabel) ctrl.current.focusLabel(req.label); },150); };
+  useEffect(()=>{ const onFocus=(e)=>applyFocus(e.detail);
+    window.addEventListener("tokendna:focus", onFocus);
+    return ()=>window.removeEventListener("tokendna:focus", onFocus); }, []);
+  useEffect(()=>{ if(window.__tgFocus && (graphData.nodes||[]).length) applyFocus(window.__tgFocus); }, [graphData]);
 
   const findPath = async () => {
     if(!fromLabel||!toLabel) return;

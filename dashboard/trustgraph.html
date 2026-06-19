@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <title>TokenDNA — Trust Graph Explorer</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
+<!-- Fully offline: dependency-free SVG renderer served locally, no CDN. -->
+<script src="/static/trustgraph-engine.js"></script>
+<script src="/static/trustgraph-fixture.js"></script>
 <style>
   :root{--bg:#0b0d10;--panel:#14181d;--line:#1f262e;--text:#e6e8eb;--muted:#8a939c;
     --accent:#3aa9ff;--low:#34d399;--medium:#f59e0b;--high:#fb923c;--critical:#ef4444}
@@ -19,15 +19,18 @@
   .seg button{background:none;border:none;color:var(--muted);padding:7px 14px;cursor:pointer;font-size:13px;font-weight:600}
   .seg button.active{background:var(--accent);color:#00131f}
   .seg button:not(:last-child){border-right:1px solid var(--line)}
+  .btn{background:#0f1318;color:var(--text);border:1px solid var(--line);border-radius:7px;padding:6px 10px;font-size:13px;cursor:pointer}
   select,header a{background:#0f1318;color:var(--text);border:1px solid var(--line);border-radius:7px;padding:6px 8px;font-size:13px}
   header a{text-decoration:none;color:var(--accent)}
   .mode-hint{color:var(--muted);font-size:12px}
   .counts{margin-left:auto;color:var(--muted);font-size:12px}
   main{display:flex;height:calc(100vh - 49px)}
-  #cy{flex:1}
+  #graph{flex:1;position:relative}
   aside{width:340px;border-left:1px solid var(--line);background:var(--panel);overflow:auto;padding:16px}
-  aside h2{font-size:15px;margin:0 0 2px}aside .sub{color:var(--muted);font-size:12px;margin-bottom:12px}
+  aside h2{font-size:15px;margin:0 0 2px;word-break:break-all}aside .sub{color:var(--muted);font-size:12px;margin-bottom:12px}
   .row{display:flex;justify-content:space-between;font-size:13px;padding:3px 0}.row span:first-child{color:var(--muted)}
+  .neighbor{display:flex;align-items:center;gap:7px;font-size:12px;padding:5px 7px;border-radius:6px;cursor:pointer}
+  .neighbor:hover{background:#0f1318}.neighbor .d{width:9px;height:9px;border-radius:50%;flex:none}
   .an{border-left:3px solid var(--critical);background:#0f1318;border-radius:6px;padding:8px 10px;margin:8px 0;font-size:12px}
   .an .t{font-weight:700;color:var(--high)}
   .pill{padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
@@ -36,11 +39,12 @@
   .pill.high{background:rgba(251,146,60,.15);color:var(--high)}
   .pill.critical{background:rgba(239,68,68,.15);color:var(--critical)}
   .legend{position:absolute;bottom:12px;left:12px;background:rgba(20,24,29,.92);border:1px solid var(--line);
-    border-radius:8px;padding:9px 11px;font-size:11px}
-  .legend .i{display:flex;align-items:center;gap:6px;margin:2px 0}.legend .d{width:10px;height:10px;border-radius:50%}
+    border-radius:8px;padding:9px 11px;font-size:11px;z-index:5}
+  .legend .i{display:flex;align-items:center;gap:6px;margin:2px 0;cursor:pointer;user-select:none}
+  .legend .i.off{opacity:.35}.legend .d{width:10px;height:10px;border-radius:50%}
   .empty{color:var(--muted);text-align:center;margin-top:40px;font-size:13px}
   .banner{position:absolute;top:12px;left:50%;transform:translateX(-50%);background:rgba(20,24,29,.95);
-    border:1px solid var(--accent);border-radius:8px;padding:8px 14px;font-size:12px;color:var(--text);display:none}
+    border:1px solid var(--accent);border-radius:8px;padding:8px 14px;font-size:12px;color:var(--text);display:none;z-index:6}
 </style>
 </head>
 <body>
@@ -52,160 +56,186 @@
     <button data-mode="anomalies">Anomalies</button>
     <button data-mode="correlate">Correlate</button>
   </div>
-  <select id="typeFilter"><option value="">all types</option></select>
+  <button class="btn" id="fit">⤢ Fit</button>
+  <button class="btn" id="expand">⊞ Expand all</button>
+  <button class="btn" id="collapse">⊟ Collapse all</button>
   <span class="mode-hint" id="hint"></span>
-  <a href="/demo">▸ Demo</a><a href="/console">▸ Kill Graph</a>
+  <a href="/dashboard">▸ Dashboard</a><a href="/demo">▸ Demo</a><a href="/console">▸ Kill Graph</a>
   <span class="counts" id="counts"></span>
 </header>
 <main>
-  <div id="cy"></div>
+  <div id="graph"></div>
   <div class="banner" id="banner"></div>
   <div class="legend" id="legend"></div>
-  <aside id="panel"><div class="empty">Pick a view above.<br>Each view shows one dimension cleanly;<br><b>Correlate</b> shows one element's neighborhood.</div></aside>
+  <aside id="panel"><div class="empty">Pick a view above.<br>Hover a node for its label, click to inspect.<br><b>Correlate</b> focuses one element's neighborhood.</div></aside>
 </main>
 <script>
 "use strict";
-const API="";
-const TOKEN=localStorage.getItem("tokendna_token")||"";
-function headers(){return Object.assign({"Content-Type":"application/json"},TOKEN?{"Authorization":"Bearer "+TOKEN}:{});}
-cytoscape.use(window.cytoscapeDagre);
+var API = "";
+var TOKEN = (function(){ try { return localStorage.getItem("tokendna_token") || ""; } catch(e){ return ""; } })();
+function headers(){ return Object.assign({ "Content-Type":"application/json" }, TOKEN ? { Authorization:"Bearer "+TOKEN } : {}); }
+function rank(s){ return { low:1, medium:2, high:3, critical:4 }[s] || 0; }
 
-const TYPE_COLORS={agent:"#a78bfa",workload:"#60a5fa",tool:"#38bdf8",mcp_server:"#f472b6",
-  issuer:"#fbbf24",verifier:"#34d399",tenant:"#8a939c",lifecycle_state:"#94a3b8",policy:"#fb923c"};
-const SEV={low:"#34d399",medium:"#f59e0b",high:"#fb923c",critical:"#ef4444"};
+var GTYPE = window.TrustGraphEngine.GTYPE;
+var gcol = window.TrustGraphEngine.gcol;
 
-let cy, ANOM=[], anomByLabel={}, mode="nodes";
+var DATA = { graphData:{ nodes:[], edges:[] }, anomalies:[] };
+var anomByKey = {};
+var mode = "nodes";
+var hidden = {};
+var expanded = {};
+var collapsedAll = false;
+var eng;
 
-cy = cytoscape({container:document.getElementById("cy"), wheelSensitivity:.2,
-  style:[
-    {selector:"node",style:{"background-color":e=>TYPE_COLORS[e.data("nt")]||"#8a939c",
-      "label":"data(label)","color":"#cbd5e1","font-size":"9px","text-valign":"bottom","text-margin-y":3,
-      "width":18,"height":18}},
-    {selector:"node.anom",style:{"border-width":4,"border-color":e=>e.data("sev")||"#ef4444","width":26,"height":26}},
-    {selector:"node.faded",style:{"opacity":.08}},
-    {selector:"node.hot",style:{"opacity":1,"width":30,"height":30,"border-width":3,"border-color":"#3aa9ff"}},
-    {selector:"edge",style:{"width":1.2,"line-color":"#2a323b","target-arrow-color":"#2a323b",
-      "target-arrow-shape":"triangle","curve-style":"bezier","arrow-scale":.7,"label":"","font-size":"8px","color":"#64748b"}},
-    {selector:"edge.show",style:{"line-color":"#3a4654","target-arrow-color":"#3a4654"}},
-    {selector:"edge.faded",style:{"opacity":.04}},
-    {selector:"edge.hot",style:{"opacity":1,"width":2.4,"line-color":"#3aa9ff","target-arrow-color":"#3aa9ff","label":"data(et)"}},
-    {selector:".hidden",style:{"display":"none"}},
-  ]});
-
-document.getElementById("legend").innerHTML=Object.entries(
-  {agent:"Agent",tool:"Tool",mcp_server:"MCP",issuer:"Issuer",verifier:"Verifier",workload:"Workload"})
-  .map(([k,v])=>`<div class="i"><span class="d" style="background:${TYPE_COLORS[k]}"></span>${v}</div>`).join("");
-
-async function load(){
-  const g=await (await fetch(API+"/api/graph/data",{headers:headers()})).json();
-  const an=await (await fetch(API+"/api/graph/anomalies",{headers:headers()})).json();
-  ANOM=(an.anomalies||an||[]);
-  anomByLabel={}; ANOM.forEach(a=>{(anomByLabel[a.subject_node]=anomByLabel[a.subject_node]||[]).push(a);});
-  const types=new Set();
-  const els=[];
-  (g.nodes||[]).forEach(n=>{
-    types.add(n.node_type);
-    const al=anomByLabel[n.label]||[];
-    const sev=al.length?al.map(a=>a.severity).sort((x,y)=>rank(y)-rank(x))[0]:null;
-    els.push({data:{id:n.node_id,label:n.label,nt:n.node_type,anom:al.length>0,sev:sev?SEV[sev]:null}});
+// legend (also per-type filter toggles)
+function buildLegend(){
+  var present = {};
+  DATA.graphData.nodes.forEach(function(n){ present[n.node_type] = (present[n.node_type]||0)+1; });
+  var L = document.getElementById("legend");
+  L.innerHTML = Object.keys(present).sort().map(function(k){
+    return '<div class="i'+(hidden[k]?' off':'')+'" data-type="'+k+'">'+
+      '<span class="d" style="background:'+gcol(k)+'"></span>'+k+' ('+present[k]+')</div>';
+  }).join("");
+  Array.prototype.forEach.call(L.querySelectorAll(".i"), function(el){
+    el.onclick = function(){ var t=el.dataset.type; hidden[t]=!hidden[t]; buildLegend(); render(); };
   });
-  (g.edges||[]).forEach(e=> els.push({data:{id:e.src_node+"->"+e.dst_node+":"+e.edge_type,
-    source:e.src_node,target:e.dst_node,et:e.edge_type}}));
-  cy.add(els);
-  const sel=document.getElementById("typeFilter");
-  [...types].sort().forEach(t=>{const o=document.createElement("option");o.value=t;o.textContent=t;sel.appendChild(o);});
-  document.getElementById("counts").textContent=`${(g.nodes||[]).length} nodes · ${(g.edges||[]).length} edges · ${ANOM.length} anomalies`;
-  apply();
 }
-function rank(s){return {low:1,medium:2,high:3,critical:4}[s]||0;}
 
-document.getElementById("seg").onclick=e=>{
-  if(e.target.dataset.mode){mode=e.target.dataset.mode;
-    document.querySelectorAll("#seg button").forEach(b=>b.classList.toggle("active",b.dataset.mode===mode));
-    apply();}
-};
-document.getElementById("typeFilter").onchange=apply;
+function effectiveGraph(){
+  if (mode !== "anomalies") return DATA.graphData;
+  // anomalies view: anomalous subjects + their 1-hop neighbors only
+  var g = DATA.graphData;
+  var anomSet = {};
+  g.nodes.forEach(function(n){ if ((anomByKey[n.node_id]||anomByKey[n.label])) anomSet[n.node_id]=1; });
+  var keep = Object.assign({}, anomSet);
+  g.edges.forEach(function(e){
+    if (anomSet[e.src_node]) keep[e.dst_node]=1;
+    if (anomSet[e.dst_node]) keep[e.src_node]=1;
+  });
+  return {
+    nodes: g.nodes.filter(function(n){ return keep[n.node_id]; }),
+    edges: g.edges.filter(function(e){ return keep[e.src_node] && keep[e.dst_node]; }),
+  };
+}
 
-function apply(){
-  const tf=document.getElementById("typeFilter").value;
-  const banner=document.getElementById("banner");
-  cy.elements().removeClass("hidden faded hot anom show");
-  banner.style.display="none";
-  // type filter (applies to all modes)
-  if(tf) cy.nodes().forEach(n=>{ if(n.data("nt")!==tf) n.addClass("hidden"); });
+function setHint(t){ document.getElementById("hint").textContent = t; }
 
-  if(mode==="nodes"){
-    setHint("All nodes, grouped by type — no edges, no overlap.");
-    cy.edges().addClass("hidden");
-    runLayout("grid");
-  } else if(mode==="edges"){
-    setHint("Relationship topology — edges and the nodes they connect.");
-    cy.edges().not(".hidden").addClass("show");
-    runLayout("dagre");
-  } else if(mode==="anomalies"){
-    setHint("Only anomalous nodes and the anomalies on them.");
-    cy.nodes().forEach(n=>{ if(!n.data("anom")) n.addClass("hidden"); else n.addClass("anom"); });
-    cy.edges().forEach(e=>{ if(e.source().hasClass("hidden")||e.target().hasClass("hidden")) e.addClass("hidden"); else e.addClass("show"); });
-    renderAnomalyList();
-    runLayout("cose");
-  } else { // correlate
-    setHint("Click any node — see only its edges, neighbors, and anomalies.");
-    cy.elements().addClass("faded");
-    cy.edges().addClass("hidden");
-    banner.style.display="block"; banner.textContent="Correlate mode — click a node to focus its neighborhood";
-    renderAnomalyList();
+function render(){
+  eng.update({ graphData: effectiveGraph(), anomalies: DATA.anomalies, hidden: hidden, expanded: expanded });
+  var g = DATA.graphData;
+  document.getElementById("counts").textContent =
+    g.nodes.length + " nodes · " + g.edges.length + " edges · " + DATA.anomalies.length + " anomalies";
+}
+
+function applyMode(){
+  var banner = document.getElementById("banner");
+  banner.style.display = "none";
+  if (mode === "nodes")      setHint("Layered left→right trust hierarchy. Hover for labels, click to inspect.");
+  else if (mode === "edges") setHint("Relationship topology — every trust edge and the nodes it connects.");
+  else if (mode === "anomalies"){ setHint("Only anomalous nodes and their immediate neighborhood."); renderAnomalyList(); }
+  else { setHint("Correlate — click any node to focus its neighborhood."); banner.style.display="block"; banner.textContent="Correlate mode — click a node to focus its neighborhood"; }
+  render();
+  eng.fit();
+}
+
+function showNode(d){
+  var key = d.id, label = d.name;
+  var al = (anomByKey[d.id] || anomByKey[d.name] || []);
+  // resolve neighbors from raw graph
+  var g = DATA.graphData, nb = [], seen = {};
+  g.edges.forEach(function(e){
+    var hit = (e.src_node===d.id||e.src_label===d.name) ? { l:e.dst_label, t:e.dst_type, et:e.edge_type }
+            : (e.dst_node===d.id||e.dst_label===d.name) ? { l:e.src_label, t:e.src_type, et:e.edge_type } : null;
+    if (hit && hit.l && !seen[hit.l]){ seen[hit.l]=1; nb.push(hit); }
+  });
+  var html = '<h2>'+esc(label)+'</h2><div class="sub" style="color:'+gcol(d.ntype)+'">'+esc(d.ntype)+(d.group?' · group of '+d.count:'')+'</div>'+
+    '<div class="row"><span>Connections</span><span>'+nb.length+'</span></div>'+
+    '<div class="row"><span>Anomalies</span><span>'+al.length+'</span></div>'+
+    al.map(function(a){ return '<div class="an"><div class="t">'+esc(a.anomaly_type)+' <span class="pill '+a.severity+'">'+a.severity+'</span></div>'+esc(a.detail||"")+'</div>'; }).join("");
+  if (nb.length){
+    html += '<div class="sub" style="margin-top:12px">Neighbors</div>' +
+      nb.slice(0,40).map(function(x,i){ return '<div class="neighbor" data-label="'+esc(x.l)+'"><span class="d" style="background:'+gcol(x.t)+'"></span>'+esc(x.l)+'</div>'; }).join("");
   }
-}
-function setHint(t){document.getElementById("hint").textContent=t;}
-
-let layoutMode=null;
-function runLayout(kind){
-  const opts = kind==="grid" ? {name:"grid",condense:true,avoidOverlap:true,
-      sort:(a,b)=>(a.data("nt")||"").localeCompare(b.data("nt")||"")}
-    : kind==="dagre" ? {name:"dagre",rankDir:"LR",nodeSep:18,rankSep:60}
-    : {name:"cose",animate:false,nodeRepulsion:9000,idealEdgeLength:60};
-  cy.layout(Object.assign({fit:true,padding:30}, opts)).run();
-  layoutMode=kind;
+  var P = document.getElementById("panel");
+  P.innerHTML = html;
+  Array.prototype.forEach.call(P.querySelectorAll(".neighbor"), function(el){
+    el.onclick = function(){ eng.focusLabel(el.dataset.label); };
+  });
 }
 
-cy.on("tap","node",ev=>{
-  const n=ev.target;
-  showNode(n);
-  if(mode==="correlate"){
-    cy.elements().addClass("faded").removeClass("hot");
-    cy.edges().addClass("hidden");
-    const hood=n.closedNeighborhood();
-    hood.removeClass("faded hidden").addClass("hot");
-    hood.nodes().forEach(x=>{ if(anomByLabel[x.data("label")]) x.addClass("anom"); });
-    document.getElementById("banner").style.display="none";
-  }
-});
-
-function showNode(n){
-  const label=n.data("label"); const al=anomByLabel[label]||[];
-  const deg=n.connectedEdges().length;
-  document.getElementById("panel").innerHTML=
-    `<h2>${label}</h2><div class="sub">${n.data("nt")}</div>
-     <div class="row"><span>Connections</span><span>${deg}</span></div>
-     <div class="row"><span>Anomalies</span><span>${al.length}</span></div>`+
-    al.map(a=>`<div class="an"><div class="t">${a.anomaly_type} <span class="pill ${a.severity}">${a.severity}</span></div>${a.detail||""}</div>`).join("");
+function showEdge(e){
+  document.getElementById("panel").innerHTML =
+    '<h2>'+esc((e.etype||"edge").replace(/_/g," "))+'</h2><div class="sub">trust relationship</div>'+
+    '<div class="neighbor" data-label="'+esc(e.srcLabel||e.source)+'"><span class="d" style="background:var(--accent)"></span>'+esc(e.srcLabel||e.source)+'</div>'+
+    '<div style="text-align:center;color:var(--muted);margin:4px 0">↓</div>'+
+    '<div class="neighbor" data-label="'+esc(e.dstLabel||e.target)+'"><span class="d" style="background:var(--low)"></span>'+esc(e.dstLabel||e.target)+'</div>';
+  Array.prototype.forEach.call(document.querySelectorAll("#panel .neighbor"), function(el){
+    el.onclick = function(){ eng.focusLabel(el.dataset.label); };
+  });
 }
 
 function renderAnomalyList(){
-  const top=[...ANOM].sort((a,b)=>rank(b.severity)-rank(a.severity)).slice(0,20);
-  document.getElementById("panel").innerHTML=
-    `<h2>Anomalies</h2><div class="sub">${ANOM.length} total — click one to focus its node</div>`+
-    top.map(a=>`<div class="an" data-label="${a.subject_node}" style="cursor:pointer">
-      <div class="t">${a.anomaly_type} <span class="pill ${a.severity}">${a.severity}</span></div>
-      <div style="color:var(--muted)">${a.subject_node}</div>${a.detail||""}</div>`).join("");
-  document.querySelectorAll(".an[data-label]").forEach(el=> el.onclick=()=>{
-    const node=cy.nodes().filter(n=>n.data("label")===el.dataset.label).first();
-    if(node && node.length){ cy.animate({center:{eles:node},zoom:1.4},{duration:300});
-      node.addClass("hot"); showNode(node); }
+  var top = DATA.anomalies.slice().sort(function(a,b){ return rank(b.severity)-rank(a.severity); }).slice(0,20);
+  var P = document.getElementById("panel");
+  P.innerHTML = '<h2>Anomalies</h2><div class="sub">'+DATA.anomalies.length+' total — click one to focus its node</div>'+
+    top.map(function(a){ return '<div class="an" data-label="'+esc(a.subject_node)+'" style="cursor:pointer">'+
+      '<div class="t">'+esc(a.anomaly_type)+' <span class="pill '+a.severity+'">'+a.severity+'</span></div>'+
+      '<div style="color:var(--muted)">'+esc(a.subject_node)+'</div>'+esc(a.detail||"")+'</div>'; }).join("");
+  Array.prototype.forEach.call(P.querySelectorAll(".an[data-label]"), function(el){
+    el.onclick = function(){ eng.focusLabel(el.dataset.label); };
   });
 }
 
-load().catch(e=>{document.getElementById("panel").innerHTML='<div class="empty">Graph unavailable — start with scripts/demo.sh and seed data.</div>';});
+function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]; }); }
+
+async function loadData(){
+  try {
+    var g = await (await fetch(API+"/api/graph/data", { headers: headers() })).json();
+    var an = await (await fetch(API+"/api/graph/anomalies", { headers: headers() })).json();
+    if (g && (g.nodes||[]).length){
+      return { graphData: g, anomalies: (an.anomalies || an || []) };
+    }
+  } catch(e){ /* fall through to fixture */ }
+  var FX = window.TRUSTGRAPH_FIXTURE;
+  return { graphData: FX.graphData, anomalies: FX.anomalies };
+}
+
+async function init(){
+  eng = new window.TrustGraphEngine(document.getElementById("graph"), {
+    onSelectNode: showNode,
+    onSelectEdge: showEdge,
+    onBackground: function(){ if (mode==="anomalies") renderAnomalyList(); },
+    onToggleGroup: function(id){ expanded[id] = !expanded[id]; render(); },
+  });
+  DATA = await loadData();
+  anomByKey = {};
+  DATA.anomalies.forEach(function(a){ (anomByKey[a.subject_node] = anomByKey[a.subject_node] || []).push(a); });
+  buildLegend();
+  applyMode();
+}
+
+document.getElementById("seg").onclick = function(e){
+  if (e.target.dataset && e.target.dataset.mode){
+    mode = e.target.dataset.mode;
+    Array.prototype.forEach.call(document.querySelectorAll("#seg button"), function(b){ b.classList.toggle("active", b.dataset.mode===mode); });
+    applyMode();
+  }
+};
+document.getElementById("fit").onclick = function(){ eng.fit(); };
+document.getElementById("expand").onclick = function(){
+  // expand every collapsible group currently known
+  (DATA.graphData.nodes||[]).forEach(function(){});
+  // simplest: mark all group keys expanded by toggling via a full pass
+  var idx = window.TrustGraphEngine.indexAnomalies(DATA.anomalies);
+  var built = window.TrustGraphEngine.buildElements(DATA.graphData, {}, hidden, idx);
+  Object.keys(built.groupOfMember).forEach(function(m){ expanded[built.groupOfMember[m]] = true; });
+  render();
+};
+document.getElementById("collapse").onclick = function(){ expanded = {}; render(); };
+
+init().catch(function(e){
+  document.getElementById("panel").innerHTML = '<div class="empty">Graph engine failed to initialize.</div>';
+});
 </script>
 </body>
 </html>
