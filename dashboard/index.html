@@ -1123,6 +1123,25 @@ function IntentMatchModal({ match, onClose, onView, onInvestigate }){
         onInvestigate && h("button",{className:"so-action primary",onClick:onInvestigate},"🔍 Investigate"))));
 }
 
+// Directed reachability from a node (matches the backend BFS: src_node→dst_node),
+// so the path-finder "To" list only offers nodes that will actually return a path.
+function reachableLabelsFrom(graphData, fromLabel){
+  if(!fromLabel) return null;
+  const nodes = graphData.nodes||[], edges = graphData.edges||[];
+  const idByLabel={}, labelById={};
+  nodes.forEach(n=>{ idByLabel[n.label]=n.node_id; labelById[n.node_id]=n.label; });
+  const start = idByLabel[fromLabel];
+  const labels = new Set();
+  if(start===undefined) return labels;
+  const out = {};
+  edges.forEach(e=>{ (out[e.src_node]=out[e.src_node]||[]).push(e.dst_node); });
+  const seen = new Set([start]); const q=[start];
+  while(q.length){ const cur=q.shift(); (out[cur]||[]).forEach(nx=>{
+    if(!seen.has(nx)){ seen.add(nx); q.push(nx); if(labelById[nx]!==undefined) labels.add(labelById[nx]); } }); }
+  labels.delete(fromLabel);
+  return labels;
+}
+
 function TrustGraphPage() {
   const [statsLive] = useApi("/api/graph/stats",            { node_count:0, edge_count:0, anomaly_count:0, node_types:{} }, 10000);
   const [anomLive]  = useApi("/api/graph/anomalies?limit=200", { anomalies:[] }, 10000);
@@ -1158,6 +1177,11 @@ function TrustGraphPage() {
     window.addEventListener("tokendna:focus", onFocus);
     return ()=>window.removeEventListener("tokendna:focus", onFocus); }, []);
   useEffect(()=>{ if(window.__tgFocus && (graphData.nodes||[]).length) applyFocus(window.__tgFocus); }, [graphData]);
+
+  // Path Finder: constrain "To" to nodes reachable from the chosen "From".
+  const reachable = reachableLabelsFrom(graphData, fromLabel);
+  useEffect(()=>{ if(fromLabel && toLabel && reachable && !reachable.has(toLabel)) setToLabel(""); }, [fromLabel, graphData]);
+  const selStyle = {background:"var(--surface2)",border:"1px solid var(--border)",color:"var(--text)",padding:"7px 10px",borderRadius:6,fontSize:12,width:"100%"};
 
   const findPath = async () => {
     if(!fromLabel||!toLabel) return;
@@ -1227,14 +1251,21 @@ function TrustGraphPage() {
       h("div",{className:"card"},
         h("div",{className:"card-head"}, h("div",{className:"card-title"},"🔍 Trust Path Finder")),
         h("div",{className:"card-body"},
-          h("div",{style:{marginBottom:10,fontSize:11,color:"var(--muted)"}},"Pick endpoints (or use “Find paths from here” on a node)."),
+          h("div",{style:{marginBottom:10,fontSize:11,color:"var(--muted)"}},"Pick endpoints (or use “Find paths from here” on a node). “To” lists only nodes reachable from “From”."),
           h("div",{style:{display:"flex",flexDirection:"column",gap:8,marginBottom:12}},
-            ["From","To"].map((lbl,ix)=>h("div",{key:lbl},
-              h("div",{style:{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:600,textTransform:"uppercase"}},lbl),
-              h("select",{value:ix?toLabel:fromLabel,onChange:e=>ix?setToLabel(e.target.value):setFromLabel(e.target.value),
-                style:{background:"var(--surface2)",border:"1px solid var(--border)",color:"var(--text)",padding:"7px 10px",borderRadius:6,fontSize:12,width:"100%"}},
+            h("div",null,
+              h("div",{style:{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:600,textTransform:"uppercase"}},"From"),
+              h("select",{value:fromLabel,onChange:e=>setFromLabel(e.target.value),style:selStyle},
                 h("option",{value:""},"— select —"),
-                (graphData.nodes||[]).map(n=>h("option",{key:n.node_id,value:n.label},n.label)))))),
+                (graphData.nodes||[]).map(n=>h("option",{key:n.node_id,value:n.label},n.label)))),
+            h("div",null,
+              h("div",{style:{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:600,textTransform:"uppercase"}},
+                "To", fromLabel && h("span",{style:{textTransform:"none",fontWeight:400,marginLeft:6,color:"var(--accent)"}},`${reachable?reachable.size:0} reachable`)),
+              h("select",{value:toLabel,onChange:e=>setToLabel(e.target.value),disabled:!fromLabel,
+                style:{...selStyle, opacity:!fromLabel?.5:1, cursor:!fromLabel?"not-allowed":"pointer"}},
+                h("option",{value:""}, !fromLabel ? "— select “From” first —" : (reachable && reachable.size ? "— select —" : "— no reachable nodes —")),
+                (graphData.nodes||[]).filter(n=> reachable && reachable.has(n.label))
+                  .map(n=>h("option",{key:n.node_id,value:n.label},n.label))))),
           h("button",{onClick:findPath,disabled:pathLoading||!fromLabel||!toLabel,
             style:{background:"var(--accent)",color:"#fff",border:"none",padding:"8px 20px",borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",width:"100%",opacity:(!fromLabel||!toLabel)?.5:1}},
             pathLoading?"Finding…":"Find Path"),
