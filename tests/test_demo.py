@@ -58,6 +58,7 @@ out["campaigns"] = c.get("/api/campaigns").json().get("count")
 out["siem"] = c.get("/api/siem/mcp-calls?target=ecs").json().get("count")
 out["certs"] = c.get("/api/certs/fleet").json().get("total")
 out["inventory"] = len(c.get("/api/agents/inventory").json().get("agents", []))
+out["intent"] = len(c.get("/api/intent/matches").json().get("matches", []))
 rip = c.post("/api/kill/triage-agent", json={"reason": "test"}).json()
 out["rip_overall"] = rip.get("overall")
 out["rip_killed"] = rip.get("killed")
@@ -114,3 +115,32 @@ def test_certs_seeded(seeded):
 
 def test_agent_inventory_seeded(seeded):
     assert seeded["inventory"] >= 5
+
+
+def test_intent_feed_seeded(seeded):
+    assert seeded["intent"] >= 3
+
+
+# ── trust graph explorer ───────────────────────────────────────────────────────
+
+TRUSTGRAPH = ROOT / "dashboard" / "trustgraph.html"
+
+
+def test_trustgraph_html_parses():
+    HTMLParser().feed(TRUSTGRAPH.read_text())
+
+
+def test_trustgraph_has_toggle_views():
+    html = TRUSTGRAPH.read_text()
+    for marker in ('data-mode="nodes"', 'data-mode="edges"', 'data-mode="anomalies"',
+                   'data-mode="correlate"', "/api/graph/data", "/api/graph/anomalies", "cytoscape"):
+        assert marker in html, f"trust graph missing {marker}"
+
+
+def test_trustgraph_route_serves(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATA_DB_PATH", str(tmp_path / "tg.db"))
+    import api
+    from fastapi.testclient import TestClient
+    r = TestClient(api.app).get("/trust-graph")
+    assert r.status_code == 200
+    assert "Trust Graph" in r.text
