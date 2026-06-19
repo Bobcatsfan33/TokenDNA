@@ -282,6 +282,17 @@ def test_pages_have_distinguishing_helper_text():
     assert "Staged left→right view of one agent workflow" in html
 
 
+def test_path_finder_constrains_to_reachable():
+    """The 'To' dropdown only offers nodes reachable from the chosen 'From'."""
+    html = DASHBOARD.read_text()
+    assert "function reachableLabelsFrom" in html
+    # 'To' options are filtered by the reachable set; 'From' lists all nodes
+    assert "reachable && reachable.has(n.label)" in html
+    assert "reachableLabelsFrom(graphData, fromLabel)" in html
+    # invalid 'To' is auto-cleared when 'From' changes
+    assert "!reachable.has(toLabel)) setToLabel(\"\")" in html
+
+
 # ── Dev caching: edits show up on a normal reload ──────────────────────────────
 
 def test_engine_grid_wraps_large_ranks():
