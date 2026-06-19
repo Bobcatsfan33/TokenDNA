@@ -7,10 +7,14 @@ visible surface unchanged. See api_routers/MIGRATION.md.
 """
 from __future__ import annotations
 
+import hashlib
+import os
 import pathlib
 
 from fastapi import APIRouter, FastAPI
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from api_routers.agents import router as agents_router
 from api_routers.assets import router as assets_router
@@ -76,14 +80,88 @@ ALL_ROUTERS: tuple[APIRouter, ...] = (
 _STATIC_DIR = pathlib.Path(__file__).resolve().parent.parent / "dashboard" / "static"
 
 
-class _NoStoreStatic(StaticFiles):
-    """StaticFiles that disables caching so edits to local assets show up on a
-    normal reload in dev (paired with versioned ?v= URLs for belt-and-suspenders)."""
+class _CachingStatic(StaticFiles):
+    """StaticFiles whose cache policy is env-driven.
+
+    * Local dev (default): ``no-store`` so edits to local assets show up on a
+      normal reload (paired with versioned ?v= URLs).
+    * Production: set ``ASSET_CACHE_SECONDS`` (e.g. 86400) to serve
+      ``public, max-age=<n>`` — safe because every asset URL is version-busted.
+    """
 
     async def get_response(self, path, scope):
         response = await super().get_response(path, scope)
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        secs = int(os.getenv("ASSET_CACHE_SECONDS", "0") or "0")
+        if secs > 0:
+            response.headers["Cache-Control"] = f"public, max-age={secs}"
+        else:
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         return response
+
+
+# Paths the demo-password gate never blocks (health probes + the login page).
+_DEMO_OPEN_PATHS = {"/healthz", "/readyz", "/", "/metrics", "/__demo_login"}
+_DEMO_COOKIE = "tdna_demo"
+
+
+def _demo_token(password: str) -> str:
+    return hashlib.sha256(("tokendna-demo::" + password).encode()).hexdigest()
+
+
+def _demo_login_page(error: bool = False) -> str:
+    msg = '<p class="err">Incorrect password.</p>' if error else ""
+    return (
+        "<!doctype html><html><head><meta charset=utf-8>"
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<title>TokenDNA — Demo Access</title><style>"
+        "html,body{height:100%;margin:0;background:#070b12;color:#e2e8f0;"
+        "font:15px/1.5 ui-sans-serif,system-ui,sans-serif;display:flex;align-items:center;justify-content:center}"
+        ".box{background:#0f1622;border:1px solid #1e293b;border-radius:12px;padding:32px 28px;width:320px;text-align:center}"
+        ".brand{font-weight:800;font-size:20px;margin-bottom:4px}.brand span{color:#3aa9ff}"
+        ".sub{color:#94a3b8;font-size:13px;margin-bottom:20px}"
+        "input{width:100%;box-sizing:border-box;background:#0b1220;border:1px solid #1e293b;color:#e2e8f0;"
+        "padding:10px 12px;border-radius:8px;font-size:14px;margin-bottom:12px}"
+        "button{width:100%;background:#3aa9ff;color:#00131f;border:0;padding:10px;border-radius:8px;"
+        "font-weight:700;font-size:14px;cursor:pointer}.err{color:#ef4444;font-size:12px;margin:0 0 12px}"
+        "</style></head><body><form class=box method=post action=/__demo_login>"
+        "<div class=brand>Token<span>DNA</span></div>"
+        "<div class=sub>Enter the demo password to continue.</div>"
+        f"{msg}"
+        "<input type=password name=password placeholder=Password autofocus>"
+        "<button type=submit>Enter</button></form></body></html>"
+    )
+
+
+class DemoAuthMiddleware(BaseHTTPMiddleware):
+    """Shared-password gate for a public demo. Active only when DEMO_PASSWORD is
+    set; otherwise a pure pass-through (local dev stays open). Health probes and
+    the login page are always reachable so Railway's healthcheck still passes."""
+
+    def __init__(self, app, password: str):
+        super().__init__(app)
+        self._token = _demo_token(password)
+        self._password = password
+
+    async def dispatch(self, request, call_next):
+        path = request.url.path
+        if path in _DEMO_OPEN_PATHS and path != "/__demo_login":
+            return await call_next(request)
+        if path == "/__demo_login":
+            if request.method == "POST":
+                form = await request.form()
+                if form.get("password") == self._password:
+                    resp = RedirectResponse(url="/dashboard", status_code=303)
+                    resp.set_cookie(_DEMO_COOKIE, self._token, httponly=True, samesite="lax", max_age=86400 * 7)
+                    return resp
+                return HTMLResponse(_demo_login_page(error=True), status_code=401)
+            return HTMLResponse(_demo_login_page())
+        if request.cookies.get(_DEMO_COOKIE) == self._token:
+            return await call_next(request)
+        # Unauthenticated: API/asset calls get 401, navigations get the login page.
+        accept = request.headers.get("accept", "")
+        if path.startswith("/api/") or path.startswith("/static/") or "text/html" not in accept:
+            return Response("authentication required", status_code=401)
+        return HTMLResponse(_demo_login_page(), status_code=401)
 
 
 def mount_all(app: FastAPI) -> None:
@@ -97,4 +175,9 @@ def mount_all(app: FastAPI) -> None:
     for router in ALL_ROUTERS:
         app.include_router(router)
     if _STATIC_DIR.is_dir():
-        app.mount("/static", _NoStoreStatic(directory=str(_STATIC_DIR)), name="static")
+        app.mount("/static", _CachingStatic(directory=str(_STATIC_DIR)), name="static")
+    # Optional public-demo password gate (no-op unless DEMO_PASSWORD is set, so
+    # local dev stays open). Added last → outermost middleware → gates everything.
+    demo_pw = (os.getenv("DEMO_PASSWORD") or "").strip()
+    if demo_pw:
+        app.add_middleware(DemoAuthMiddleware, password=demo_pw)
