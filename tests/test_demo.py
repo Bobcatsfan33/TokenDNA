@@ -57,6 +57,7 @@ out["retrieval"] = c.get("/api/retrieval/sources?agent_id=triage-agent").json().
 out["campaigns"] = c.get("/api/campaigns").json().get("count")
 out["siem"] = c.get("/api/siem/mcp-calls?target=ecs").json().get("count")
 out["certs"] = c.get("/api/certs/fleet").json().get("total")
+out["inventory"] = len(c.get("/api/agents/inventory").json().get("agents", []))
 rip = c.post("/api/kill/triage-agent", json={"reason": "test"}).json()
 out["rip_overall"] = rip.get("overall")
 out["rip_killed"] = rip.get("killed")
@@ -109,3 +110,7 @@ def test_siem_calls_seeded(seeded):
 
 def test_certs_seeded(seeded):
     assert seeded["certs"] >= 3
+
+
+def test_agent_inventory_seeded(seeded):
+    assert seeded["inventory"] >= 5

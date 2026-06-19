@@ -162,6 +162,42 @@ def seed_gap(tenant_id: str = DEMO_TENANT) -> dict[str, Any]:
         return len(camps)
     _try(summary, "campaigns", _campaign)
 
+    # ── Agent inventory + lifecycle (so the inventory panel + actions work) ───
+    def _inventory():
+        from modules.identity import agent_lifecycle as al
+        al.init_db()
+
+        def _register(agent_id, display_name, platform, owner):
+            try:
+                al.register_agent(
+                    tenant_id=tenant_id, agent_id=agent_id, display_name=display_name,
+                    platform=platform, owner=owner,
+                    credential_ids=[f"cred-{agent_id}"], last_token_id=f"jwt-{agent_id}")
+            except Exception:  # already registered on a re-seed — fine
+                pass
+
+        # The airline-demo agents (kill/graph targets) + a few extras for variety.
+        _register("triage-agent", "Triage Agent", "langgraph", "ops@acme.io")
+        _register("booking-agent", "Booking Agent", "langgraph", "ops@acme.io")
+        _register("payment-agent", "Payment Agent", "langgraph", "fin@acme.io")
+        _register("invoice-agent", "Invoice Agent", "openai-agents", "fin@acme.io")
+        _register("marketing-scraper", "Marketing Scraper", "crewai", "growth@acme.io")
+        _register("legacy-export-bot", "Legacy Export Bot", "cron", "data@acme.io")
+
+        # Varied lifecycle states so the panel shows active/suspended/decommissioned.
+        try:
+            al.suspend_agent(tenant_id=tenant_id, agent_id="marketing-scraper",
+                             actor="soc@acme.io", reason="unusual data egress")
+        except Exception:
+            pass
+        try:
+            al.decommission_agent(tenant_id=tenant_id, agent_id="legacy-export-bot",
+                                  actor="data@acme.io", reason="pilot ended")
+        except Exception:
+            pass
+        return 6
+    _try(summary, "agent_inventory", _inventory)
+
     # ── Enrichments for older features the base seeder may not fully cover ─────
     def _governed_certs():
         # Attestation certs feed the cert_dashboard fleet view + expiry sweep.
