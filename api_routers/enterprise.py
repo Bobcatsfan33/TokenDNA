@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from api_routers._shared import (
-    _DASHBOARD_PATH, _scim_handle, _scim_response, _tenant_subject,
+    _DASHBOARD_PATH, _scim_handle, _scim_response, _tenant_subject, serve_dashboard_html,
     check_rate_limit, check_rate_limit_open,
 )
 
@@ -112,7 +112,7 @@ router = APIRouter(prefix="", tags=["enterprise"])
 async def dashboard():
     if not _DASHBOARD_PATH.exists():
         raise HTTPException(status_code=404, detail="Dashboard not found")
-    return FileResponse(_DASHBOARD_PATH)
+    return serve_dashboard_html(_DASHBOARD_PATH)
 
 
 @router.get("/saml/metadata", response_class=Response)

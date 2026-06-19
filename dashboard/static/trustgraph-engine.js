@@ -189,15 +189,31 @@
         cols[r].forEach(function (n, i) { posOf[n.id] = i; });
       });
     }
-    // assign coordinates; vertically center each column
-    var maxRows = 0;
-    rankKeys.forEach(function (r) { maxRows = Math.max(maxRows, cols[r].length); });
-    var totalH = (maxRows - 1) * ROW_SEP;
+    // assign coordinates. A rank with many siblings (e.g. a star/bipartite
+    // population graph: 49 parallel agents) would otherwise be one very tall
+    // column — a vertical line. Wrap any rank with > WRAP nodes into a grid of
+    // ceil(sqrt(n)) sub-columns so it fills the canvas in 2D and stays legible.
+    // Small ranks (pipelines) keep subCols=1 → clean single columns as before.
+    var WRAP = 12, SUBCOL_SEP = 66;
+    var dims = {};
     rankKeys.forEach(function (r) {
-      var col = cols[r];
-      var colH = (col.length - 1) * ROW_SEP;
-      var y0 = (totalH - colH) / 2;
-      col.forEach(function (n, i) { n.x = r * COL_SEP; n.y = y0 + i * ROW_SEP; });
+      var cnt = cols[r].length;
+      var subCols = cnt > WRAP ? Math.ceil(Math.sqrt(cnt)) : 1;
+      var rows = Math.ceil(cnt / subCols);
+      dims[r] = { subCols: subCols, rows: rows, width: (subCols - 1) * SUBCOL_SEP, height: (rows - 1) * ROW_SEP };
+    });
+    var maxH = 0;
+    rankKeys.forEach(function (r) { maxH = Math.max(maxH, dims[r].height); });
+    var xCursor = 0;
+    rankKeys.forEach(function (r) {
+      var d = dims[r], col = cols[r];
+      var y0 = (maxH - d.height) / 2;
+      col.forEach(function (node, i) {
+        var sc = i % d.subCols, sr = Math.floor(i / d.subCols);
+        node.x = xCursor + sc * SUBCOL_SEP;
+        node.y = y0 + sr * ROW_SEP;
+      });
+      xCursor += d.width + COL_SEP;
     });
   }
 

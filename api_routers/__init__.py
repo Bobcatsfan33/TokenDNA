@@ -76,6 +76,16 @@ ALL_ROUTERS: tuple[APIRouter, ...] = (
 _STATIC_DIR = pathlib.Path(__file__).resolve().parent.parent / "dashboard" / "static"
 
 
+class _NoStoreStatic(StaticFiles):
+    """StaticFiles that disables caching so edits to local assets show up on a
+    normal reload in dev (paired with versioned ?v= URLs for belt-and-suspenders)."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        return response
+
+
 def mount_all(app: FastAPI) -> None:
     """Mount every registered domain router onto the app (called from api.py).
 
@@ -87,4 +97,4 @@ def mount_all(app: FastAPI) -> None:
     for router in ALL_ROUTERS:
         app.include_router(router)
     if _STATIC_DIR.is_dir():
-        app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+        app.mount("/static", _NoStoreStatic(directory=str(_STATIC_DIR)), name="static")
