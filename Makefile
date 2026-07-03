@@ -7,15 +7,15 @@ PY ?= python
 .PHONY: install test lint clean
 
 install:  ## install core requirements + the platform/ and collector/ sub-packages
-pip install -r requirements.txt pytest pytest-asyncio ruff
-pip install -e ./platform -e ./collector
+	pip install -r requirements.txt pytest pytest-asyncio ruff
+	pip install -e ./platform -e ./collector
 
 test:  ## run the full suite (backend + platform + collector) — matches CI
-$(PY) -m pytest -q --import-mode=importlib tests platform/tests collector/tests
+	$(PY) -m pytest -q --import-mode=importlib tests platform/tests collector/tests
 
 lint:  ## static checks
-ruff check .
+	ruff check .
 
 clean:
-find . -type d -name __pycache__ -prune -exec rm -rf {} +
-rm -rf .pytest_cache
+	find . -type d -name __pycache__ -prune -exec rm -rf {} +
+	rm -rf .pytest_cache

@@ -243,9 +243,14 @@ class TestDualWrite:
                 )
                 primary.execute("INSERT INTO t (v) VALUES (?)", ("fallback",))
 
-        with pg_mod.get_dual_write_conns(db_path=db) as (conn, _):
-            row = conn.execute("SELECT v FROM t").fetchone()
-            assert row[0] == "fallback"
+            # Verification read must stay INSIDE the mocked-pool context. With the
+            # bad TOKENDNA_PG_DSN still set, a real ConnectionPool here would retry
+            # the refused connection for psycopg_pool's default 30s checkout
+            # timeout (the test "passed" only after ~30s). Keeping it mocked makes
+            # the fall-back path assert in ~0.1s.
+            with pg_mod.get_dual_write_conns(db_path=db) as (conn, _):
+                row = conn.execute("SELECT v FROM t").fetchone()
+                assert row[0] == "fallback"
 
 
 # =============================================================================
