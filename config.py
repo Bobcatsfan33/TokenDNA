@@ -90,19 +90,16 @@ RATE_LIMIT_OPEN_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_OPEN_PER_MINUTE", "3
 # mtls.py, tenants/middleware.py), which key off TOKENDNA_ENV first, then
 # ENVIRONMENT. The prior guard read only ENVIRONMENT, so
 # `TOKENDNA_ENV=production DEV_MODE=true` booted with auth bypassed.
-import sys as _sys
-
 _ENVIRONMENT = (os.getenv("TOKENDNA_ENV") or os.getenv("ENVIRONMENT") or "").strip().lower()
 _DEV_ENVIRONMENTS = {"dev", "development", "test", "testing", "local", "ci"}
 
 if DEV_MODE and _ENVIRONMENT not in _DEV_ENVIRONMENTS:
-    print(
+    # SystemExit prints the message to stderr and exits with status 1.
+    raise SystemExit(
         f"FATAL: DEV_MODE=true is set but the resolved environment is "
         f"{_ENVIRONMENT!r} (from TOKENDNA_ENV/ENVIRONMENT), which is not a "
         f"recognized development context {sorted(_DEV_ENVIRONMENTS)}. "
         "DEV_MODE bypasses all authentication and is prohibited outside "
         "development. Unset DEV_MODE, or set TOKENDNA_ENV/ENVIRONMENT to a "
-        "development value to proceed.",
-        file=_sys.stderr,
+        "development value to proceed."
     )
-    _sys.exit(1)
