@@ -1,0 +1,52 @@
+name: DCO
+
+# Developer Certificate of Origin: every commit in a pull request must carry a
+# `Signed-off-by:` trailer (git commit -s). This is a lightweight, self-contained
+# check — no third-party action, no external calls. Merge commits are exempt.
+#
+# Contributors: `git commit -s` on each commit, or fix a branch after the fact
+# with `git rebase --signoff origin/main`.
+
+on:
+  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+
+jobs:
+  dco-check:
+    name: DCO sign-off check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify Signed-off-by on every PR commit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -eu
+          missing=0
+          for sha in $(git rev-list "$BASE_SHA".."$HEAD_SHA"); do
+            subject="$(git show -s --format='%s' "$sha")"
+            # Merge commits (2+ parents) are exempt from the sign-off requirement.
+            parents="$(git show -s --format='%P' "$sha" | wc -w)"
+            if [ "$parents" -gt 1 ]; then
+              echo "skip (merge): $sha $subject"
+              continue
+            fi
+            if git show -s --format='%B' "$sha" | grep -qiE '^Signed-off-by: .+ <.+@.+>'; then
+              echo "ok:   $sha $subject"
+            else
+              echo "::error::commit $sha is missing a Signed-off-by trailer ($subject)"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::One or more commits lack a DCO Signed-off-by. Fix with 'git commit -s' or 'git rebase --signoff origin/${{ github.event.pull_request.base.ref }}'."
+            exit 1
+          fi
+          echo "DCO OK — all commits are signed off."
