@@ -143,6 +143,35 @@ jobs:
             --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/release-docker.yml@.*" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
+      # ── Cosign-signed SBOM attestation ──────────────────────────────────────
+      # buildx already attaches an SBOM (sbom: true), but as an OCI referrer, not
+      # a cosign-signed in-toto attestation. This adds an independently
+      # verifiable, keyless-signed SPDX SBOM attestation bound to the digest.
+      - name: Generate SPDX SBOM for the published image
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.flavor.suffix }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          artifact-name: sbom-${{ matrix.flavor.name }}.spdx.json
+
+      - name: Attest SBOM (cosign, keyless OIDC)
+        env:
+          IMG: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.flavor.suffix }}@${{ steps.build.outputs.digest }}
+        run: |
+          set -eu
+          # Attestations attach to the digest; all tags resolve to it.
+          cosign attest --yes --type spdxjson --predicate sbom.spdx.json "$IMG"
+
+      - name: Verify SBOM attestation (smoke)
+        env:
+          IMG: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.flavor.suffix }}@${{ steps.build.outputs.digest }}
+        run: |
+          set -eu
+          cosign verify-attestation --type spdxjson "$IMG" \
+            --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/release-docker.yml@.*" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
       - name: Summary
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
