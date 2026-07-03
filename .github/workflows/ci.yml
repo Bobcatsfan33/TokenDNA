@@ -600,3 +600,36 @@ jobs:
           name: stress-report
           path: /tmp/stress-report.json
           if-no-files-found: ignore
+
+  # ── Detection-efficacy benchmark (ADVISORY / non-blocking) ─────────────────
+  # Replays the three RSA-2026 scenarios against an in-process instance and
+  # publishes a detection-rate / false-positive / latency report as an artifact.
+  # continue-on-error keeps this off the required-checks path — it informs, it
+  # does not gate. TOKENDNA_ENV=ci satisfies the DEV_MODE deny-by-default guard.
+  efficacy-benchmark:
+    name: Detection Efficacy Benchmark (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      TOKENDNA_ENV: ci
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run detection-efficacy benchmark
+        run: python scripts/efficacy_benchmark.py --iterations 25 --out-dir dist/benchmark --strict
+
+      - name: Upload efficacy report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: efficacy-report
+          path: dist/benchmark
+          if-no-files-found: error
