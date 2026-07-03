@@ -12,6 +12,14 @@ sales motion cares about (community → pro → enterprise) and emits structured
 ``403`` errors with the upgrade target and metadata so the UI can render an
 actionable upsell rather than a generic "forbidden" page.
 
+Licensing
+---------
+In a self-hosted open-core deployment the tenant database is under the
+operator's control, so the DB ``plan`` alone cannot be the entitlement
+boundary. When ``TOKENDNA_LICENSE_ENFORCEMENT`` is ``warn`` or ``enforce``,
+the Stripe-issued signed license key (``modules.product.licensing``) caps the
+effective commercial tier and can grant à-la-carte ``ent.*`` features.
+
 Public surface
 --------------
 - ``CommercialTier``                Enum of tiers in ascending order.
@@ -27,6 +35,7 @@ Public surface
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable
@@ -35,6 +44,8 @@ from fastapi import Depends, HTTPException, status
 
 from modules.tenants.middleware import get_tenant
 from modules.tenants.models import Plan, TenantContext
+
+logger = logging.getLogger(__name__)
 
 
 # ── Tiers ─────────────────────────────────────────────────────────────────────
@@ -219,12 +230,15 @@ def forbidden_payload(
     tenant: TenantContext,
     feature_key: str,
     gate: FeatureGate,
+    license_state: str | None = None,
 ) -> dict[str, Any]:
     """
     Build the structured ``detail`` body for a 403 response. The shape is
     stable — the dashboard renders an upsell modal off these fields.
+    ``license_state`` is additive: present only when the deny was caused by
+    the license cap rather than the billing plan.
     """
-    return {
+    payload: dict[str, Any] = {
         "error": "feature_not_entitled",
         "feature": feature_key,
         "feature_name": gate.name,
@@ -238,6 +252,50 @@ def forbidden_payload(
         ),
         "upgrade_url": "/billing/upgrade",
     }
+    if license_state is not None:
+        payload["license_state"] = license_state
+        payload["message"] += (
+            " A valid TokenDNA license key covering this tier is required "
+            "(see /api/license/status)."
+        )
+    return payload
+
+
+def _license_capped_rank(plan_rank: int, feature_key: str) -> tuple[int, str | None]:
+    """
+    Apply the signed-license cap to ``plan_rank``.
+
+    Returns ``(effective_rank, license_state)`` where ``license_state`` is
+    non-None only when enforcement actively lowered the rank. Any exception in
+    the licensing layer fails open to plan-based gating — licensing must never
+    take the API down.
+    """
+    try:
+        from modules.product import licensing  # noqa: PLC0415
+
+        mode = licensing.enforcement_mode()
+        if mode == "off":
+            return plan_rank, None
+        # À-la-carte feature grant bypasses the tier ladder entirely.
+        if licensing.feature_granted(feature_key):
+            return _TIER_RANK[CommercialTier.ENTERPRISE], None
+        try:
+            lic_rank = _rank(CommercialTier(licensing.licensed_tier()))
+        except ValueError:
+            lic_rank = _rank(CommercialTier.COMMUNITY)
+        if lic_rank >= plan_rank:
+            return plan_rank, None
+        if mode == "enforce":
+            state = str(licensing.status().get("state", "missing"))
+            return lic_rank, state
+        logger.warning(
+            "license warn: plan grants rank %s but license only covers rank %s "
+            "(feature=%s); allowing because TOKENDNA_LICENSE_ENFORCEMENT=warn",
+            plan_rank, lic_rank, feature_key,
+        )
+        return plan_rank, None
+    except Exception:  # noqa: BLE001
+        return plan_rank, None
 
 
 # ── FastAPI dependency factory ────────────────────────────────────────────────
@@ -270,7 +328,9 @@ def require_feature(feature_key: str) -> Callable[..., TenantContext]:
 
     Behaviour:
       - ``get_tenant`` runs first; auth failures continue to return 401.
-      - If the tenant's tier is below the gate's ``min_tier``, raises
+      - The tenant's plan tier is capped by the signed license when
+        ``TOKENDNA_LICENSE_ENFORCEMENT=enforce`` (see module docstring).
+      - If the effective tier is below the gate's ``min_tier``, raises
         ``HTTPException(403)`` with the ``forbidden_payload`` detail.
       - On success returns the resolved ``TenantContext`` (so callers using
         the first form keep working unchanged).
@@ -283,7 +343,9 @@ def require_feature(feature_key: str) -> Callable[..., TenantContext]:
     def _dependency(
         tenant: TenantContext = Depends(get_tenant),
     ) -> TenantContext:
-        if _rank(tier_for_plan(tenant.plan)) < _rank(gate.min_tier):
+        plan_rank = _rank(tier_for_plan(tenant.plan))
+        effective_rank, license_state = _license_capped_rank(plan_rank, feature_key)
+        if effective_rank < _rank(gate.min_tier):
             # Staged-rollout override: a tenant may be allowlisted onto a
             # feature without paying for the tier. Lookup is best-effort —
             # if staged_rollout is unavailable, fall through to the 403.
@@ -299,6 +361,7 @@ def require_feature(feature_key: str) -> Callable[..., TenantContext]:
                     tenant=tenant,
                     feature_key=feature_key,
                     gate=gate,
+                    license_state=license_state,
                 ),
             )
         return tenant
