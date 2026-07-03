@@ -32,10 +32,16 @@ jobs:
       - name: Generate CycloneDX SBOM (source)
         run: |
           python -m pip install --quiet cyclonedx-bom
+          # No `|| empty-stub` fallback: a supply-chain SBOM that silently
+          # degrades to zero components on failure defeats its own purpose.
           cyclonedx-py requirements requirements.txt \
-            --output-format JSON --output-file sbom-source.cdx.json || \
-          echo '{"bomFormat":"CycloneDX","specVersion":"1.5","components":[]}' > sbom-source.cdx.json
-          echo "SBOM components: $(python -c 'import json;print(len(json.load(open("sbom-source.cdx.json")).get("components",[])))')"
+            --output-format JSON --output-file sbom-source.cdx.json
+          COMPONENTS=$(python -c 'import json;print(len(json.load(open("sbom-source.cdx.json")).get("components",[])))')
+          echo "SBOM components: $COMPONENTS"
+          if [ "$COMPONENTS" -eq 0 ]; then
+            echo "::error::SBOM generated with zero components — supply-chain evidence is empty." >&2
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         with:

@@ -80,19 +80,26 @@ RATE_LIMIT_BURST: int = int(os.getenv("RATE_LIMIT_BURST", "10"))
 # Stricter limit for open (unauthenticated) endpoints — no tenant context
 RATE_LIMIT_OPEN_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_OPEN_PER_MINUTE", "30"))
 # ── Production Safety Guard ────────────────────────────────────────────────────
-# IL6 / FedRAMP: DEV_MODE must NEVER be active in production.
-# This block terminates the process immediately if DEV_MODE is set
-# and the ENVIRONMENT variable indicates a non-development context.
-import sys as _sys
+# IL5 / FedRAMP: DEV_MODE must NEVER be active in production.
+# DEV_MODE bypasses ALL authentication, so this guard is DENY-BY-DEFAULT:
+# DEV_MODE=true is permitted ONLY when the resolved environment is explicitly
+# one of the known development contexts. An unset/unknown environment with
+# DEV_MODE=true is treated as unsafe and terminates the process.
+#
+# Environment resolution mirrors the rest of the codebase (secret_gate.py,
+# mtls.py, tenants/middleware.py), which key off TOKENDNA_ENV first, then
+# ENVIRONMENT. The prior guard read only ENVIRONMENT, so
+# `TOKENDNA_ENV=production DEV_MODE=true` booted with auth bypassed.
+_ENVIRONMENT = (os.getenv("TOKENDNA_ENV") or os.getenv("ENVIRONMENT") or "").strip().lower()
+_DEV_ENVIRONMENTS = {"dev", "development", "test", "testing", "local", "ci"}
 
-_ENVIRONMENT = os.getenv("ENVIRONMENT", "dev").lower()
-_PROD_ENVIRONMENTS = {"production", "staging", "prod", "stage", "il2", "il4", "il5", "il6"}
-
-if DEV_MODE and _ENVIRONMENT in _PROD_ENVIRONMENTS:
-    print(
-        f"FATAL: DEV_MODE=true is set but ENVIRONMENT={_ENVIRONMENT}. "
-        "DEV_MODE bypasses all authentication and is prohibited in production. "
-        "Unset DEV_MODE or set ENVIRONMENT=dev to proceed.",
-        file=_sys.stderr,
+if DEV_MODE and _ENVIRONMENT not in _DEV_ENVIRONMENTS:
+    # SystemExit prints the message to stderr and exits with status 1.
+    raise SystemExit(
+        f"FATAL: DEV_MODE=true is set but the resolved environment is "
+        f"{_ENVIRONMENT!r} (from TOKENDNA_ENV/ENVIRONMENT), which is not a "
+        f"recognized development context {sorted(_DEV_ENVIRONMENTS)}. "
+        "DEV_MODE bypasses all authentication and is prohibited outside "
+        "development. Unset DEV_MODE, or set TOKENDNA_ENV/ENVIRONMENT to a "
+        "development value to proceed."
     )
-    _sys.exit(1)
