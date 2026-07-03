@@ -59,7 +59,7 @@ jobs:
         run: python scripts/ci/api_monolith_ratchet.py
 
       - name: API route-surface guard (decomposition preserves the surface — T-1)
-        run: python scripts/ci/openapi_route_guard.py
+        run: TOKENDNA_ENV=ci python scripts/ci/openapi_route_guard.py
 
       - name: FIPS crypto-primitive gate (SC-13)
         run: |
