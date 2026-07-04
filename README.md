@@ -226,6 +226,21 @@ Wrapper endpoints for SDK-style integrations:
 These wrappers intentionally return stable metadata fields (`sdk_version`,
 `schema_version`, `generated_at`) so third-party SDKs can map them directly.
 
+### Standalone open-source projects
+
+Two components are published as standalone, Apache-2.0-licensed repositories so
+they can be adopted independently of the TokenDNA platform:
+
+- **[uis-spec](https://github.com/Bobcatsfan33/uis-spec)** — the Universal
+  Identity Schema as an open spec: JSON schema, written specification,
+  conformance levels, a `uis-validate` validator, and SPIFFE/SPIRE + OAuth
+  agent-identity mappings. TokenDNA is its reference implementation, serving the
+  same schema at `GET /api/schema/uis.json`.
+- **[mcp-auditor](https://github.com/Bobcatsfan33/mcp-auditor)** — a standalone
+  CLI that inspects MCP server manifests and tool-call traffic for chain-attack
+  patterns (the bounded-gap subsequence matcher extracted from the TokenDNA MCP
+  gateway).
+
 ---
 
 ## Cloudflare Edge Worker
