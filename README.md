@@ -12,9 +12,21 @@
 
 ## TokenDNA Runtime Risk Engine
 
-**An integrated runtime risk engine for AI agents.**
+**Agent identity assurance for the AI workforce.**
 
-OAuth tells you *who* called a tool. TokenDNA aims to tell you *whether the call is what it claims to be, whether the agent is allowed to make it, and what happens to your blast radius if it turns out it isn't.*
+OAuth tells you *who* called a tool. TokenDNA aims to tell you *whether the call is a real agent identity, whether that agent is allowed to do what it is doing, whether it looks compromised, and what the blast radius is if it is.*
+
+The product surface should collapse to one enterprise verdict:
+
+```python
+from modules.identity.agent_assurance import AgentActionRequest, assess_agent_action
+
+verdict = assess_agent_action(AgentActionRequest(...))
+assert verdict.outcome in {"allow", "review", "block"}
+```
+
+See [Agent Assurance Wedge](docs/AGENT_ASSURANCE_WEDGE.md) for the
+acquisition-oriented product focus and simplification map.
 
 ### What it's designed to catch
 
