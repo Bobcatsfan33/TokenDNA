@@ -54,11 +54,15 @@ jobs:
         run: python scripts/ci/smoke_sdk_readme.py
 
       - name: DEV_MODE server boot + full demo arc
+        env:
+          DEV_MODE: "true"
+          DATA_DB_PATH: /tmp/tokendna-smoke.db
+          AUDIT_LOG_PATH: /tmp/tokendna-smoke-audit.jsonl
         run: |
           set -eu
-          TOKENDNA_ENV=ci DEV_MODE=true DATA_DB_PATH=/tmp/tokendna-smoke.db \
-            AUDIT_LOG_PATH=/tmp/tokendna-smoke-audit.jsonl \
-            python -m uvicorn api:app --host 127.0.0.1 --port 8000 \
+          # Declarative env above guarantees the backgrounded server inherits
+          # DATA_DB_PATH (an inline prefix on a line-continued command did not).
+          python -m uvicorn api:app --host 127.0.0.1 --port 8000 \
             > /tmp/tokendna-smoke.log 2>&1 &
           for _ in $(seq 1 30); do
             if python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=1)" >/dev/null 2>&1; then

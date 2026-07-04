@@ -3,10 +3,25 @@
 Progress tracker for `SIMPLIFICATION_PLAN.md`. Updated at the start and end of
 every session (Operating Rule 9).
 
-- **Current phase:** Phase 0 — Safety Net
-- **Session status:** Phase 0 COMPLETE (pending PR review/merge)
-- **Next action:** owner reviews/merges the Phase 0 PR + the three in-flight PRs
-  (#142, #143, #145), then start Phase 1 (Dead Code Removal). See Decision D-4.
+- **Current phase:** Phase 0 COMPLETE → starting Phase 1
+- **Session status:** In-flight PRs #142/#143/#144/#145 merged to main; Phase 0
+  (#146) updated onto main and re-greened (orphan guard + demo smoke fixed).
+- **Next action:** merge #146, then Phase 1 (Dead Code Removal), re-deriving the
+  cut list from `orphan_guard.py --report` per Decision D-1.
+
+## Sequencing override (owner-approved 2026-07-04)
+
+The demo trio is pulled AHEAD of the full router consolidation because it is the
+90-second demo and the acquisition centerpiece:
+
+1. **RevocationBus** (P2.1) — one call revokes across IdP/session/MCP.
+2. **Tamper-evident TraceReport** (P2.2) — each trace row chained to the existing
+   hash-chained `modules/security/audit_log.py`, so the whole report is
+   cryptographically verifiable ("evidence", not just "what happened").
+3. **Incidents console view** (P5.1c) — anomaly → blast graph → trace → Revoke.
+
+The 31→9 router consolidation (Phase 3) may slip a week or two behind this trio.
+Phase 1 (dead-code removal) still runs first as the prerequisite for everything.
 
 ---
 
@@ -65,28 +80,56 @@ enforces. Re-verify each P1 item with `orphan_guard.py --report` after removing
 its script importers. Treat the guard (not the stale audit) as authoritative
 (Rule 2).
 
-**D-2 — The 7 genuine orphans are WIRE-IN candidates, not obvious attic.**
-`orphan_guard.py --report` finds 7 modules with zero live inbound edges (only
-their own tests import them): `modules.auth.scopes`, `modules.identity.dpop`,
-`modules.security.{field_crypto, mtls, mtls_peer, mtls_server, secrets}`. These
-are built + unit-tested capabilities that were never wired into the request
-path. Several map directly onto the three-questions thesis and the retained
-federal track: **dpop → VERIFY** (DPoP proof validation), **scopes → AUTHORIZE**,
-**field_crypto / mtls* / secrets → federal posture (Rule 8)**. Recommendation:
-in Phase 1/2, prefer WIRING THESE IN (enriches the product at near-zero new code)
-over atticking them. Seeded into `ALLOWLIST` for now so CI is green; `DECISION
-NEEDED` for the owner on wire-in vs. attic per module.
+**D-2 — Orphan disposition (RESOLVED by owner 2026-07-04).** `orphan_guard.py
+--report` finds 8 modules with zero live inbound edges (test-only). Per-module
+verdict; each wire-in is timeboxed to ≤ 1 day, else a `DECISION NEEDED` line and
+move on (enrichment must not eat the timeline):
+
+| Module | Verdict |
+|---|---|
+| `modules.identity.dpop` | **WIRE into VERIFY** — proof-of-possession → evidence in the `/v1/verify` verdict. |
+| `modules.auth.scopes` | **WIRE into AUTHORIZE** — scope eval → `reasons[]` in the authorize verdict. |
+| `modules.security.field_crypto` | **WIRE, federal-scoped** — active under IL5/enterprise profiles for stored evidence + PII; NOT in the Tier-1 zero-dep default path. |
+| `modules.security.{mtls, mtls_peer, mtls_server}` | **KEEP, tier-gated** — wire into `deploy/federal/` + Tier 3/4 with profile-gated activation; not in the default path (Tier 1 stays zero-config). |
+| `modules.security.secrets` | **INVESTIGATE FIRST** (~30 min) — if referenced by prod config/compose or the T0 hardening path, wire tier-gated like mtls; if dead, attic. Log the finding. |
+| `modules.identity.agent_assurance` | **FOLD into the `evaluate()`/Verdict core** (see D-6) — this is PR #144's verdict facade; reconcile, do not duplicate. |
 
 **D-3 — Phase 0 CI lives in a new workflow file.** Smoke tests + orphan guard are
 in `.github/workflows/simplification-guards.yml`, not appended to `ci.yml`, so
 they don't conflict with the three in-flight PRs that edit `ci.yml`.
 
-**D-4 — Merge/close the in-flight PRs before Phase 1.** Open PRs #142
-(efficacy-benchmark, edits ci.yml), #143 (release-hygiene: ci.yml,
-release-docker.yml, publish.yml, CONTRIBUTING.md, adds ARCHITECTURE.md), #145
-(README pointers) all touch files that Phases 3–4 rewrite heavily. Landing them
-first avoids repeated rebase churn. `ARCHITECTURE.md` (#143) will also need a
-refresh after the 31→9 router consolidation.
+**D-4 — Merge in-flight PRs before Phase 1 (DONE 2026-07-04).** #145, #142, #143
+squash-merged in that order; #144 (agent assurance verdict facade) also landed.
+`ARCHITECTURE.md` will need a refresh after the 31→9 router consolidation.
+
+**D-5 — platform/ + collector/ cut (owner signed off, intentional).** This
+reverses the open-core split (PRs #80–85), a distribution-strategy bet; the
+product decision is now two artifacts — server + SDK — and a legible repo for an
+acquirer. Preserve, don't erase, the narrative:
+  * `ATTIC.md` documents the split as a *validated architecture option* an
+    acquirer could re-activate, with pointers to PRs #80–85.
+  * `collector/` goes to its **own archived repo**, Apache-2.0 intact.
+  * **Coverage:** re-baseline the floor immediately after these cuts; record the
+    old and new denominators here. The rule becomes "never below the POST-cut
+    baseline" (not the Phase-0 84%, which includes now-removed well-tested code).
+
+**D-6 — Single `evaluate(question, subject) -> Verdict` core (approved, guard-railed).**
+A thin orchestration facade (a dispatcher, NOT a framework) that the three `/v1`
+endpoints, the SDK, the CLI, and the console all call. Pillar-module internals
+are untouched; the P2.4 `Verdict` schema is unchanged. **Reconcile with PR #144's
+`modules/identity/agent_assurance.py`** (the existing verdict facade) rather than
+adding a parallel one. Hard guardrail: if the facade exceeds ~300 LOC or starts
+wanting its own plugin/registry abstractions, STOP and leave a `DECISION NEEDED`.
+One code path, zero cleverness.
+
+**D-7 — Demo-smoke gate is load-bearing for Phase 1.** The demo arc (a Phase-0 CI
+gate) exercises many to-be-cut modules via the seeders. Treat seeders/harnesses
+as product surface: when a cut module is imported only by a seeder, update the
+seeder in the SAME commit so the arc exercises kept modules only. The gate must
+never go red; if a cut can't keep it green in one commit, split the commit —
+never skip the gate. The end-state arc is rebuilt around the three questions
+(baseline → drift → self-modification → MCP chain → blast radius → revoke →
+trace), all on surviving modules.
 
 ---
 

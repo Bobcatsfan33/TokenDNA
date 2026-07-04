@@ -52,6 +52,8 @@ ROOT_FILES = ["api.py", "serve.py", "auth.py", "config.py"]
 # reachable via demo seeders / harnesses and are NOT orphans by this definition.
 # See SIMPLIFICATION_STATUS.md "Decisions" for the reconciliation.
 ALLOWLIST: set[str] = {
+    "modules.identity.agent_assurance",  # PR #144 verdict facade — fold into the
+                                         # evaluate()/Verdict core (P2.4), not attic
     "modules.auth.scopes",           # OAuth-style scope model — wire into AUTHORIZE
     "modules.identity.dpop",         # DPoP proof validation — wire into VERIFY
     "modules.security.field_crypto", # field encryption at rest — federal posture
