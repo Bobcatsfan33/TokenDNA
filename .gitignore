@@ -41,3 +41,7 @@ coverage.xml
 # Docker
 *.log
 *.pdf
+
+# Session-scratch helpers that must never be committed
+HANDOFF_CLAUDE_CODE_EXECUTION.md
+tokendna_licensing_install.sh
