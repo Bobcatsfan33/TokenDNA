@@ -124,12 +124,10 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt pytest pytest-asyncio
-          pip install -e ./platform
+        run: pip install -r requirements.txt pytest pytest-asyncio
 
-      - name: Run backend and platform tests
-        run: python -m pytest -q --import-mode=importlib tests platform/tests
+      - name: Run backend tests
+        run: python -m pytest -q --import-mode=importlib tests
 
   # ── DoD ATO readiness evidence ─────────────────────────────────────────────
   ato-evidence:

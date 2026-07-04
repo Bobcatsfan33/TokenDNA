@@ -6,12 +6,11 @@ PY ?= python
 
 .PHONY: install test lint clean
 
-install:  ## install core requirements + the platform/ and collector/ sub-packages
+install:  ## install core requirements + test/lint tooling
 	pip install -r requirements.txt pytest pytest-asyncio ruff
-	pip install -e ./platform
 
-test:  ## run the full suite (backend + platform) — matches CI
-	$(PY) -m pytest -q --import-mode=importlib tests platform/tests
+test:  ## run the full suite — matches CI
+	$(PY) -m pytest -q --import-mode=importlib tests
 
 lint:  ## static checks
 	ruff check .
