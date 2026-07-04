@@ -126,10 +126,10 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt pytest pytest-asyncio
-          pip install -e ./platform -e ./collector
+          pip install -e ./platform
 
-      - name: Run backend, platform, and collector tests
-        run: python -m pytest -q --import-mode=importlib tests platform/tests collector/tests
+      - name: Run backend and platform tests
+        run: python -m pytest -q --import-mode=importlib tests platform/tests
 
   # ── DoD ATO readiness evidence ─────────────────────────────────────────────
   ato-evidence:

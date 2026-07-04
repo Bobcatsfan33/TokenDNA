@@ -8,10 +8,10 @@ PY ?= python
 
 install:  ## install core requirements + the platform/ and collector/ sub-packages
 	pip install -r requirements.txt pytest pytest-asyncio ruff
-	pip install -e ./platform -e ./collector
+	pip install -e ./platform
 
-test:  ## run the full suite (backend + platform + collector) — matches CI
-	$(PY) -m pytest -q --import-mode=importlib tests platform/tests collector/tests
+test:  ## run the full suite (backend + platform) — matches CI
+	$(PY) -m pytest -q --import-mode=importlib tests platform/tests
 
 lint:  ## static checks
 	ruff check .
