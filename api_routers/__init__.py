@@ -18,7 +18,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from api_routers.agents import router as agents_router
 from api_routers.assets import router as assets_router
-from api_routers.campaigns import router as campaigns_router
 from api_routers.certs import router as certs_router
 from api_routers.compliance import router as compliance_router
 from api_routers.console import router as console_router
@@ -48,7 +47,6 @@ from api_routers.workflow import router as workflow_router
 ALL_ROUTERS: tuple[APIRouter, ...] = (
     agents_router,
     assets_router,
-    campaigns_router,
     certs_router,
     compliance_router,
     console_router,
