@@ -3,11 +3,28 @@
 Progress tracker for `SIMPLIFICATION_PLAN.md`. Updated at the start and end of
 every session (Operating Rule 9).
 
-- **Current phase:** Phase 0 COMPLETE → starting Phase 1
-- **Session status:** In-flight PRs #142/#143/#144/#145 merged to main; Phase 0
-  (#146) updated onto main and re-greened (orphan guard + demo smoke fixed).
-- **Next action:** merge #146, then Phase 1 (Dead Code Removal), re-deriving the
-  cut list from `orphan_guard.py --report` per Decision D-1.
+- **Current phase:** Phase 1 — Dead Code Removal (IN PROGRESS)
+- **Session status:** Phase 0 merged (#146). Phase 1 started with the
+  platform/+collector/ cut (P1.1, P1.13 — D-5). Collector extracted to its own
+  archived repo `github.com/Bobcatsfan33/tokendna-collector`.
+- **Next action:** author `ATTIC.md` on `attic/2026-07`; open the
+  platform/collector-cut PR; then continue Phase 1 (federation, verifier, etc.),
+  re-deriving each cut from `orphan_guard.py --report` after neutralizing seeder
+  imports (D-1/D-7). Cut order should update the demo arc + seeders in lockstep.
+
+## Phase 1 progress + metrics delta
+
+| Cut | Commit | LOC removed | Tests removed | Suite after |
+|---|---|---|---|---|
+| collector/ (P1.13) | `41bccdf` | 2,701 | 37 | 2167 pass |
+| platform/ (P1.1) | `f7876f0` | 3,829 | 94 | 2073 pass |
+
+- **Coverage re-baseline (D-5):** pre-cut `modules/` = 84% (13,779 stmts / 2,264
+  missed, measured *with* platform+collector tests). **Post-cut `modules/` = 84%
+  (13,889 stmts / 2,266 missed, backend-only).** New floor rule: **never below
+  84% post-cut.** (The cuts removed their own code+tests, not `modules/`
+  coverage, so the % held.)
+- Running LOC delta: **-6,530** (95,961 → ~89,431 Python LOC).
 
 ## Sequencing override (owner-approved 2026-07-04)
 
