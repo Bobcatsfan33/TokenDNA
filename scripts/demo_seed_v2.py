@@ -616,15 +616,6 @@ def seed_agents_and_history(
     workflows_seeded = 0
     posture_seeded = 0
     if not dry_run:
-        # Industry tag — unblocks the Flywheel Digest widget.
-        try:
-            from modules.product import threat_sharing_flywheel as _tsf
-            _tsf.init_db()
-            _tsf.set_tenant_industry(ACME, "finance")
-            summary["industry_tag"] = "finance"
-        except Exception as exc:
-            _seed_warn("industry tag seed failed: %s", exc)
-
         # Workflow attestations — give the dashboard's Workflows widget content.
         try:
             from modules.identity import workflow_attestation as _wa
