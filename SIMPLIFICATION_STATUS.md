@@ -7,10 +7,14 @@ every session (Operating Rule 9).
 - **Session status:** Phase 0 merged (#146). Phase 1 started with the
   platform/+collector/ cut (P1.1, P1.13 — D-5). Collector extracted to its own
   archived repo `github.com/Bobcatsfan33/tokendna-collector`.
-- **Next action:** author `ATTIC.md` on `attic/2026-07`; open the
-  platform/collector-cut PR; then continue Phase 1 (federation, verifier, etc.),
-  re-deriving each cut from `orphan_guard.py --report` after neutralizing seeder
-  imports (D-1/D-7). Cut order should update the demo arc + seeders in lockstep.
+- **Next action:** continue Phase 1 — next clean cuts: `network_intel`+`geo_intel`
+  (P1.6), the small stubs (P1.12: session_graph, schema_registry, siem_schema,
+  ml_model, async_pipeline, policy_export), `cert_dashboard` (P1.7),
+  legacy `compliance` (P1.9). Then the arc-touching cuts `honeypot_mesh` (P1.8,
+  demo scene 5) and `federation` (P1.2, scenes 8-10 + policy_guard CONST-06) —
+  rebuild `demo_runtime_risk_engine.py` around the three questions in the same
+  commits so the demo-smoke gate stays green (D-7). Remember the INIT_TARGETS +
+  ci.yml import-list checks (Lessons above).
 
 ## Phase 1 progress + metrics delta
 
@@ -18,6 +22,24 @@ every session (Operating Rule 9).
 |---|---|---|---|---|
 | collector/ (P1.13) | `41bccdf` | 2,701 | 37 | 2167 pass |
 | platform/ (P1.1) | `f7876f0` | 3,829 | 94 | 2073 pass |
+| threat_sharing (+flywheel) (P1.4) | `d559706` | ~1,100 | 85 | 1988 pass |
+| campaign_correlation (P1.10) | `13684a5` | ~360 | 12 | 1976 pass |
+
+Route surface: 331 → 314 (threat-sharing + campaigns removed; snapshot re-baselined).
+
+**Lessons (apply to every remaining cut):**
+- `modules/storage/migrations.py` `INIT_TARGETS` is a **dynamic-import (importlib)
+  registry** — a hidden product importer static grep misses (Rule 2). Candidates
+  still in it: `cert_dashboard`, `verifier_reputation`, `certificate_transparency`,
+  `network_intel`, `compliance`, `policy_bundles`, `trust_federation`,
+  `honeypot_mesh`. Remove the entry in the same cut.
+- Also check: `.github/workflows/ci.yml` import-verification list (`ml_model`,
+  `session_graph`, `async_pipeline`), `tests/test_demo.py` seeded-count asserts,
+  and `api_routers/enterprise.py` / `compliance_posture.py` importlib.
+- **`verifier_reputation` DEFERRED:** it has a live product importer
+  (`modules/identity/proof_of_control.py`, which is KEPT). Per Rule 2, not a clean
+  orphan — needs proof_of_control decoupled first. `DECISION NEEDED`: inline what
+  proof_of_control uses, or keep verifier_reputation.
 
 - **Coverage re-baseline (D-5):** pre-cut `modules/` = 84% (13,779 stmts / 2,264
   missed, measured *with* platform+collector tests). **Post-cut `modules/` = 84%

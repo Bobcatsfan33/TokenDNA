@@ -146,22 +146,6 @@ def seed_gap(tenant_id: str = DEMO_TENANT) -> dict[str, Any]:
         return 3
     _try(summary, "retrieval_sources", _retrieval)
 
-    # ── Campaign correlation: a multi-session/agent/model reassembly ──────────
-    def _campaign():
-        from modules.identity import campaign_correlation as cc
-        base = 1_700_000_000.0
-        signals = [
-            {"signal_id": "c1", "severity": "high", "ts": base, "agent_id": "triage-agent",
-             "session_id": "sess-1", "model_id": "gpt-4o", "target": "bookings", "technique": "recon"},
-            {"signal_id": "c2", "severity": "high", "ts": base + 120, "agent_id": "booking-agent",
-             "session_id": "sess-2", "model_id": "claude", "target": "bookings", "technique": "enumerate"},
-            {"signal_id": "c3", "severity": "critical", "ts": base + 300, "agent_id": "payment-agent",
-             "session_id": "sess-3", "model_id": "gpt-4o", "target": "bookings", "technique": "exfil"},
-        ]
-        camps = cc.build_campaigns(tenant_id=tenant_id, signals=signals, window_seconds=3600)
-        return len(camps)
-    _try(summary, "campaigns", _campaign)
-
     # ── Intent correlation feed: complete real playbooks so matches appear ────
     def _intent_feed():
         from datetime import datetime, timedelta, timezone

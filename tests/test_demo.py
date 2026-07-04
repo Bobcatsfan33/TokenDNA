@@ -54,7 +54,6 @@ prev = c.get("/api/kill/triage-agent/preview").json()["planes"]
 out["kill_planes"] = len(prev)
 out["kill_connected"] = sum(1 for p in prev if p["status"] == "killed")
 out["retrieval"] = c.get("/api/retrieval/sources?agent_id=triage-agent").json().get("count")
-out["campaigns"] = c.get("/api/campaigns").json().get("count")
 out["siem"] = c.get("/api/siem/mcp-calls?target=ecs").json().get("count")
 out["certs"] = c.get("/api/certs/fleet").json().get("total")
 out["inventory"] = len(c.get("/api/agents/inventory").json().get("agents", []))
@@ -99,10 +98,6 @@ def test_kill_rip_executes(seeded):
 
 def test_governed_retrieval_seeded(seeded):
     assert seeded["retrieval"] >= 1
-
-
-def test_campaigns_seeded(seeded):
-    assert seeded["campaigns"] >= 1
 
 
 def test_siem_calls_seeded(seeded):

@@ -229,13 +229,6 @@ class TestRequireFeatureDependency:
 # Status codes other than 403 mean the gate is open — body errors (400/422)
 # are fine, the gate did its job.
 PHASE5_ROUTES: list[tuple[str, str, dict | None]] = [
-    # Threat-sharing — ent.intent_correlation
-    ("POST", "/api/threat-sharing/opt-in",              None),
-    ("POST", "/api/threat-sharing/opt-out",             None),
-    ("GET",  "/api/threat-sharing/status",              None),
-    ("POST", "/api/threat-sharing/publish/custom:abc",  None),
-    ("POST", "/api/threat-sharing/sync",                None),
-    ("GET",  "/api/threat-sharing/network",             None),
     # Delegation — ent.enforcement_plane
     ("POST", "/api/delegation/receipt",                 {"delegator_id": "human:a", "delegatee_id": "agt-x", "scope": ["*"], "expires_in_seconds": 60}),
     ("GET",  "/api/delegation/receipt/rcpt:none",       None),
