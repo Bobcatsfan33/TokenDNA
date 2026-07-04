@@ -1,0 +1,79 @@
+name: Simplification Guards
+
+# Guards introduced by SIMPLIFICATION_PLAN Phase 0:
+#   * orphan-guard  — no module under modules/ may have zero inbound edges
+#     (import graph rooted at the live entrypoints + scripts). Enforces the
+#     "zero orphaned modules" invariant as Phase 1 cuts land.
+#   * demo-smoke    — the three user-facing entry paths must keep working:
+#     the pip quickstart, the DEV_MODE server + full demo arc, and the SDK
+#     README decorator example.
+#
+# Kept in its own workflow file (not ci.yml) so it composes cleanly with
+# in-flight PRs that also touch ci.yml.
+
+on:
+  push:
+    branches: [ main, master, "release/**" ]
+  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+
+jobs:
+  orphan-guard:
+    name: Orphan module guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: No orphaned modules under modules/
+        run: python scripts/ci/orphan_guard.py
+
+  demo-smoke:
+    name: Demo smoke paths
+    runs-on: ubuntu-latest
+    env:
+      TOKENDNA_ENV: ci
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies (+ the SDK, editable)
+        run: pip install -r requirements.txt -e .
+
+      - name: Quickstart local mode exits 0
+        run: python examples/quickstart/local_mode.py
+
+      - name: SDK README decorator example runs
+        run: python scripts/ci/smoke_sdk_readme.py
+
+      - name: DEV_MODE server boot + full demo arc
+        env:
+          DEV_MODE: "true"
+          DATA_DB_PATH: /tmp/tokendna-smoke.db
+          AUDIT_LOG_PATH: /tmp/tokendna-smoke-audit.jsonl
+        run: |
+          set -eu
+          # Declarative env above guarantees the backgrounded server inherits
+          # DATA_DB_PATH (an inline prefix on a line-continued command did not).
+          python -m uvicorn api:app --host 127.0.0.1 --port 8000 \
+            > /tmp/tokendna-smoke.log 2>&1 &
+          for _ in $(seq 1 30); do
+            if python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=1)" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          python scripts/demo_runtime_risk_engine.py --base-url http://127.0.0.1:8000
+
+      - name: Stop server + dump log on failure
+        if: always()
+        run: |
+          pkill -f "uvicorn api:app" || true
+          cat /tmp/tokendna-smoke.log || true
