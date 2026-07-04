@@ -7,14 +7,12 @@ every session (Operating Rule 9).
 - **Session status:** Phase 0 merged (#146). Phase 1 started with the
   platform/+collector/ cut (P1.1, P1.13 — D-5). Collector extracted to its own
   archived repo `github.com/Bobcatsfan33/tokendna-collector`.
-- **Next action:** continue Phase 1 — next clean cuts: `network_intel`+`geo_intel`
-  (P1.6), the small stubs (P1.12: session_graph, schema_registry, siem_schema,
-  ml_model, async_pipeline, policy_export), `cert_dashboard` (P1.7),
-  legacy `compliance` (P1.9). Then the arc-touching cuts `honeypot_mesh` (P1.8,
-  demo scene 5) and `federation` (P1.2, scenes 8-10 + policy_guard CONST-06) —
-  rebuild `demo_runtime_risk_engine.py` around the three questions in the same
-  commits so the demo-smoke gate stays green (D-7). Remember the INIT_TARGETS +
-  ci.yml import-list checks (Lessons above).
+- **Next action:** **OWNER DECISION** on the legacy behavioral layer (see "Phase 1
+  cut-list reality check" below) — most of the remaining audit cut-list is wired,
+  not dead. The clean orphan removal is done through `policy_export`. Once the
+  keep/cut calls are made, the follow-on is: legacy-layer removal (if cut, fused
+  with Phase-3 `enterprise.py`→`admin.py`), then the decouplings (cert_dashboard,
+  compliance, verifier, federation, honeypot) + demo-arc rebuild.
 
 ## Phase 1 progress + metrics delta
 
@@ -101,6 +99,41 @@ uses 3.12). Command: `pytest --import-mode=importlib --cov=modules tests
 platform/tests collector/tests` with `PYTHONPATH=$PWD/platform:$PWD/collector`.
 
 ---
+
+## Phase 1 cut-list reality check (IMPORTANT — needs owner decisions)
+
+At-cut-time verification (Rule 2) shows the audit's remaining cut-list is **mostly
+NOT dead code**. The audit traced `api_routers/` top-level reachability only; these
+modules are in fact wired into kept code (`enterprise.py` legacy behavioral layer,
+`misc.py`, `siem.py`, `certs.py`, `compliance_posture.py`) or into each other.
+The genuinely-clean orphan removal is now essentially **done**:
+
+**CLEAN — cut (done):** platform/, collector/, threat_sharing(+flywheel),
+campaign_correlation, **policy_export** (`ecda322`).
+
+**WIRED — NOT clean orphans (each is a product decision, not dead-code removal):**
+
+| Module(s) | Wired into (kept) | Decision needed |
+|---|---|---|
+| `geo_intel`, `ml_model`, `session_graph`, `async_pipeline` (P1.12) | `api_routers/enterprise.py` — the legacy behavioral-analytics/JWT layer ("stolen-JWT detector" origin) | **Keep or cut the legacy behavioral layer?** It's not part of the verify/authorize/contain thesis, but it's live + tested. Cutting = gut those enterprise endpoints (overlaps Phase 3 `enterprise.py`→`admin.py`). |
+| `network_intel` (P1.6) | `misc.py` (threat feed), `compliance.py`, `enterprise.py`, `intel.py` (13 uses) + INIT_TARGETS | Keep the network threat-intel feed, or cut the feed endpoints too? |
+| `schema_registry`, `siem_schema` (P1.12) | `misc.py`/`identity_surface.py`; `siem.py` | Tied to misc/siem — resolve during Phase 3 dissolution of misc.py. |
+| `cert_dashboard` (P1.7) | `certs.py` + `compliance_posture.py` (federal, KEEP) — 22 uses + INIT_TARGETS | Decouple `compliance_posture` first, or keep cert_dashboard. |
+| legacy `compliance` (P1.9) | `compliance_posture`, `fips`, `feature_gates`, `metering`, `hvip`, `dpop` (7) | Migrate importers to `compliance_engine`/`compliance_posture` first (bigger). |
+| `verifier_reputation` (P1.3) | `proof_of_control.py` (KEEP) + INIT_TARGETS | Inline what proof_of_control uses, or keep. |
+
+**ARC-TOUCHING (doable, needs demo-arc rebuild + decoupling):**
+- `honeypot_mesh` (P1.8) — demo scene 5 + **`edge_enforcement` product import** (honeytoken) + INIT_TARGETS. Inline the honeytoken primitive edge_enforcement needs, cut the rest, drop demo scene 5.
+- `federation`+`trust_federation` (P1.2) — demo scenes 8-10 + **`policy_guard` CONST-06** + `agent_lifecycle` + INIT_TARGETS. Remove CONST-06, drop Act 2 from the arc.
+
+**RECOMMENDATION:** the biggest lever is a single owner call — **keep or cut the
+legacy behavioral-analytics layer** (`enterprise.py` + geo_intel/ml_model/
+session_graph/async_pipeline/network_intel). If cut, it's ~1,500+ LOC and should
+be done as its own decision, likely fused with the Phase-3 `enterprise.py`→
+`admin.py` consolidation rather than piecemeal. The remaining decouplings
+(cert_dashboard, compliance, verifier, federation, honeypot) are then a clean
+follow-on. Continuing to force these as "dead-code" cuts would break the suite or
+require gutting kept endpoints — out of scope for Phase 1 without these calls.
 
 ## Decisions
 
