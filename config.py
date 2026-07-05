@@ -33,6 +33,12 @@ OIDC_ISSUER: str = os.getenv("OIDC_ISSUER", "")
 OIDC_AUDIENCE: str = os.getenv("OIDC_AUDIENCE", "tokendna")
 DEV_MODE: bool = os.getenv("DEV_MODE", "false").lower() == "true"
 
+# Trial mode (self-serve evaluation). UNLIKE DEV_MODE, this does NOT bypass auth:
+# real OIDC verification stays ON. It only mounts the trial onboarding/import/
+# reset/seed affordances (api_routers/trial.py) and consumes a trial license.
+# Prod behavior is unchanged when false. See modules/trial/guard.py.
+TOKENDNA_TRIAL_MODE: bool = os.getenv("TOKENDNA_TRIAL_MODE", "false").lower() == "true"
+
 # ── GeoIP ─────────────────────────────────────────────────────────────────────
 # ip-api.com (free, no key required for non-commercial use)
 # Set GEOIP_PROVIDER=maxmind and MAXMIND_DB_PATH to use offline MaxMind GeoLite2

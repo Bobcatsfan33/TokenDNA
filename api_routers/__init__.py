@@ -170,6 +170,12 @@ def mount_all(app: FastAPI) -> None:
     """
     for router in ALL_ROUTERS:
         app.include_router(router)
+    # Trial-mode router — mounted ONLY when TOKENDNA_TRIAL_MODE is on, so the
+    # production route surface is unchanged when the flag is off (T0.3/T0.6).
+    from modules.trial.guard import trial_enabled  # noqa: PLC0415
+    if trial_enabled():
+        from api_routers.trial import router as trial_router  # noqa: PLC0415
+        app.include_router(trial_router)
     if _STATIC_DIR.is_dir():
         app.mount("/static", _CachingStatic(directory=str(_STATIC_DIR)), name="static")
     # Optional public-demo password gate (no-op unless DEMO_PASSWORD is set, so
