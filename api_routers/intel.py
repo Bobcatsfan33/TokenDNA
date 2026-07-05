@@ -22,7 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from auth import verify_token
 from config import DEV_MODE, OIDC_ISSUER, RATE_LIMIT_PER_MINUTE, RATE_LIMIT_OPEN_PER_MINUTE
-from modules.identity import async_pipeline, geo_intel, ml_model, scoring, session_graph, threat_intel
+from modules.identity import scoring
 from modules.identity.alerts import handle_block, handle_revoke, handle_step_up
 from modules.identity.cache_redis import (
     TenantRedis,
