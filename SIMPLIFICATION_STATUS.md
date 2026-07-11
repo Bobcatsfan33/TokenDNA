@@ -23,7 +23,19 @@ every session (Operating Rule 9).
 | threat_sharing (+flywheel) (P1.4) | `d559706` | ~1,100 | 85 | 1988 pass |
 | campaign_correlation (P1.10) | `13684a5` | ~360 | 12 | 1976 pass |
 
-Route surface: 331 → 314 (threat-sharing + campaigns removed; snapshot re-baselined).
+| policy_export (P1.12) | `ecda322` | ~200 | 1 | 1963 pass |
+| phantom-import hygiene | `7bba4f4` | 0 | 0 | 1963 pass |
+| **legacy behavioral layer** (P1.12) | `823a668` | ~1,900 (391 enterprise + 4 modules) | 0 | 1965 pass |
+
+Route surface: 331 → 308 (threat-sharing, campaigns, policy-export, and the
+enterprise `/secure`+`/profile`+`/revoke` behavioral endpoints removed).
+**Coverage floor re-baselined: `modules/` 84% → 85%** (cutting untested behavioral
+code raised the ratio; new floor = 85%). Legacy behavioral layer cut per owner:
+excised `/secure`+`/profile`+`/revoke`; cut geo_intel/ml_model/session_graph/
+async_pipeline; KEPT SAML/SCIM/admin (→ admin.py in Phase 3); README reframed to
+lead with behavioral_dna. **`network_intel` still pending** (its own PR — entangled
+with `intel.py` router + `compliance.py`; owner leaned attic since the flywheel
+partner is gone).
 
 **Lessons (apply to every remaining cut):**
 - `modules/storage/migrations.py` `INIT_TARGETS` is a **dynamic-import (importlib)

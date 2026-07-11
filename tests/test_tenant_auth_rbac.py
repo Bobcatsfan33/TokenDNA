@@ -186,8 +186,10 @@ def test_key_lifecycle_routes_emit_audit(monkeypatch):
     assert all("tdna_raw_secret" not in str(e.get("detail", {})) for e in events)
 
 
-def test_only_runtime_secure_endpoint_depends_on_bearer_verify_token():
-    api_source = Path(__file__).resolve().parents[1].joinpath("api_routers/enterprise.py").read_text()
-
-    assert api_source.count("Depends(verify_token)") == 1
-    assert "async def secure(" in api_source
+def test_no_endpoint_uses_raw_bearer_verify_token():
+    # The runtime /secure endpoint (the only raw-bearer path) was removed with the
+    # legacy behavioral-analytics layer. No endpoint should use Depends(verify_token)
+    # directly anymore — all auth flows through get_tenant / RBAC.
+    enterprise_source = Path(__file__).resolve().parents[1].joinpath("api_routers/enterprise.py").read_text()
+    assert enterprise_source.count("Depends(verify_token)") == 0
+    assert "async def secure(" not in enterprise_source
