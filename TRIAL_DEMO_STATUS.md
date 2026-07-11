@@ -3,12 +3,15 @@
 Progress tracker for the self-serve trial + hosted-demo mission. Updated at the
 start and end of every session.
 
-- **Current phase:** T0 — Trial Scaffold & Mode Switch (IN PROGRESS)
-- **Session status:** Core mode-switch landed and prod-safe. `TOKENDNA_TRIAL_MODE`
-  flag + `modules/trial/` guard + conditional `api_routers/trial.py` +
-  guardrail test. Prod surface unchanged when off (CI-enforced).
-- **Next action:** finish T0.4 (`.env.trial.example`, `make trial-up/reset`),
-  T0.5 (`deploy/trial/docker-compose.trial.yml`), then T1 (trial license).
+- **Current phase:** T0 COMPLETE → T1 (trial license) next.
+- **Session status:** Mode-switch + packaging done. `TOKENDNA_TRIAL_MODE` flag +
+  `modules/trial/` guard + conditional `api_routers/trial.py` + guardrail test;
+  `.env.trial.example`, `deploy/trial/docker-compose.trial.yml` (single container,
+  SQLite, real OIDC), `make trial-up/reset/down`. Prod surface unchanged when off.
+- **Next action:** T1 — the private license server **now exists**
+  (`Bobcatsfan33/tokendna-license-server`, private, pushed). Clone it, add
+  `POST /trial` issuance (T1.1) + the vital catalog sync (T1.4), then in-repo
+  `modules/trial/license.py` (T1.2) + `GET /trial/license/status` (T1.3).
 
 ## Operating rules (non-negotiable)
 Trial ≠ prod (all behind `TOKENDNA_TRIAL_MODE`, default false). **DEV_MODE is NOT
@@ -19,12 +22,12 @@ remove them (issue a real trial key; label Enterprise views). CI green + honesty
 framing preserved. Secrets from env/mounted files only.
 
 ## Phase checklist
-- [~] **T0 — Scaffold & mode switch**
+- [x] **T0 — Scaffold & mode switch (COMPLETE)**
   - [x] T0.1 `TRIAL_DEMO_STATUS.md`
   - [x] T0.2 `TOKENDNA_TRIAL_MODE` in `config.py` + `modules/trial/{__init__,guard}.py` (`trial_enabled()`, `require_trial()`)
   - [x] T0.3 `api_routers/trial.py` mounted ONLY when `trial_enabled()` (route guard runs trial-off, so trial routes never enter the snapshot — no guard change needed)
-  - [ ] T0.4 `.env.trial.example` + `make trial-up` / `make trial-reset`
-  - [ ] T0.5 `deploy/trial/docker-compose.trial.yml` (single app + one data volume; SQLite default — see DECISION T0.5)
+  - [x] T0.4 `.env.trial.example` + `make trial-up` / `make trial-reset` / `trial-down`
+  - [x] T0.5 `deploy/trial/docker-compose.trial.yml` (single app + one data volume; SQLite-only — the app already boots on SQLite, so no Postgres service needed)
   - [x] T0.6 guardrail test (`tests/test_trial_mode.py`): trial off ⇒ no `/trial/*` + surface == snapshot; trial on ⇒ only adds routes
 - [ ] T1 — Trial license issuance (⚠ external dep: private license server)
 - [ ] T2 — Connect their IdP (OIDC)
@@ -52,8 +55,8 @@ framing preserved. Secrets from env/mounted files only.
   catalog sync** — retire `ent.federation`, redefine `ent.enforcement_plane` after
   cert_dashboard removal; trial "all features" set must == post-simplification
   `COMMERCIAL_FEATURES` in `modules/product/commercial_tiers.py`) must be done
-  there. As of now this repo has **no license-server checkout** and the licensing
-  Session-2 scaffold was never created — `DECISION NEEDED`: create it.
+  there. As of now the license server **exists** (`Bobcatsfan33/tokendna-license-server`,
+  private, no secrets tracked, pushed). T1.1 + T1.4 are done THERE (clone it).
 
 ## Cross-mission dependencies (simplification)
 - The plan's flagship endpoints `/v1/verify|authorize|contain` do NOT exist yet
