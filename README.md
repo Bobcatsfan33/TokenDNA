@@ -72,11 +72,11 @@ Walks through baseline → drift → self-modification → MCP chain → decepti
 
 ---
 
-> **Underlying platform** — v2.2.0 hardening: RBAC, immutable audit log, security headers middleware, HMAC-SHA256 IP fingerprinting, secrets manager backend, CIS Docker hardening, Postgres + Helm + Grafana + SAML/SCIM all implemented.
+> **Underlying platform** — RBAC, immutable hash-chained audit log, security headers middleware, secrets manager backend, CIS Docker hardening, Postgres + Helm + Grafana + SAML/SCIM.
 
-**Zero-Trust token integrity and session behavioral analytics.**
+**Agent behavioral DNA.**
 
-TokenDNA's identity primitives originated as a stolen-JWT detector that built a behavioral "DNA" fingerprint for each user — device, IP, geolocation, ASN, browser, OS — and flagged anomalies like impossible travel, session branching, Tor/VPN usage, and known-malicious IPs. Every request is scored and responded to adaptively: allow, step-up MFA, block, or auto-revoke. Those primitives are the foundation the Runtime Risk Engine sits on top of.
+Every agent gets a behavioral fingerprint (`behavioral_dna`): its attested identity, scope, tool-call patterns, and delegation chains. TokenDNA scores each action against that baseline and responds adaptively — allow, step-up, block, or revoke — and drift from the baseline is what powers AUTHORIZE and CONTAIN. This is the agent-behavioral layer the Runtime Risk Engine is built on.
 
 ---
 

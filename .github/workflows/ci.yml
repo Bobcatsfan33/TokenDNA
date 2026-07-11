@@ -95,8 +95,7 @@ jobs:
           mods = [
             'config', 'auth',
             'modules.tenants.models', 'modules.tenants.store', 'modules.tenants.middleware',
-            'modules.identity.cache_redis', 'modules.identity.ml_model',
-            'modules.identity.session_graph', 'modules.identity.async_pipeline',
+            'modules.identity.cache_redis',
             'modules.security.audit_log', 'modules.security.rbac', 'modules.security.headers',
             'onboarding.aws_connector',
             'modules.identity.uis_narrative',
