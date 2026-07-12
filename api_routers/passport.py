@@ -72,7 +72,6 @@ from modules.identity import uis_store
 from modules.identity import decision_audit
 from modules.identity import trust_federation
 from modules.identity import certificate_transparency as ct_log
-from modules.identity import clickhouse_client
 from modules.integrations.siem_taxii import build_taxii_bundle
 from modules.integrations.idp_events import adapt_idp_event
 from modules.integrations.sdk_wrappers import (

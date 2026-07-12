@@ -19,10 +19,35 @@ from config import (
 
 logger = logging.getLogger(__name__)
 _client = None
+_unconfigured_logged = False
+
+
+def is_configured() -> bool:
+    """True only when ClickHouse was explicitly configured (P2.5).
+
+    ClickHouse is an optional Tier-3 analytics store, not part of the default path:
+    the UIS event store is SQLite/Postgres and never touches it. ``CLICKHOUSE_HOST``
+    defaults to "localhost", so without this gate an unconfigured single-container
+    deployment would attempt (and retry) a connection on every health check to a
+    host the operator never asked for. Absence of the env var means "not deployed",
+    which is a different thing from "deployed and down" — and only the latter should
+    look like a failure.
+    """
+    import os
+    return bool(os.getenv("CLICKHOUSE_HOST"))
 
 
 def _get_client():
-    global _client
+    global _client, _unconfigured_logged
+    if not is_configured():
+        if not _unconfigured_logged:
+            logger.info(
+                "ClickHouse not configured (CLICKHOUSE_HOST unset) — analytics "
+                "endpoints will report it as unavailable. This is expected on the "
+                "zero-dependency default deployment."
+            )
+            _unconfigured_logged = True
+        return None
     if _client is None:
         try:
             import clickhouse_connect
