@@ -24,7 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from auth import verify_token
 from config import DEV_MODE, OIDC_ISSUER, RATE_LIMIT_PER_MINUTE, RATE_LIMIT_OPEN_PER_MINUTE
-from modules.identity import scoring, threat_intel
+from modules.identity import pipeline, threat_intel
 from modules.identity.alerts import handle_block, handle_revoke, handle_step_up
 from modules.identity.cache_redis import (
     TenantRedis,
@@ -38,11 +38,11 @@ from modules.identity.cache_redis import (
     revoke_token,
     set_baseline,
 )
-from modules.identity.scoring import RiskTier
-from modules.identity.token_dna import generate_dna, migrate_dna
+from modules.identity.pipeline import RiskTier
+from modules.identity.pipeline import generate_dna, migrate_dna
 from modules.identity.uis import normalize_from_protocol, validate_uis_event
 from modules.identity.uis_protocol import get_uis_spec, normalize_with_adapter
-from modules.identity.attestation import create_attestation_record
+from modules.identity.attestation_store import create_attestation_record
 from modules.identity.mcp_attestation import verify_mcp_server
 from modules.identity.attestation_certificates import issue_certificate, revoke_certificate, verify_certificate
 from modules.identity.certificate_status import build_crl, certificate_status_payload
@@ -242,7 +242,7 @@ async def api_schema_uis_json(
 ):
     # Serve the canonical JSON Schema artifact via the validator's cache.
     # Same source of truth that ``validate_uis_event`` uses at runtime.
-    from modules.identity.uis_validator import (  # noqa: PLC0415
+    from modules.identity.uis import (  # noqa: PLC0415
         schema_dict, schema_version,
     )
     response.headers["X-UIS-Schema-Version"] = schema_version()

@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from modules.identity.attestation import build_agent_dna_fingerprint, create_attestation_record
+from modules.identity.attestation_store import build_agent_dna_fingerprint, create_attestation_record
 
 
 def test_agent_dna_fingerprint_is_deterministic():
