@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from modules.identity.attestation import create_attestation_record
+from modules.identity.attestation_store import create_attestation_record
 from modules.identity.abac import evaluate_attestation_policy
 from modules.identity.uis_protocol import get_uis_spec, normalize_with_adapter
 from modules.integrations.idp_events import adapt_idp_event

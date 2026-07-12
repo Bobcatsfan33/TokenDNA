@@ -40,7 +40,7 @@ from modules.identity.scoring import RiskTier
 from modules.identity.token_dna import generate_dna, migrate_dna
 from modules.identity.uis import normalize_from_protocol, validate_uis_event
 from modules.identity.uis_protocol import get_uis_spec, normalize_with_adapter
-from modules.identity.attestation import create_attestation_record
+from modules.identity.attestation_store import create_attestation_record
 from modules.identity.mcp_attestation import verify_mcp_server
 from modules.identity.attestation_certificates import issue_certificate, revoke_certificate, verify_certificate
 from modules.identity.certificate_status import build_crl, certificate_status_payload
