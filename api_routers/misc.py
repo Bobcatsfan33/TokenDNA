@@ -242,7 +242,7 @@ async def api_schema_uis_json(
 ):
     # Serve the canonical JSON Schema artifact via the validator's cache.
     # Same source of truth that ``validate_uis_event`` uses at runtime.
-    from modules.identity.uis_validator import (  # noqa: PLC0415
+    from modules.identity.uis import (  # noqa: PLC0415
         schema_dict, schema_version,
     )
     response.headers["X-UIS-Schema-Version"] = schema_version()
