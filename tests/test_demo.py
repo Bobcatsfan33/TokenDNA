@@ -86,14 +86,15 @@ def test_asset_inventory_seeded(seeded):
 
 
 def test_kill_switch_all_planes_connected(seeded):
-    # 6 planes: decision, edge, idp_okta, idp_entra, mcp, live_sessions
-    assert seeded["kill_planes"] == 6
-    assert seeded["kill_connected"] == 6  # all show connected in the demo
+    # 8 planes: decision, edge, idp_okta, idp_entra, mcp, live_sessions,
+    #           passport, trust_graph (the last two added in P2.1)
+    assert seeded["kill_planes"] == 8
+    assert seeded["kill_connected"] == 8  # all show connected in the demo
 
 
 def test_kill_rip_executes(seeded):
     assert seeded["rip_overall"] == "complete"
-    assert seeded["rip_killed"] == 6
+    assert seeded["rip_killed"] == 8
 
 
 def test_governed_retrieval_seeded(seeded):

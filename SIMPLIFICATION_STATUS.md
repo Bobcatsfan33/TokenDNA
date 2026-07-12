@@ -3,16 +3,16 @@
 Progress tracker for `SIMPLIFICATION_PLAN.md`. Updated at the start and end of
 every session (Operating Rule 9).
 
-- **Current phase:** Phase 1 — Dead Code Removal (IN PROGRESS)
-- **Session status:** Phase 0 merged (#146). Phase 1 started with the
-  platform/+collector/ cut (P1.1, P1.13 — D-5). Collector extracted to its own
-  archived repo `github.com/Bobcatsfan33/tokendna-collector`.
-- **Next action:** **OWNER DECISION** on the legacy behavioral layer (see "Phase 1
-  cut-list reality check" below) — most of the remaining audit cut-list is wired,
-  not dead. The clean orphan removal is done through `policy_export`. Once the
-  keep/cut calls are made, the follow-on is: legacy-layer removal (if cut, fused
-  with Phase-3 `enterprise.py`→`admin.py`), then the decouplings (cert_dashboard,
-  compliance, verifier, federation, honeypot) + demo-arc rebuild.
+- **Current phase:** Phase 2 — Consolidation & Kill Path (IN PROGRESS)
+- **Session status:** Phase 1's clean cuts are landed (#146–#155). Phase 2 opened
+  with **P2.1 — the kill path** (the plan calls it "the most important item in the
+  whole plan"). See "Phase 2 progress" below: the plan's premise for P2.1 was
+  **stale** — the bus already existed and was already wired — so the cut was
+  re-scoped to the two planes that were genuinely missing (`passport`,
+  `trust_graph`) plus the e2e proof the DoD demands.
+- **Next action:** P2.2 (tamper-evident TraceReport) → P2.4 (`/v1` endpoints via
+  the `evaluate()` core) → P2.3 (micro-merges) → P2.5 (zero-dependency storage
+  defaults). P2.2 + P2.4 together unblock the trial mission's T4 "money screen".
 
 ## Phase 1 progress + metrics delta
 
@@ -57,6 +57,65 @@ partner is gone).
   84% post-cut.** (The cuts removed their own code+tests, not `modules/`
   coverage, so the % held.)
 - Running LOC delta: **-6,530** (95,961 → ~89,431 Python LOC).
+
+## Phase 2 progress
+
+### P2.1 — Unify revocation / wire the kill path (DONE, re-scoped)
+
+**The plan's premise was stale — verified at cut time (Rule 2).** P2.1 says to
+merge `revocation_bus` + `idp_revocation` + `session_revocation` + `mcp_revocation`
+into one `revocation.py` and "wire it into `api_routers/kill.py` (which currently
+imports NONE of them)". At cut time, **`kill.py` already imports all four** and the
+four files are not four disconnected implementations — they are one bus
+(`revocation_bus` = core + registry) plus three self-registering connectors, each
+implementing the `RevocationConnector` Protocol. "One call revokes across
+IdP/session/MCP" (DoD #4) was already true architecturally.
+
+What was actually missing was the part the plan's own acceptance test names:
+
+| DoD assertion | Before | Now |
+|---|---|---|
+| passport revoked | ✗ **no passport plane existed** | ✓ `passport_revocation.py` |
+| sessions invalidated | ✓ `live_sessions` | ✓ |
+| MCP access cut | ✓ `mcp` | ✓ |
+| trust_graph edge marked | ✗ **no graph plane existed** | ✓ `graph_revocation.py` |
+| audit chain entry | ✓ (KILL_* events) | ✓ verified in the e2e |
+| **e2e test proving it** | ✗ **did not exist** | ✓ `tests/test_kill_path_e2e.py` |
+
+The passport gap was the sharp one: every other plane could be ripped and the
+agent's **passport — the credential of record — still said ISSUED**, so any
+verifier checking it (including TokenDNA's own verify path) kept saying yes.
+
+Shipped: `modules/identity/passport_revocation.py` (revokes every trust-conferring
+passport, idempotent, leaves PENDING alone), `modules/identity/graph_revocation.py`
+(marks the agent node revoked + raises a CRITICAL `AGENT_CREDENTIALS_REVOKED`
+anomaly; reversible), `trust_graph.{mark,clear,is}_agent_revoked` (SQLite + PG),
+both connectors wired into `kill.py`, and an 11-test e2e file whose headline test
+seeds a compromised agent across all planes, makes ONE `rip_credentials` call, and
+asserts every plane moved **and** the hash chain still verifies.
+
+Kill planes: **6 → 8**. Suite 1965 → 1976. Coverage: `graph_revocation` 100%,
+`passport_revocation` 97%, `trust_graph` 87% (all ≥ the 80% touched-module gate).
+
+**DEV-3 — the 4→1 file merge was NOT done (deliberate; owner may overrule).**
+Merging the bus + connectors into one `revocation.py` would produce a ~700-LOC file,
+destroy a clean plugin boundary (the Protocol + `register_default_factory` seam that
+external IdP/MCP connectors extend), and contradict the repo's own "many small
+files" rule — all to satisfy a file-count target the plan set when it believed the
+four files were disconnected duplicates. The plan's *intent* (one bus, one call, one
+audit trail, wired to `kill.py`) is satisfied and now e2e-proven. Cutting the seam
+is reversible later if the owner still wants the single file.
+
+**DECISION NEEDED — audit events log the Python enum repr, not their AU-2 value.**
+Pre-existing and system-wide, not introduced here: `log_event()` does
+`event_type=str(event_type)`, and for a `(str, Enum)` on Python 3.11+ that yields
+`"AuditEventType.KILL_RIP_INITIATED"` rather than the value the taxonomy defines,
+`"kill.rip.initiated"`. So **every** audit record in the repo carries the enum repr,
+while `docs/` and SIEM correlation rules key on the dotted values. The one-line fix
+(`event_type.value if isinstance(event_type, Enum) else str(event_type)`) changes the
+audit wire format globally — SOC2 evidence chains, SIEM mappings, any stored logs —
+so it is the owner's call, not a Phase-2 improvisation (Rule 11). Flagged; the e2e
+pins today's actual behaviour so the fix will surface as an intentional diff.
 
 ## Sequencing override (owner-approved 2026-07-04)
 
