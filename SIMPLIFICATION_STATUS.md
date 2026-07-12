@@ -246,6 +246,52 @@ that job goes red.
 
 Suite 2012 → 2028. Coverage: `memory_cache` 94%.
 
+### P2.3 — Micro-module merges (DONE, one commit each)
+
+| Merge | Result |
+|---|---|
+| `attestation.py` (151) → `attestation_store.py` | A record model and the store that persists it are one concern. No collisions; 6 call sites repointed. |
+| `uis_validator.py` (229) → **`uis.py`**, *not* `uis_protocol.py` | **Plan deviation — see below.** |
+| `scoring.py` (140) + `token_dna.py` (162) → new `pipeline.py` (284) | Two halves of one job: derive the DNA fingerprint, then score it. ~34 call sites repointed mechanically. |
+
+`modules/identity/` file count **67 → 64**. Suite 2028 throughout — the merges are
+pure moves: same functions, same signatures, same behaviour.
+
+**DEV-5 — `uis_validator` was merged into `uis.py`, not `uis_protocol.py` as the plan
+says. The plan's target would create a circular import.** The real dependency
+direction is `uis_protocol → uis → uis_validator`: the validator is a **leaf**, and
+*both* of the others import it. Moving it up into `uis_protocol` would force `uis.py`
+to import `uis_protocol`, which imports `uis`. Merging into `uis.py` gets the same
+file-count reduction with the arrow pointing the right way. `uis.py` is 438 lines,
+inside the 800 ceiling.
+
+Second trap in the same merge, worth writing down: the validator body had to be
+inserted **above** `UIS_VERSION = schema_version()`, which `uis.py` evaluates at
+module level. Appending the merged code at the end of the file — the obvious move,
+and what the other two merges do — is a `NameError` at import. Caught by importing
+the module, not by the suite.
+
+---
+
+## Phase 2 — COMPLETE
+
+| Item | PR | State |
+|---|---|---|
+| P2.1 kill path (passport + trust-graph planes + e2e) | #156 | merged |
+| P2.2 tamper-evident TraceReport | #157 | merged |
+| P2.4 the three `/v1` endpoints + the `evaluate()` core | #158 | merged |
+| P2.5 zero-dependency storage defaults | #159 | merged |
+| P2.3 micro-module merges | #160 | this PR |
+
+**Phase 2 exit criteria, against the plan:**
+- ✅ *Kill path real and e2e-tested* — 8 planes, one call, hash-chain verified.
+- ✅ *TraceReport rendering* — `GET /api/kill/{agent}/trace` and inside `/v1/contain`.
+- ✅ *Zero-dependency boot in CI* — the `zero-dependency-boot` job starts no services at all and takes a real verdict.
+- ⚠️ *67 → ~38 files in `modules/identity/`* — **NOT met: 67 → 64.** The remaining reduction is not a Phase-2 merge job; it comes from the Phase-3 router consolidation and the Phase-1 decouplings still parked (`cert_dashboard`, legacy `compliance`, `verifier_reputation`, `network_intel`, `federation`, `honeypot`). The four micro-merges P2.3 actually names are done. Recorded rather than fudged.
+
+**Next: Phase 3 — 31 routers → 9.** Note the surface has grown by design during
+Phase 2: 308 → 313 routes (`/api/kill/{agent}/trace` + the four `/v1` endpoints).
+
 ## Sequencing override (owner-approved 2026-07-04)
 
 The demo trio is pulled AHEAD of the full router consolidation because it is the
