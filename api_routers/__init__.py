@@ -40,6 +40,7 @@ from api_routers.policy_suggestions import router as policy_suggestions_router
 from api_routers.product import router as product_router
 from api_routers.retrieval import router as retrieval_router
 from api_routers.siem import router as siem_router
+from api_routers.v1 import router as v1_router
 from api_routers.verifier import router as verifier_router
 from api_routers.workflow import router as workflow_router
 
@@ -68,6 +69,7 @@ ALL_ROUTERS: tuple[APIRouter, ...] = (
     product_router,
     retrieval_router,
     siem_router,
+    v1_router,
     verifier_router,
     workflow_router,
 )

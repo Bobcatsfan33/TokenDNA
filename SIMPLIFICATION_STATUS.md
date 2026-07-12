@@ -163,6 +163,55 @@ The trace uses deterministic per-source templates instead, and reads the MITRE t
 straight off the event's `metadata`. If the owner wants `uis_narrative` reused here it
 needs agent-shaped templates first — a real (small) piece of work, not a one-liner.
 
+### P2.4 — The three flagship /v1 endpoints + the evaluate() core (DONE)
+
+`modules/identity/evaluate.py` — **one** `evaluate(question, subject) -> Verdict`
+core (D-6), 200 lines, well inside the ≤300 guardrail. It is a **dispatcher, not a
+framework**: it owns no detection logic, gathers evidence from the pillars, and
+hands scoring to the existing `agent_assurance` facade (PR #144) rather than adding
+a second verdict brain. `api_routers/v1.py` is thin orchestration over it.
+
+| Endpoint | Question | Composes |
+|---|---|---|
+| `POST /v1/verify` | is the identity real? | passport + **dpop** + proof-of-control |
+| `POST /v1/authorize` | is it allowed? | enforcement_plane (kill-switch + policies) + permission_drift + **scopes** |
+| `GET /v1/contain/{agent}` | is it compromised? | trust_graph + behavioral_dna + mcp_inspector + blast_radius + **the P2.2 TraceReport** |
+| `POST /v1/contain/{agent}/revoke` | contain it | the P2.1 RevocationBus, then **re-diagnoses** |
+
+Verdict → HTTP: ALLOW 200, STEP_UP 202, BLOCK 403 (**401 on verify** — the identity
+failed, nothing was refused on policy grounds), REVOKE 403. CONTAIN always returns
+200: a diagnosis is not a refusal, and the operator needs the evidence to act on.
+
+**D-2 wire-ins landed for real, not nominally.** Orphan count **8 → 5**: `dpop` is
+now evidence in the verify verdict, and `modules.auth.scopes` is now evaluated in
+authorize — honouring the module's own `TOKENDNA_SCOPES_ENFORCE` log-only rollout,
+so wiring it cannot silently start denying traffic that used to flow (both states
+are tested).
+
+**Three real bugs the tests caught, worth recording:**
+1. **`agent_assurance` scores three dimensions at once and blocks if *any* is
+   unsatisfied.** Passing an empty list for a dimension a question does not ask
+   about silently reads as *denied* — so every `/v1` answer was BLOCK. Each question
+   now marks its out-of-scope dimensions explicitly neutral. This is the contract of
+   the three-question split: `/v1/authorize` does not re-verify identity, it presumes
+   `/v1/verify` answered that.
+2. **A failed DPoP proof was gathered but never affected the verdict** — it produced
+   ALLOW with a reason politely noting the proof was rejected. Proof-of-possession
+   failing means the presenter cannot show they hold the key the credential is bound
+   to, so the credential is not theirs. Now modelled by dropping the credential's
+   trust to zero (→ UNVERIFIED in the scoring brain), not by special-casing the
+   verdict afterwards.
+3. A test with a hard-coded date (P2.2) silently expired overnight against the
+   rolling 24h trace window. Trace-test timestamps are now relative to now.
+
+**`confidence` is honest, not decoration.** 1.0 when a decisive signal exists
+(revoked passport, active kill switch, critical anomaly, explicit BLOCK); ~0.6 for
+inference; and **low when we say ALLOW while the pillars returned little or nothing**
+— an ALLOW on an empty evidence set is a confession of ignorance and should not look
+identical to an ALLOW backed by a fresh attestation.
+
+Route surface 309 → 313. Suite 1990 → 2012. Coverage: `evaluate` 95%, `v1` 98%.
+
 ## Sequencing override (owner-approved 2026-07-04)
 
 The demo trio is pulled AHEAD of the full router consolidation because it is the
