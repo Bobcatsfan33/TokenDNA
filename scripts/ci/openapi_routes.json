@@ -179,6 +179,7 @@
   "GET /scim/v2/Users",
   "GET /scim/v2/Users/{user_id}",
   "GET /trust-graph",
+  "GET /v1/contain/{agent_id}",
   "PATCH /api/discovery/agents/{agent_id}",
   "PATCH /api/enforcement/policies/{policy_id}",
   "PATCH /scim/v2/Groups/{group_id}",
@@ -307,5 +308,8 @@
   "POST /saml/acs",
   "POST /scim/v2/Groups",
   "POST /scim/v2/Users",
+  "POST /v1/authorize",
+  "POST /v1/contain/{agent_id}/revoke",
+  "POST /v1/verify",
   "PUT /scim/v2/Users/{user_id}"
 ]
