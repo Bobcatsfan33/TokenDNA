@@ -8,6 +8,7 @@ one, and rewrite the audit log it cites — and assert every attempt is caught.
 from __future__ import annotations
 
 import importlib
+import pathlib
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -343,7 +344,7 @@ def test_rewriting_the_audit_log_is_detected(env):
     assert tr.verify_trace_report(report, audit_log_path=env["audit_path"])["ok"] is True
 
     # Tamper with the log the report cites.
-    lines = open(env["audit_path"], encoding="utf-8").read().splitlines()
+    lines = pathlib.Path(env["audit_path"]).read_text(encoding="utf-8").splitlines()
     doctored = [ln.replace('"entry_hash": "', '"entry_hash": "0') for ln in lines]
     with open(env["audit_path"], "w", encoding="utf-8") as f:
         f.write("\n".join(doctored) + "\n")

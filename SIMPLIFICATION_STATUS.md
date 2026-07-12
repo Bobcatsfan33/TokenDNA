@@ -212,6 +212,40 @@ identical to an ALLOW backed by a fresh attestation.
 
 Route surface 309 → 313. Suite 1990 → 2012. Coverage: `evaluate` 95%, `v1` 98%.
 
+### P2.5 — Zero-dependency storage defaults (DONE)
+
+**Redis was the last hard dependency in the default path**, and its absence failed in
+the worst available way: `get_redis()` handed back a client whose every call threw,
+each caller swallowed the exception, and so token revocation, rate limits and
+baseline caching all silently degraded to **no-ops**. A revoked token kept working
+and nothing said so.
+
+`modules/identity/memory_cache.py` — an in-process, thread-safe, TTL-aware,
+LRU-bounded stand-in implementing the Redis subset this codebase actually uses
+(enumerated from the call sites, not guessed). It is deliberately **not** a Redis
+clone: an unsupported command raises rather than pretending to work. `cache_redis`
+now probes once and falls back to it, **logging loudly that the fallback is
+single-process** — two workers do not share a revocation list, so a token revoked on
+worker A is still accepted by worker B. That is a real limitation, stated out loud;
+production compose/Helm still ship Redis. Explicit opt-in via `TOKENDNA_CACHE=memory`.
+
+**ClickHouse: the plan's premise was wrong (verified, Rule 2).** P2.5 says to make the
+UIS event store's ClickHouse path conditional — but **`uis_store` never touches
+ClickHouse at all**; it has always been SQLite/Postgres. ClickHouse is a Tier-3
+*analytics* store (`api_routers/misc.py` + the health checks), and it already
+soft-failed to `None`. So it was already optional by accident. Two real fixes:
+`clickhouse_client.is_configured()` now gates the connection attempt on
+`CLICKHOUSE_HOST` actually being set — "not deployed" and "deployed and down" are
+different things, and only the second should look like a failure — and a **phantom
+`clickhouse_client` import in `api_routers/passport.py`** was removed (same bug class
+as the Phase-1 hygiene sweep in #152).
+
+New CI job `zero-dependency-boot` starts **no Redis, no Postgres, no ClickHouse**,
+boots the app, and takes a real verdict off `/v1/authorize`. If Tier 1 ever regresses,
+that job goes red.
+
+Suite 2012 → 2028. Coverage: `memory_cache` 94%.
+
 ## Sequencing override (owner-approved 2026-07-04)
 
 The demo trio is pulled AHEAD of the full router consolidation because it is the

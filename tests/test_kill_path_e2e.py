@@ -11,6 +11,7 @@ the hash-chained audit log recorded it and still verifies.
 from __future__ import annotations
 
 import importlib
+import pathlib
 
 import pytest
 
@@ -173,7 +174,7 @@ def test_rip_writes_a_verifiable_audit_chain(planes):
     assert integrity["ok"] is True, integrity
     assert integrity["entries"] > 0
 
-    body = open(planes["audit_path"], encoding="utf-8").read()
+    body = pathlib.Path(planes["audit_path"]).read_text(encoding="utf-8")
     # NOTE: log_event serialises the event type as str(enum), which yields the
     # Python repr ("AuditEventType.KILL_RIP_INITIATED") rather than the AU-2
     # value it defines ("kill.rip.initiated"). That is pre-existing, system-wide
