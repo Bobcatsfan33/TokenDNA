@@ -19,7 +19,7 @@ from config import (
 
 logger = logging.getLogger(__name__)
 _client = None
-_unconfigured_logged = False
+_logged_once: set[str] = set()
 
 
 def is_configured() -> bool:
@@ -38,15 +38,15 @@ def is_configured() -> bool:
 
 
 def _get_client():
-    global _client, _unconfigured_logged
+    global _client
     if not is_configured():
-        if not _unconfigured_logged:
+        if "unconfigured" not in _logged_once:
             logger.info(
                 "ClickHouse not configured (CLICKHOUSE_HOST unset) — analytics "
                 "endpoints will report it as unavailable. This is expected on the "
                 "zero-dependency default deployment."
             )
-            _unconfigured_logged = True
+            _logged_once.add("unconfigured")
         return None
     if _client is None:
         try:

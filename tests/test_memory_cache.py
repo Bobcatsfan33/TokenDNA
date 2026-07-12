@@ -29,7 +29,8 @@ def test_set_get_delete(cache):
     assert cache.get("k") is None
     cache.set("k", "v")
     assert cache.get("k") == "v"
-    assert cache.delete("k") == 1
+    deleted = cache.delete("k")
+    assert deleted == 1
     assert cache.get("k") is None
 
 
@@ -56,8 +57,9 @@ def test_ttl_reports_missing_vs_no_expiry(cache):
 
 
 def test_incr_counts_from_zero(cache):
-    assert cache.incr("c") == 1
-    assert cache.incr("c") == 2
+    first = cache.incr("c")
+    second = cache.incr("c")
+    assert (first, second) == (1, 2)
 
 
 def test_keys_matches_glob(cache):
@@ -98,7 +100,8 @@ def test_hash_ops(cache):
     cache.hset("h", "b", "2")
     assert cache.hget("h", "a") == "1"
     assert cache.hgetall("h") == {"a": "1", "b": "2"}
-    assert cache.hincrby("h", "a", 4) == 5
+    incremented = cache.hincrby("h", "a", 4)
+    assert incremented == 5
 
 
 # ── Pipelines ─────────────────────────────────────────────────────────────────
