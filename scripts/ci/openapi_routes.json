@@ -105,6 +105,7 @@
   "GET /api/intent/matches",
   "GET /api/intent/playbooks",
   "GET /api/kill/{agent_id}/preview",
+  "GET /api/kill/{agent_id}/trace",
   "GET /api/license/status",
   "GET /api/mcp/anomaly/alerts",
   "GET /api/mcp/anomaly/baseline/{agent_id}",

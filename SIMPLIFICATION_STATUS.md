@@ -117,6 +117,52 @@ audit wire format globally — SOC2 evidence chains, SIEM mappings, any stored l
 so it is the owner's call, not a Phase-2 improvisation (Rule 11). Flagged; the e2e
 pins today's actual behaviour so the fix will surface as an intentional diff.
 
+### P2.2 — Tamper-evident TraceReport (DONE)
+
+`modules/identity/trace_report.py` — pure orchestration, no new algorithms. Composes
+`trust_graph` anomalies (why we are looking) + `uis_store` events (what the agent did)
++ `delegation_receipt` (how it got its authority) + `audit_log` (what TokenDNA did
+about it) + `blast_radius` (how far it could have gone) into one time-ordered report
+of `(timestamp, agent, credential, action, resource, evidence_pointer)`.
+
+**Tamper-evidence has two independent layers, and both are tested by trying to forge
+them:**
+
+1. **The report chains itself.** Each row carries `prev_hash`/`row_hash`, hashed via
+   the new `audit_log.compute_evidence_hash` seam — HMAC-SHA256 when `AUDIT_HMAC_KEY`
+   is set, SHA-256 otherwise — so the report inherits the audit log's crypto posture
+   instead of inventing a second, weaker one. Editing, reordering, dropping or
+   appending a row is caught, and `report_hash` must match the chain.
+2. **Its citations are re-derived.** This is the layer that matters, and the first cut
+   of it was **wrong** — the tests caught it. Checking only that a cited audit entry
+   *exists with the right hash* is insufficient: a forger can rewrite a row's
+   narrative, leave the pointer intact, re-chain the whole report, and pass. So
+   `verify_trace_report` now rebuilds every audit-sourced row **from the record the
+   live log actually holds** (via `_audit_row_from_record`, the same builder the
+   composer uses) and compares the material fields. A report that agrees with itself
+   but lies about the log it cites is now caught — as is any edit to the underlying
+   audit log.
+
+Exposed as `GET /api/kill/{agent_id}/trace` (ANALYST+), returning the report **and**
+its verification result, so a reader never has to take the report's word for itself.
+Route surface 308 → 309 (snapshot re-baselined via the guard's `--update`). P2.4 will
+re-expose this as `GET /v1/contain/{agent_id}`; the kill router is its home until then
+because shipping a module nothing imports would violate DoD #2 (zero orphans,
+CI-enforced) — the ALLOWLIST is for cuts, not for new code.
+
+Also added `audit_log.read_records()` — the log had no read path at all, only append +
+verify. Anything that wants to cite it as evidence has to be able to read it.
+
+Suite 1976 → 1990. Coverage: `trace_report` 92%, `audit_log` 85%.
+
+**DEV-4 — `uis_narrative` was NOT used for the trace's English annotations.** The plan
+names it as the annotation source, but its templates are shaped for the *human-session*
+layer that Phase 1 cut (they format `{user}`/`{country}`/`{device}` and read "User X
+signed in from…"), so rendering agent rows through them would produce misleading prose.
+The trace uses deterministic per-source templates instead, and reads the MITRE technique
+straight off the event's `metadata`. If the owner wants `uis_narrative` reused here it
+needs agent-shaped templates first — a real (small) piece of work, not a one-liner.
+
 ## Sequencing override (owner-approved 2026-07-04)
 
 The demo trio is pulled AHEAD of the full router consolidation because it is the
