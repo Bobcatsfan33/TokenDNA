@@ -10,8 +10,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Body, Depends, HTTPException
 
 from modules.identity import revocation_bus
+from modules.identity import graph_revocation  # noqa: F401 — self-registers trust-graph connector
 from modules.identity import idp_revocation  # noqa: F401 — self-registers IdP connectors
 from modules.identity import mcp_revocation  # noqa: F401 — self-registers MCP connector
+from modules.identity import passport_revocation  # noqa: F401 — self-registers passport connector
 from modules.identity import session_revocation  # noqa: F401 — self-registers session connector
 from modules.security.rbac import Role, require_role
 from modules.tenants.models import TenantContext
