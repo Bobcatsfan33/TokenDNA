@@ -1,3 +1,116 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tokendna-sdk"
+version = "0.2.0"
+description = "Identity for AI agents in one decorator. Native LangChain, CrewAI, AutoGen, and MCP middleware with attestation, delegation, and behavioral baselines."
+readme = "tokendna_sdk/README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "TokenDNA" }]
+keywords = [
+    "ai",
+    "agents",
+    "identity",
+    "attestation",
+    "security",
+    "langchain",
+    "crewai",
+    "autogen",
+    "mcp",
+    "tokendna",
+    "agent-security",
+    "observability",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Intended Audience :: Information Technology",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Monitoring",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Framework :: AsyncIO",
+    "Typing :: Typed",
+]
+# Zero runtime dependencies — the SDK core uses only stdlib (urllib).
+# Framework adapters opt-in via extras: pip install tokendna-sdk[langchain]
+dependencies = []
+
+[project.optional-dependencies]
+langchain = [
+    "langchain>=0.3.0",
+    "langchain-core>=0.3.0",
+]
+crewai = [
+    "crewai>=0.70.0",
+]
+autogen = [
+    "pyautogen>=0.2.30",
+]
+mcp = [
+    "mcp>=1.0.0",
+]
+all = [
+    "langchain>=0.3.0",
+    "langchain-core>=0.3.0",
+    "crewai>=0.70.0",
+    "pyautogen>=0.2.30",
+    "mcp>=1.0.0",
+]
+test = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "pytest-cov>=4.0",
+]
+dev = [
+    "ruff>=0.5",
+    "mypy>=1.5",
+    "build>=1.0",
+    "twine>=4.0",
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "pytest-cov>=4.0",
+]
+examples = [
+    "langchain>=0.3.0",
+    "langchain-core>=0.3.0",
+]
+
+[project.scripts]
+tokendna = "tokendna_sdk.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Bobcatsfan33/TokenDNA"
+Documentation = "https://github.com/Bobcatsfan33/TokenDNA/tree/main/tokendna_sdk"
+Repository = "https://github.com/Bobcatsfan33/TokenDNA"
+Issues = "https://github.com/Bobcatsfan33/TokenDNA/issues"
+Changelog = "https://github.com/Bobcatsfan33/TokenDNA/blob/main/CHANGELOG.md"
+"Security Policy" = "https://github.com/Bobcatsfan33/TokenDNA/security/policy"
+
+[tool.setuptools]
+# Repo is a monorepo containing both the SDK and the TokenDNA backend service.
+# Only ship the SDK package; the backend service (api.py, modules/) is not
+# pip-installable.
+packages = [
+    "tokendna_sdk",
+    "tokendna_sdk._core",
+    "tokendna_sdk.integrations",
+]
+
+[tool.setuptools.package-data]
+tokendna_sdk = ["py.typed"]
+
 [tool.ruff]
 target-version = "py312"
 line-length = 200
@@ -15,3 +128,11 @@ ignore = ["F401", "F841", "E402", "E701", "F541", "F811", "E741"]
 # Keep these active — real correctness / security issues:
 # F821 undefined-name (stays active)
 select = ["F", "E", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tokendna_sdk/tests"]
+python_files = ["test_*.py"]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

@@ -1,0 +1,56 @@
+{{- if .Values.internalPKI.enabled }}
+# deploy/helm/tokendna/templates/internal-pki.yaml  (T-2)
+# cert-manager-issued internal PKI. The CA never leaves the cluster;
+# certificates rotate automatically (90d cert / 30d renew). SPIFFE-style URI
+# SANs are authorized by modules.security.mtls_peer.require_internal_peer.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "tokendna.fullname" . }}-internal-ca
+  labels:
+    {{- include "tokendna.labels" . | nindent 4 }}
+spec:
+  ca:
+    secretName: {{ .Values.internalPKI.rootSecretName }}   # created once: see deploy runbook
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "tokendna.fullname" . }}-api-internal
+  labels:
+    {{- include "tokendna.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "tokendna.fullname" . }}-api-internal-tls
+  issuerRef:
+    name: {{ include "tokendna.fullname" . }}-internal-ca
+    kind: Issuer
+  duration: {{ .Values.internalPKI.duration }}
+  renewBefore: {{ .Values.internalPKI.renewBefore }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  dnsNames:
+    - {{ include "tokendna.fullname" . }}-internal
+    - {{ include "tokendna.fullname" . }}-internal.{{ .Release.Namespace }}.svc
+  uris:
+    - spiffe://tokendna/api
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "tokendna.fullname" . }}-collector
+  labels:
+    {{- include "tokendna.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "tokendna.fullname" . }}-collector-tls
+  issuerRef:
+    name: {{ include "tokendna.fullname" . }}-internal-ca
+    kind: Issuer
+  duration: {{ .Values.internalPKI.duration }}
+  renewBefore: {{ .Values.internalPKI.renewBefore }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  uris:
+    - spiffe://tokendna/collector
+{{- end }}

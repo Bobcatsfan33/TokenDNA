@@ -1,0 +1,10 @@
+[
+  {"endpoint": "/healthz",                       "weight": 4,  "method": "GET"},
+  {"endpoint": "/readyz",                        "weight": 2,  "method": "GET"},
+  {"endpoint": "/metrics",                       "weight": 1,  "method": "GET"},
+  {"endpoint": "/api/uis/spec",                  "weight": 6,  "method": "GET"},
+  {"endpoint": "/api/oss/schema-bundle",         "weight": 2,  "method": "GET"},
+  {"endpoint": "/scim/v2/ServiceProviderConfig", "weight": 1,  "method": "GET"},
+  {"endpoint": "/scim/v2/ResourceTypes",         "weight": 1,  "method": "GET"},
+  {"endpoint": "/saml/metadata",                 "weight": 1,  "method": "GET"}
+]

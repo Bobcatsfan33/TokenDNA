@@ -55,8 +55,8 @@
 
 ---
 
-## ✅ v2.4.0 — IL5 Cryptographic Foundation
-*Phase 1 of DISA PA / IL5 Provisional Authorization readiness.*
+## ✅ v2.2.0 — IL5 Cryptographic Foundation
+*Phase 1 of DISA PA / IL5 Provisional Authorization readiness. Shipped after v2.1.0; renumbered from v2.4.0 to reflect chronological ship order.*
 
 **FIPS 140-2 Enforcement (SC-13)**
 - Runtime FIPS mode detection (Linux kernel FIPS mode + OpenSSL FIPS provider)
@@ -87,8 +87,8 @@ NIST 800-53 Rev5: SC-13, IA-7, IA-2(1), IA-2(6), IA-3, IA-5(1), AC-6(5)
 
 ---
 
-## 🔜 v2.2.0 — Growth Features
-*Q3 2026 — the features that turn a trial into a contract.*
+## 🔜 v2.3.0 — Growth Features
+*Q3 2026 — the features that turn a trial into a contract. (Renumbered from v2.2.0 — IL5 work shipped under v2.2.0 ahead of these growth features.)*
 
 **RBAC (Role-Based Access Control)**
 - Roles: `owner`, `admin`, `analyst`, `readonly`

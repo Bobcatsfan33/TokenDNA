@@ -1,56 +1,42 @@
 """
-TokenDNA — Tenant store
-SQLite in dev/single-node; swap DATA_DB_URL to postgres://... for production.
-Uses raw sqlite3 (no ORM dependency) for portability.
+TokenDNA — Tenant store.
+Uses the shared storage backend so dev can run on SQLite and production can
+run on PostgreSQL without module-local database drivers.
 """
 from __future__ import annotations
 
 import logging
 import os
-import sqlite3
 import threading
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
+from modules.storage.pg_connection import ensure_sqlite_dir, AdaptedCursor, get_db_conn
+from modules.storage.db_backend import should_use_postgres
 from .models import ApiKey, Plan, Tenant
 
 logger = logging.getLogger(__name__)
 
-_DB_PATH = os.getenv("DATA_DB_PATH", "/data/tokendna.db")
+def _db_path() -> str:
+    return os.getenv("DATA_DB_PATH", "/data/tokendna.db")
 
-# SQLite isn't safe for concurrent writes across processes; in production
-# point DATA_DB_URL at PostgreSQL and swap the driver below.
 _lock = threading.Lock()
-
-
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
 
 
 @contextmanager
 def _cursor():
     with _lock:
-        conn = _get_conn()
-        try:
-            cur = conn.cursor()
-            yield cur
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        with get_db_conn(db_path=_db_path()) as conn:
+            yield AdaptedCursor(conn.cursor())
 
 
 # ── Schema ────────────────────────────────────────────────────────────────────
 
 def init_db() -> None:
     """Create tables if they don't exist. Idempotent."""
+    db_path = _db_path()
+    ensure_sqlite_dir(db_path)
     with _cursor() as cur:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS tenants (
@@ -71,12 +57,21 @@ def init_db() -> None:
                 key_hash     TEXT NOT NULL UNIQUE,
                 is_active    INTEGER NOT NULL DEFAULT 1,
                 created_at   TEXT NOT NULL,
+                role         TEXT NOT NULL DEFAULT 'readonly',
                 last_used    TEXT
             )
         """)
+        if should_use_postgres():
+            cur.execute("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'readonly'")
+        else:
+            try:
+                cur.execute("ALTER TABLE api_keys ADD COLUMN role TEXT NOT NULL DEFAULT 'readonly'")
+            except Exception:
+                # Existing SQLite installations already have the column.
+                pass
         cur.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_tenant ON api_keys(tenant_id)")
-    logger.info("Tenant DB initialised at %s", _DB_PATH)
+    logger.info("Tenant DB initialised at %s", db_path)
 
 
 # ── Tenants ───────────────────────────────────────────────────────────────────
@@ -84,20 +79,23 @@ def init_db() -> None:
 def create_tenant(name: str, owner_email: str = "", plan: Plan = Plan.FREE) -> tuple[Tenant, str]:
     """Create a tenant and its first API key. Returns (tenant, raw_api_key)."""
     tenant = Tenant.new(name=name, owner_email=owner_email, plan=plan)
-    api_key_record, raw_key = ApiKey.generate(tenant.id, "default")
+    api_key_record, raw_key = ApiKey.generate(tenant.id, "default", role="owner")
 
     with _cursor() as cur:
         cur.execute(
-            "INSERT INTO tenants VALUES (?,?,?,?,?,?)",
+            "INSERT INTO tenants (id, name, plan, is_active, owner_email, created_at) VALUES (?,?,?,?,?,?)",
             (tenant.id, tenant.name, tenant.plan.value,
              int(tenant.is_active), tenant.owner_email,
              tenant.created_at.isoformat()),
         )
         cur.execute(
-            "INSERT INTO api_keys VALUES (?,?,?,?,?,?,?,?)",
+            """INSERT INTO api_keys
+               (id, tenant_id, name, key_prefix, key_hash, is_active, created_at, role, last_used)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
             (api_key_record.id, api_key_record.tenant_id, api_key_record.name,
              api_key_record.key_prefix, api_key_record.key_hash,
-             int(api_key_record.is_active), api_key_record.created_at.isoformat(), None),
+             int(api_key_record.is_active), api_key_record.created_at.isoformat(),
+             api_key_record.role, None),
         )
 
     logger.info("Created tenant %s (%s)", tenant.name, tenant.id)
@@ -123,15 +121,18 @@ def deactivate_tenant(tenant_id: str) -> None:
 
 # ── API Keys ──────────────────────────────────────────────────────────────────
 
-def create_api_key(tenant_id: str, name: str) -> tuple[ApiKey, str]:
+def create_api_key(tenant_id: str, name: str, *, role: str = "readonly") -> tuple[ApiKey, str]:
     """Rotate / add a new key for a tenant. Returns (record, raw_key)."""
-    record, raw_key = ApiKey.generate(tenant_id=tenant_id, name=name)
+    role = _normalize_role(role)
+    record, raw_key = ApiKey.generate(tenant_id=tenant_id, name=name, role=role)
     with _cursor() as cur:
         cur.execute(
-            "INSERT INTO api_keys VALUES (?,?,?,?,?,?,?,?)",
+            """INSERT INTO api_keys
+               (id, tenant_id, name, key_prefix, key_hash, is_active, created_at, role, last_used)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
             (record.id, record.tenant_id, record.name,
              record.key_prefix, record.key_hash,
-             int(record.is_active), record.created_at.isoformat(), None),
+             int(record.is_active), record.created_at.isoformat(), record.role, None),
         )
     return record, raw_key
 
@@ -161,6 +162,7 @@ def lookup_by_key(raw_key: str) -> Optional[tuple[ApiKey, Tenant]]:
         key_prefix=row["key_prefix"], key_hash=row["key_hash"],
         is_active=bool(row["is_active"]),
         created_at=datetime.fromisoformat(row["created_at"]),
+        role=_row_role(row),
         last_used=datetime.fromisoformat(row["last_used"]) if row["last_used"] else None,
     )
     tenant = Tenant(
@@ -183,6 +185,7 @@ def list_api_keys(tenant_id: str) -> list[ApiKey]:
             key_prefix=r["key_prefix"], key_hash=r["key_hash"],
             is_active=bool(r["is_active"]),
             created_at=datetime.fromisoformat(r["created_at"]),
+            role=_row_role(r),
             last_used=datetime.fromisoformat(r["last_used"]) if r["last_used"] else None,
         )
         for r in rows
@@ -199,9 +202,23 @@ def revoke_api_key(key_id: str, tenant_id: str) -> None:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _row_to_tenant(row: sqlite3.Row) -> Tenant:
+def _row_to_tenant(row: Any) -> Tenant:
     return Tenant(
         id=row["id"], name=row["name"], plan=Plan(row["plan"]),
         is_active=bool(row["is_active"]), owner_email=row["owner_email"],
         created_at=datetime.fromisoformat(row["created_at"]),
     )
+
+
+def _normalize_role(role: str) -> str:
+    value = (role or "readonly").strip().lower()
+    if value not in {"readonly", "analyst", "admin", "owner"}:
+        raise ValueError(f"invalid api key role: {role!r}")
+    return value
+
+
+def _row_role(row: Any) -> str:
+    try:
+        return _normalize_role(row["role"])
+    except Exception:
+        return "readonly"

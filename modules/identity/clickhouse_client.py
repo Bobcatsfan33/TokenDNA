@@ -19,10 +19,35 @@ from config import (
 
 logger = logging.getLogger(__name__)
 _client = None
+_logged_once: set[str] = set()
+
+
+def is_configured() -> bool:
+    """True only when ClickHouse was explicitly configured (P2.5).
+
+    ClickHouse is an optional Tier-3 analytics store, not part of the default path:
+    the UIS event store is SQLite/Postgres and never touches it. ``CLICKHOUSE_HOST``
+    defaults to "localhost", so without this gate an unconfigured single-container
+    deployment would attempt (and retry) a connection on every health check to a
+    host the operator never asked for. Absence of the env var means "not deployed",
+    which is a different thing from "deployed and down" — and only the latter should
+    look like a failure.
+    """
+    import os
+    return bool(os.getenv("CLICKHOUSE_HOST"))
 
 
 def _get_client():
     global _client
+    if not is_configured():
+        if "unconfigured" not in _logged_once:
+            logger.info(
+                "ClickHouse not configured (CLICKHOUSE_HOST unset) — analytics "
+                "endpoints will report it as unavailable. This is expected on the "
+                "zero-dependency default deployment."
+            )
+            _logged_once.add("unconfigured")
+        return None
     if _client is None:
         try:
             import clickhouse_connect
@@ -47,7 +72,7 @@ def _get_client():
 def _ensure_schema(client) -> None:
     client.command(f"""
         CREATE TABLE IF NOT EXISTS {CLICKHOUSE_DB}.sessions (
-            timestamp         DateTime64(3)  DEFAULT now64(),
+            timestamp         DateTime       DEFAULT now(),
             request_id        String,
             tenant_id         String,
             user_id           String,
@@ -69,7 +94,18 @@ def _ensure_schema(client) -> None:
             is_vpn            Bool,
             abuse_score       Int32,
             impossible_travel Bool,
-            branching         Bool
+            branching         Bool,
+            -- UIS v1.1 Narrative Layer (Sprint 1-1)
+            uis_schema_version String          DEFAULT '1.0',
+            uis_category       String          DEFAULT '',
+            precondition       Nullable(String) DEFAULT NULL,
+            pivot              Nullable(String) DEFAULT NULL,
+            payload            Nullable(String) DEFAULT NULL,
+            objective          Nullable(String) DEFAULT NULL,
+            mitre_tactic       Nullable(String) DEFAULT NULL,
+            mitre_technique    Nullable(String) DEFAULT NULL,
+            narrative          Nullable(String) DEFAULT NULL,
+            narrative_confidence Float32        DEFAULT 0.0
         )
         ENGINE = MergeTree()
         PARTITION BY toYYYYMM(timestamp)
@@ -86,6 +122,28 @@ def _ensure_schema(client) -> None:
         """)
     except Exception:
         pass   # column already exists or DDL not supported -- harmless
+
+    # Non-destructive migration: add UIS v1.1 narrative columns
+    _uis_columns = [
+        ("uis_schema_version", "String DEFAULT '1.0'"),
+        ("uis_category", "String DEFAULT ''"),
+        ("precondition", "Nullable(String) DEFAULT NULL"),
+        ("pivot", "Nullable(String) DEFAULT NULL"),
+        ("payload", "Nullable(String) DEFAULT NULL"),
+        ("objective", "Nullable(String) DEFAULT NULL"),
+        ("mitre_tactic", "Nullable(String) DEFAULT NULL"),
+        ("mitre_technique", "Nullable(String) DEFAULT NULL"),
+        ("narrative", "Nullable(String) DEFAULT NULL"),
+        ("narrative_confidence", "Float32 DEFAULT 0.0"),
+    ]
+    for col_name, col_type in _uis_columns:
+        try:
+            client.command(f"""
+                ALTER TABLE {CLICKHOUSE_DB}.sessions
+                ADD COLUMN IF NOT EXISTS {col_name} {col_type}
+            """)
+        except Exception:
+            pass  # column already exists -- harmless
 
     _ensure_materialized_views(client)
 
@@ -204,6 +262,7 @@ def insert_event(
     threat_context=None,
     graph_result=None,
     tenant_id: str = "_global_",
+    uis_narrative=None,
 ) -> None:
     """
     Insert a session event.  Fails silently so a ClickHouse outage
@@ -241,6 +300,17 @@ def insert_event(
                 int(tc.abuse_score    if tc else 0),
                 bool(gr.impossible_travel if gr else False),
                 bool(gr.branching         if gr else False),
+                # UIS v1.1 narrative fields
+                str(getattr(uis_narrative, 'schema_version', '1.0') if uis_narrative else '1.0'),
+                str(uis_narrative.category.value if uis_narrative else ''),
+                (uis_narrative.narrative_fields.precondition if uis_narrative else None),
+                (uis_narrative.narrative_fields.pivot if uis_narrative else None),
+                (uis_narrative.narrative_fields.payload if uis_narrative else None),
+                (uis_narrative.narrative_fields.objective if uis_narrative else None),
+                (uis_narrative.mitre_tactic if uis_narrative else None),
+                (uis_narrative.mitre_technique if uis_narrative else None),
+                (uis_narrative.narrative if uis_narrative else None),
+                float(uis_narrative.confidence if uis_narrative else 0.0),
             ]],
             column_names=[
                 "request_id", "tenant_id", "user_id",
@@ -250,6 +320,10 @@ def insert_event(
                 "final_score", "tier", "reasons",
                 "is_tor", "is_datacenter", "is_vpn", "abuse_score",
                 "impossible_travel", "branching",
+                "uis_schema_version", "uis_category",
+                "precondition", "pivot", "payload", "objective",
+                "mitre_tactic", "mitre_technique", "narrative",
+                "narrative_confidence",
             ],
         )
     except Exception as e:
@@ -272,7 +346,11 @@ def query_recent_events(tenant_id: str, limit: int = 50) -> list[dict]:
                 request_id, user_id, country, asn,
                 final_score, tier,
                 is_tor, is_datacenter, is_vpn,
-                impossible_travel, branching, reasons
+                impossible_travel, branching, reasons,
+                uis_schema_version, uis_category,
+                precondition, pivot, payload, objective,
+                mitre_tactic, mitre_technique, narrative,
+                narrative_confidence
             FROM {CLICKHOUSE_DB}.sessions
             WHERE tenant_id = %(tid)s
             ORDER BY timestamp DESC

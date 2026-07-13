@@ -1,0 +1,12 @@
+# Railway deployment config. Uses Dockerfile.railway (has a shell + self-seed),
+# binds 0.0.0.0:$PORT via serve.py, and health-checks the existing /healthz.
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile.railway"
+
+[deploy]
+startCommand = "python serve.py"
+healthcheckPath = "/healthz"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3

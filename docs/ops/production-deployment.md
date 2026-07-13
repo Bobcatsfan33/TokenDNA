@@ -1,0 +1,177 @@
+# TokenDNA — Production Deployment Guide
+
+_Sprint D-1 | Last updated: 2026-04-22_
+
+---
+
+## Prerequisites
+
+| Component | Minimum version | Purpose |
+|-----------|----------------|---------|
+| Python | 3.11+ | Runtime |
+| PostgreSQL | 15+ | Primary datastore (production) |
+| Redis | 7+ | Rate limiting, caching, revocation |
+| ClickHouse | 23+ | Telemetry analytics |
+
+For the local-first enterprise topology and packaging split, see
+`docs/ops/local-control-plane.md`.
+
+---
+
+## Environment Variables
+
+### Required (production)
+
+```env
+# Auth
+PASSPORT_SIGNING_SECRET=<random 64-byte hex>
+OIDC_ISSUER=https://idp.example.com
+OIDC_AUDIENCE=https://api.tokendna.example.com
+TOKENDNA_OIDC_TENANT_CLAIM=org_id
+TOKENDNA_OIDC_ROLE_CLAIM=tokendna_role,role
+TOKENDNA_OIDC_GROUPS_CLAIM=roles,groups
+TOKENDNA_OIDC_GROUP_ROLE_MAP_JSON={"Security Owners":"owner","SOC Analysts":"analyst"}
+TOKENDNA_OIDC_ALLOW_SUB_TENANT_FALLBACK=false
+
+# Database — Postgres (production)
+TOKENDNA_DB_BACKEND=postgres
+TOKENDNA_PG_DSN=postgresql://user:password@host:5432/tokendna
+TOKENDNA_PG_POOL_MIN=5
+TOKENDNA_PG_POOL_MAX=20
+
+# Compatibility aliases accepted by the runtime and useful for common tooling.
+DATA_BACKEND=postgres
+DATABASE_URL=${TOKENDNA_PG_DSN}
+
+# Redis
+REDIS_HOST=redis.internal
+REDIS_PORT=6379
+REDIS_PASSWORD=<your-password>
+REDIS_TLS=true
+
+# ClickHouse
+CLICKHOUSE_HOST=clickhouse.internal
+CLICKHOUSE_PORT=8123
+CLICKHOUSE_USER=tokendna
+CLICKHOUSE_PASSWORD=<your-password>
+CLICKHOUSE_DB=tokendna
+CLICKHOUSE_SECURE=true
+```
+
+### Rate Limiting
+
+```env
+RATE_LIMIT_PER_MINUTE=60       # Authenticated endpoints (per tenant+IP)
+RATE_LIMIT_OPEN_PER_MINUTE=30  # Open/unauthenticated endpoints (IP only)
+```
+
+Open endpoints protected by `RATE_LIMIT_OPEN_PER_MINUTE`:
+- `POST /api/passport/verify` — third-party passport validation
+- `POST /api/verifier/challenge/{id}/respond` — challenge response submission
+- `GET /api/passport/{id}/status` — revocation check
+
+### Production Safety
+
+```env
+DEV_MODE=false   # MUST be false in production (enforced at startup)
+```
+
+`DEV_TENANT_ROLE` is honored only by the synthetic tenant injected when
+`DEV_MODE=true`; it does not affect production API-key or OIDC role mapping.
+
+### DoD / FedRAMP Profiles
+
+```env
+# commercial | cmmc_l2 | fedramp_high | dod_il4 | dod_il5 | dod_il6
+TOKENDNA_COMPLIANCE_PROFILE=dod_il5
+```
+
+When a DoD/FedRAMP High profile is selected, production preflight requires
+managed secrets (`aws_sm` or `vault`), FIPS mode, SIEM audit forwarding, KMS/HSM
+attestation signing, internal mTLS material, Redis TLS, ClickHouse TLS, and
+Postgres client mTLS material. Generate the ATO evidence package with:
+
+```bash
+python scripts/generate_oscal.py
+python scripts/stig_evidence.py
+python scripts/collect_ato_evidence.py --fail-on-missing
+```
+
+The generated package is written to `dist/ato/`.
+
+---
+
+## Database Migration: SQLite → PostgreSQL
+
+### Phase 1 — Dual-write (validate Postgres writes in parallel)
+
+```env
+TOKENDNA_DB_BACKEND=sqlite     # SQLite is still source of truth
+TOKENDNA_DB_DUAL_WRITE=true    # Write to Postgres in parallel
+TOKENDNA_PG_DSN=postgresql://...
+```
+
+During dual-write mode:
+- All reads come from SQLite
+- Writes go to both SQLite (primary) and Postgres (secondary)
+- If Postgres write fails, it is logged and swallowed — SQLite write succeeds
+
+### Phase 2 — Cut over to Postgres
+
+After validating data parity:
+
+```env
+TOKENDNA_DB_BACKEND=postgres
+TOKENDNA_DB_DUAL_WRITE=false
+TOKENDNA_PG_DSN=postgresql://...
+```
+
+### Phase 3 — Decommission SQLite
+
+Once stable on Postgres for ≥7 days, remove SQLite files and dual-write config.
+
+---
+
+## pg_connection Usage in Modules
+
+New modules should use the unified connection factory instead of calling `sqlite3.connect()` directly:
+
+```python
+from modules.storage.pg_connection import get_db_conn, adapt_sql
+
+def insert_record(tenant_id: str, data: dict) -> None:
+    sql = adapt_sql("INSERT INTO my_table (tenant_id, payload) VALUES (?, ?)")
+    with get_db_conn() as conn:
+        conn.execute(sql, (tenant_id, json.dumps(data)))
+        # commit is automatic on context exit (no exception)
+```
+
+`adapt_sql()` converts `?` placeholders to `%s` when Postgres is active.
+`get_db_conn()` is backend-transparent — the same code runs on SQLite (dev) and Postgres (prod).
+
+---
+
+## Checklist Before First Customer
+
+- [ ] `TOKENDNA_DB_BACKEND=postgres` with valid `TOKENDNA_PG_DSN`
+- [ ] OIDC tenant claim explicitly configured (`TOKENDNA_OIDC_TENANT_CLAIM`);
+      production must not derive tenant identity from `sub` / `client_id`
+- [ ] Redis available and `REDIS_PASSWORD` set
+- [ ] `DEV_MODE=false`
+- [ ] `TOKENDNA_COMPLIANCE_PROFILE` selected for the customer boundary
+- [ ] `PASSPORT_SIGNING_SECRET` is a production secret (not the dev default)
+- [ ] `RATE_LIMIT_OPEN_PER_MINUTE` tuned for expected traffic
+- [ ] ClickHouse connected for telemetry pipeline
+- [ ] Trivy scan clean on Docker image
+- [ ] 3 consecutive green test runs post-deploy
+
+---
+
+## Monitoring
+
+| Signal | Where | Alert threshold |
+|--------|-------|----------------|
+| 429 rate on open endpoints | ClickHouse / telemetry | >5% of requests |
+| PG pool exhaustion | App logs (`BackendUnavailableError`) | Any occurrence |
+| Redis unavailable | `GET /api/health` → `redis: false` | Any occurrence |
+| Test suite regression | CI | Any failure blocks deploy |
