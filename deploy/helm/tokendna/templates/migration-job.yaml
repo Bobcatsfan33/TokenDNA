@@ -25,7 +25,7 @@ spec:
         - name: migrate
           image: {{ printf "%s:%s" .Values.migrations.image.repository (default .Chart.AppVersion .Values.migrations.image.tag) | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["alembic", "upgrade", "head"]
+          command: ["python", "scripts/migrate_storage.py"]
           envFrom:
             - secretRef:
                 name: {{ .Values.secrets.existingSecret }}

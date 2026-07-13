@@ -18,8 +18,6 @@ from __future__ import annotations
 import logging
 from typing import Sequence, Union
 
-from alembic import op
-
 # revision identifiers, used by Alembic.
 revision: str = "0001_baseline"
 down_revision: Union[str, Sequence[str], None] = None
@@ -30,64 +28,64 @@ depends_on: Union[str, Sequence[str], None] = None
 logger = logging.getLogger("alembic.tokendna.baseline")
 
 
-# Modules whose ``init_db()`` is the source of truth for their schema.
-# Order matters only for FK references; TokenDNA has none cross-module so
-# alphabetical is fine.
-_INIT_MODULES: tuple[str, ...] = (
-    "modules.identity.passport",
-    "modules.identity.uis_store",
-    "modules.identity.attestation_store",
-    "modules.identity.trust_graph",
-    "modules.identity.intent_correlation",
-    "modules.identity.delegation_receipt",
-    "modules.identity.workflow_attestation",
-    "modules.identity.honeypot_mesh",
-    "modules.identity.compliance_posture",
-    "modules.identity.policy_guard",
-    "modules.identity.permission_drift",
-    "modules.identity.agent_lifecycle",
-    "modules.identity.mcp_inspector",
-    "modules.identity.mcp_gateway",
-    "modules.identity.agent_discovery",
-    "modules.identity.enforcement_plane",
-    "modules.identity.behavioral_dna",
-    "modules.identity.cert_dashboard",
-    "modules.identity.policy_advisor",
-    "modules.identity.compliance_engine",
-    "modules.identity.verifier_reputation",
-    "modules.product.threat_sharing",
-    "modules.product.threat_sharing_flywheel",
-    "modules.product.staged_rollout",
+# Modules whose schema initializer is the source of truth for baseline DDL.
+_INIT_TARGETS: tuple[tuple[str, str], ...] = (
+    ("modules.tenants.store", "init_db"),
+    ("modules.identity.attestation_store", "init_db"),
+    ("modules.identity.uis_store", "init_db"),
+    ("modules.identity.trust_graph", "init_db"),
+    ("modules.identity.intent_correlation", "init_db"),
+    ("modules.identity.policy_guard", "init_db"),
+    ("modules.identity.permission_drift", "init_db"),
+    ("modules.identity.agent_lifecycle", "init_db"),
+    ("modules.identity.mcp_inspector", "init_db"),
+    ("modules.identity.mcp_gateway", "init_db"),
+    ("modules.identity.agent_discovery", "init_db"),
+    ("modules.identity.enforcement_plane", "init_db"),
+    ("modules.identity.behavioral_dna", "init_db"),
+    ("modules.identity.compliance_engine", "init_db"),
+    ("modules.identity.cert_dashboard", "init_db"),
+    ("modules.identity.policy_advisor", "init_db"),
+    ("modules.identity.passport", "init_passport_db"),
+    ("modules.identity.verifier_reputation", "init_reputation_db"),
+    ("modules.identity.proof_of_control", "init_db"),
+    ("modules.identity.certificate_transparency", "init_db"),
+    ("modules.identity.network_intel", "init_db"),
+    ("modules.identity.compliance", "init_db"),
+    ("modules.identity.policy_bundles", "init_db"),
+    ("modules.identity.decision_audit", "init_db"),
+    ("modules.identity.trust_federation", "init_db"),
+    ("modules.product.metering", "init_db"),
+    ("modules.product.threat_sharing", "init_db"),
+    ("modules.product.threat_sharing_flywheel", "init_db"),
+    ("modules.product.staged_rollout", "init_db"),
+    ("modules.identity.delegation_receipt", "init_db"),
+    ("modules.identity.workflow_attestation", "init_db"),
+    ("modules.identity.compliance_posture", "init_db"),
+    ("modules.identity.honeypot_mesh", "init_db"),
 )
 
 
 def upgrade() -> None:
     """Apply each module's init_db() against the Alembic connection.
 
-    We import lazily inside the function so a missing optional sub-dep on
-    one module doesn't crash the whole migration run — failures are logged
-    and the migration continues.
+    We import lazily inside the function so failures identify the offending
+    module clearly. Any failure aborts the migration.
     """
     failures: list[tuple[str, str]] = []
-    for dotted in _INIT_MODULES:
+    for dotted, attr in _INIT_TARGETS:
         try:
-            module = __import__(dotted, fromlist=["init_db"])
-            init = getattr(module, "init_db", None) or getattr(module, "init_passport_db", None)
-            if init is None:
-                logger.warning("baseline: %s exposes no init_db()/init_passport_db(); skipping", dotted)
-                continue
+            module = __import__(dotted, fromlist=[attr])
+            init = getattr(module, attr)
             init()
-            logger.info("baseline: %s.init_db() applied", dotted)
+            logger.info("baseline: %s.%s() applied", dotted, attr)
         except Exception as exc:  # noqa: BLE001
-            logger.error("baseline: %s failed — %s", dotted, exc)
-            failures.append((dotted, str(exc)))
+            logger.error("baseline: %s.%s failed — %s", dotted, attr, exc)
+            failures.append((f"{dotted}.{attr}", str(exc)))
 
     if failures:
         joined = "\n  - ".join(f"{m}: {e}" for m, e in failures)
-        # Keep the migration permissive on failures so partial deploys
-        # against schema-divergent staging databases don't block — but
-        # surface the list to the operator log.
-        logger.error("baseline: %d module(s) failed to init:\n  - %s", len(failures), joined)
+        raise RuntimeError(f"baseline migration failed:\n  - {joined}")
 
 
 def downgrade() -> None:

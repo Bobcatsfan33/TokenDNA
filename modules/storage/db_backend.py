@@ -20,12 +20,20 @@ class BackendConfig:
 
 
 def get_backend_config() -> BackendConfig:
-    backend = str(os.getenv("TOKENDNA_DB_BACKEND", "sqlite")).strip().lower()
+    backend = str(
+        os.getenv("TOKENDNA_DB_BACKEND")
+        or os.getenv("DATA_BACKEND")
+        or "sqlite"
+    ).strip().lower()
     if backend not in {"sqlite", "postgres"}:
         backend = "sqlite"
     dual_raw = str(os.getenv("TOKENDNA_DB_DUAL_WRITE", "false")).strip().lower()
     dual_write = dual_raw in {"1", "true", "yes", "on"}
-    dsn = str(os.getenv("TOKENDNA_PG_DSN", "")).strip() or None
+    dsn = str(
+        os.getenv("TOKENDNA_PG_DSN")
+        or os.getenv("DATABASE_URL")
+        or ""
+    ).strip() or None
     return BackendConfig(backend=backend, dual_write=dual_write, postgres_dsn=dsn)
 
 

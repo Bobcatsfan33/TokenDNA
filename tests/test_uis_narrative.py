@@ -31,7 +31,7 @@ from modules.identity.uis_narrative import (
     render_narrative,
     select_mitre_mapping,
 )
-from modules.identity.scoring import ScoreBreakdown, RiskTier
+from modules.identity.pipeline import ScoreBreakdown, RiskTier
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -522,24 +522,24 @@ class TestBackwardCompatibility:
     """Ensure existing scoring/DNA functionality is unaffected."""
 
     def test_scoring_imports_unchanged(self):
-        from modules.identity.scoring import compute, ScoreBreakdown, RiskTier
+        from modules.identity.pipeline import compute, ScoreBreakdown, RiskTier
         bd = compute(85)
         assert bd.tier == RiskTier.ALLOW
         assert bd.final_score == 85
 
     def test_scoring_with_threat_unchanged(self):
-        from modules.identity.scoring import compute
+        from modules.identity.pipeline import compute
         bd = compute(80)
         assert bd.final_score == 80
 
     def test_dna_generation_unchanged(self):
-        from modules.identity.token_dna import generate_dna
+        from modules.identity.pipeline import generate_dna
         dna = generate_dna("Mozilla/5.0", "1.2.3.4", "US", "AS15169")
         assert dna["version"] == 2
         assert dna["country"] == "US"
 
     def test_dna_migration_unchanged(self):
-        from modules.identity.token_dna import migrate_dna
+        from modules.identity.pipeline import migrate_dna
         v1 = {"version": 1, "d": "dev", "i": "ip", "c": "GB", "a": "AS1"}
         v2 = migrate_dna(v1)
         assert v2["version"] == 2

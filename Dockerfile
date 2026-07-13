@@ -96,7 +96,7 @@ EXPOSE 8000
 # distroless has no shell + no curl/wget, so the healthcheck runs through
 # the Python interpreter that's already in the image.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD ["python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).status==200 else 1)"]
+    CMD ["python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/', timeout=3).status==200 else 1)"]
 
 # Distroless `python3-debian12` images use the python interpreter as the
 # entrypoint, so we hand it the module + args directly.
@@ -104,6 +104,6 @@ ENTRYPOINT ["python", "-m", "uvicorn"]
 CMD ["api:app", \
      "--host", "0.0.0.0", \
      "--port", "8000", \
-     "--workers", "2", \
+     "--workers", "1", \
      "--log-level", "info", \
      "--no-access-log"]

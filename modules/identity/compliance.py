@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import threading
 import uuid
 from contextlib import contextmanager
@@ -20,6 +19,7 @@ from modules.identity.trust_authority import (
     build_signer_for_algorithm,
     build_signer_for_key,
 )
+from modules.storage.pg_connection import ensure_sqlite_dir, AdaptedCursor, get_db_conn
 
 
 _lock = threading.Lock()
@@ -33,27 +33,11 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
 @contextmanager
 def _cursor():
     with _lock:
-        conn = _get_conn()
-        try:
-            cur = conn.cursor()
-            yield cur
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        with get_db_conn(db_path=_db_path()) as conn:
+            yield AdaptedCursor(conn.cursor())
 
 
 CONTROL_MAPS = {
@@ -82,7 +66,7 @@ CONTROL_MAPS = {
 
 def init_db() -> None:
     db_path = _db_path()
-    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+    ensure_sqlite_dir(db_path)
     with _cursor() as cur:
         cur.execute(
             """
@@ -454,4 +438,3 @@ def list_signed_snapshots(tenant_id: str, limit: int = 50) -> list[dict[str, Any
             (tenant_id, limit),
         ).fetchall()
     return [json.loads(row["snapshot_json"]) for row in rows]
-

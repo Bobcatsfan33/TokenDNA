@@ -61,13 +61,14 @@ from __future__ import annotations
 
 import logging
 import os
-import sqlite3
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
+
+from modules.storage.pg_connection import ensure_sqlite_dir, AdaptedCursor, get_db_conn
 
 logger = logging.getLogger(__name__)
 
@@ -145,32 +146,16 @@ class SweepResult:
 # ---------------------------------------------------------------------------
 
 
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
 @contextmanager
 def _cursor():
     with _lock:
-        conn = _get_conn()
-        try:
-            cur = conn.cursor()
-            yield cur
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        with get_db_conn(db_path=_db_path()) as conn:
+            yield AdaptedCursor(conn.cursor())
 
 
 def init_db() -> None:
     db_path = _db_path()
-    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+    ensure_sqlite_dir(db_path)
     with _cursor() as cur:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS verifier_proof_intervals (
@@ -192,7 +177,7 @@ def init_db() -> None:
         """)
 
 
-def _row_to_record(row: sqlite3.Row) -> ProofRecord:
+def _row_to_record(row: Any) -> ProofRecord:
     return ProofRecord(
         verifier_id=row["verifier_id"],
         tenant_id=row["tenant_id"],

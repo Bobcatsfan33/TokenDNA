@@ -41,7 +41,7 @@ def test_metering_module_usage_evaluation_contract():
 
 
 def test_operator_status_payload_shape():
-    from api import api_operator_status
+    from api_routers.misc import api_operator_status
 
     # Validate payload contract without invoking network services.
     # Build minimal fake tenant context expected by dependency output.

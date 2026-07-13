@@ -5,17 +5,14 @@
 # Never commit .env to git.
 #
 # Security controls applied:
-#   - No container runs as root (user: directive)
-#   - read_only: true prevents container filesystem writes
-#   - no-new-privileges: true blocks privilege escalation
-#   - cap_drop: ALL removes all Linux capabilities (add back only what's needed)
+#   - TokenDNA app containers run with read_only, no-new-privileges, and cap_drop: ALL.
+#   - Stateful vendor images keep their default startup privileges so their
+#     entrypoints can initialize volumes and drop to their built-in users.
 #   - Resource limits prevent DoS via resource exhaustion
 #   - Internal network: app ↔ redis ↔ clickhouse never exposed externally
 #   - Redis requires password authentication
 #   - ClickHouse requires password authentication
 #   - Ports bound to 127.0.0.1 (not 0.0.0.0) — reverse proxy required for production
-
-version: "3.9"
 
 networks:
   aegis-internal:
@@ -43,7 +40,6 @@ services:
       - /var/log/aegis:size=256m
     security_opt:
       - no-new-privileges:true
-      - seccomp:seccomp-profile.json
     cap_drop:
       - ALL
     networks:
@@ -78,7 +74,7 @@ services:
           cpus: "0.25"
           memory: 128M
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/')"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -101,10 +97,6 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=32m
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
     networks:
       - aegis-internal
     # NO external port exposure — only reachable by tokendna container
@@ -144,10 +136,6 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:24.3-alpine
     restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
     cap_add:
       - SYS_NICE       # ClickHouse uses nice() for I/O scheduling
       - IPC_LOCK       # memory-mapped files
@@ -170,7 +158,7 @@ services:
           memory: 2G
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider",
-             "http://localhost:8123/ping"]
+             "http://127.0.0.1:8123/ping"]
       interval: 15s
       timeout: 5s
       retries: 5

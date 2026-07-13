@@ -29,6 +29,11 @@ from modules.identity.certificate_status import certificate_status_payload
 
 logger = logging.getLogger(__name__)
 
+try:
+    from modules.identity import honeypot_mesh as _HONEYPOT_MESH  # noqa: PLC0415
+except Exception:  # noqa: BLE001
+    _HONEYPOT_MESH = None
+
 
 def _slo_target_ms() -> float:
     try:
@@ -116,9 +121,8 @@ def _check_honeytokens(
     real auth path — fail-open is correct here, the worst case is missing
     one decoy hit.
     """
-    try:
-        from modules.identity import honeypot_mesh  # noqa: PLC0415
-    except Exception:  # noqa: BLE001
+    honeypot_mesh = _HONEYPOT_MESH
+    if honeypot_mesh is None:
         return None
     candidates = _candidate_tokens(
         certificate_id=certificate_id,
@@ -297,4 +301,3 @@ def evaluate_runtime_enforcement(
             "slo_met": slo_met,
         },
     }
-

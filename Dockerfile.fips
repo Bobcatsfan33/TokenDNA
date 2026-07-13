@@ -1,0 +1,68 @@
+# Dockerfile.fips — federal build flavor (T-3, SC-13).
+#
+# Kept alongside the distroless commercial Dockerfile; CI builds both via a
+# matrix (see .github/workflows/release-docker.yml).
+#
+# Base: UBI9 ships OpenSSL 3 with the Red Hat FIPS provider (CMVP-validated
+# module). Distroless Debian cannot offer this; the federal flavor trades image
+# size for validated crypto. Record the CMVP certificate number of the pinned
+# UBI9 openssl build in compliance/dod/control_matrix.json (SC-13).
+#
+# The image sets REQUIRE_FIPS=true so modules.security.fips.assert_fips_mode()
+# fail-closes (exit 78) at startup if the validated provider is not active.
+
+# ── Stage 1: dependency builder ──────────────────────────────────────────────
+FROM registry.access.redhat.com/ubi9/python-312:latest AS builder
+USER 0
+RUN dnf install -y gcc libpq-devel openssl-devel && dnf clean all
+WORKDIR /build
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1
+COPY requirements.txt .
+RUN pip install --prefix=/install -r requirements.txt
+
+
+# ── Stage 2: runtime ─────────────────────────────────────────────────────────
+FROM registry.access.redhat.com/ubi9/python-312-minimal:latest AS runtime
+USER 0
+RUN microdnf install -y libpq && microdnf clean all
+
+LABEL org.opencontainers.image.title="TokenDNA (FIPS)" \
+      org.opencontainers.image.description="Federal build flavor: UBI9 + CMVP-validated OpenSSL FIPS provider." \
+      org.opencontainers.image.source="https://github.com/Bobcatsfan33/TokenDNA" \
+      org.opencontainers.image.licenses="BUSL-1.1" \
+      org.opencontainers.image.vendor="TokenDNA"
+
+COPY --from=builder /install /usr/local
+WORKDIR /app
+COPY . /app
+
+# Defence in depth: strip anything that should never be inside an image.
+RUN find /app -name '__pycache__' -type d -prune -exec rm -rf {} + \
+ && find /app \( -name '.env' -o -name '.env.*' -o -name '*.key' -o -name '*.pem' \) -delete \
+ && rm -rf /app/.git /app/.github /app/.pytest_cache /app/.mypy_cache /app/tests \
+ && find /app -name '*.pyc' -delete
+
+USER 1001
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONFAULTHANDLER=1 \
+    PYTHONPATH=/app:/usr/local/lib/python3.12/site-packages \
+    DATA_DB_PATH=/data/tokendna.db \
+    AUDIT_LOG_PATH=/var/log/aegis/audit.jsonl \
+    REQUIRE_FIPS=true \
+    OPENSSL_FORCE_FIPS_MODE=1
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD ["python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/', timeout=3).status==200 else 1)"]
+
+CMD ["python", "-m", "uvicorn", "api:app", \
+     "--host", "0.0.0.0", \
+     "--port", "8000", \
+     "--workers", "1", \
+     "--log-level", "info", \
+     "--no-access-log"]

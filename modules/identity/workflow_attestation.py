@@ -51,14 +51,14 @@ import hmac
 import json
 import logging
 import os
-import sqlite3
 import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from modules.storage import db_backend
+from modules.storage.ddl_runner import run_ddl
+from modules.storage.pg_connection import get_adapted_db_conn
 
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
@@ -82,18 +82,6 @@ def _secret() -> bytes:
 
 def _db_path() -> str:
     return os.getenv("DATA_DB_PATH", "/data/tokendna.db")
-
-
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
-def _use_pg() -> bool:
-    return db_backend.should_use_postgres()
 
 
 def _now() -> datetime:
@@ -142,17 +130,7 @@ CREATE INDEX IF NOT EXISTS idx_workflow_obs_drift
 
 
 def init_db() -> None:
-    if _use_pg():
-        return
-    db_path = _db_path()
-    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
-    with _lock:
-        conn = _get_conn()
-        try:
-            conn.executescript(_SCHEMA)
-            conn.commit()
-        finally:
-            conn.close()
+    run_ddl(_SCHEMA, db_path=_db_path())
 
 
 # ── Data classes ──────────────────────────────────────────────────────────────
@@ -279,8 +257,6 @@ def register_workflow(
     the persisted workflow. Idempotent on (tenant_id, merkle_root) — a
     second call with the same canonicalized chain returns the existing row.
     """
-    if _use_pg():
-        raise NotImplementedError("workflow_attestation PG path not implemented")
     if not isinstance(hops, list) or not hops:
         raise WorkflowError("hops_must_be_non_empty_list")
     name = (name or "").strip()
@@ -291,8 +267,7 @@ def register_workflow(
     root = merkle_root(canonical)
 
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             existing = conn.execute(
                 "SELECT * FROM workflows WHERE tenant_id=? AND merkle_root=?",
                 (tenant_id, root),
@@ -318,7 +293,6 @@ def register_workflow(
                     root, sig, now, created_by,
                 ),
             )
-            conn.commit()
             return Workflow(
                 workflow_id=wid,
                 tenant_id=tenant_id,
@@ -330,11 +304,9 @@ def register_workflow(
                 created_at=now,
                 created_by=created_by,
             )
-        finally:
-            conn.close()
 
 
-def _row_to_workflow(row: sqlite3.Row) -> Workflow:
+def _row_to_workflow(row: Any) -> Workflow:
     return Workflow(
         workflow_id=row["workflow_id"],
         tenant_id=row["tenant_id"],
@@ -350,11 +322,8 @@ def _row_to_workflow(row: sqlite3.Row) -> Workflow:
 
 
 def get_workflow(workflow_id: str, tenant_id: str | None = None) -> Workflow | None:
-    if _use_pg():
-        return None
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             row = conn.execute(
                 "SELECT * FROM workflows WHERE workflow_id=?",
                 (workflow_id,),
@@ -364,8 +333,6 @@ def get_workflow(workflow_id: str, tenant_id: str | None = None) -> Workflow | N
             if tenant_id is not None and row["tenant_id"] != tenant_id:
                 return None
             return _row_to_workflow(row)
-        finally:
-            conn.close()
 
 
 def list_workflows(
@@ -373,11 +340,8 @@ def list_workflows(
     status: str | None = "active",
     limit: int = 100,
 ) -> list[Workflow]:
-    if _use_pg():
-        return []
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             sql = "SELECT * FROM workflows WHERE tenant_id=?"
             params: list[Any] = [tenant_id]
             if status:
@@ -387,26 +351,18 @@ def list_workflows(
             params.append(min(int(limit), 500))
             rows = conn.execute(sql, tuple(params)).fetchall()
             return [_row_to_workflow(r) for r in rows]
-        finally:
-            conn.close()
 
 
 def retire_workflow(workflow_id: str, tenant_id: str | None = None) -> bool:
-    if _use_pg():
-        return False
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             sql = "UPDATE workflows SET status='retired' WHERE workflow_id=? AND status='active'"
             params: list[Any] = [workflow_id]
             if tenant_id is not None:
                 sql += " AND tenant_id=?"
                 params.append(tenant_id)
             cur = conn.execute(sql, tuple(params))
-            conn.commit()
             return cur.rowcount > 0
-        finally:
-            conn.close()
 
 
 # ── Replay ────────────────────────────────────────────────────────────────────
@@ -506,14 +462,8 @@ def record_observation(
     details = _diff_chains(wf.hops, canonical_observed) if drift else {}
     now = _iso(_now())
     obs_id = f"wfobs:{uuid.uuid4().hex[:24]}"
-    if _use_pg():
-        return {
-            "observation_id": obs_id, "workflow_id": workflow_id,
-            "drift": drift, "drift_details": details,
-        }
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             conn.execute(
                 """
                 INSERT INTO workflow_observations
@@ -530,9 +480,6 @@ def record_observation(
                     json.dumps(canonical_observed, sort_keys=True),
                 ),
             )
-            conn.commit()
-        finally:
-            conn.close()
     return {
         "observation_id": obs_id,
         "workflow_id": workflow_id,
@@ -581,11 +528,8 @@ def get_observations(
     limit: int = 50,
     tenant_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    if _use_pg():
-        return []
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             sql = "SELECT * FROM workflow_observations WHERE workflow_id=?"
             params: list[Any] = [workflow_id]
             if tenant_id is not None:
@@ -610,5 +554,3 @@ def get_observations(
                 }
                 for r in rows
             ]
-        finally:
-            conn.close()

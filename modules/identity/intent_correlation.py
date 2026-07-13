@@ -47,6 +47,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from modules.storage import db_backend
+from modules.storage.pg_connection import ensure_sqlite_dir, open_adapted_db_conn
 
 
 # ── Constants ──────────────────────────────────────────────────────────────────
@@ -65,12 +66,8 @@ def _db_path() -> str:
     return os.getenv("DATA_DB_PATH", "/data/tokendna.db")
 
 
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+def _get_conn():
+    return open_adapted_db_conn(db_path=_db_path())
 
 
 def _use_pg() -> bool:
@@ -142,7 +139,7 @@ def init_db() -> None:
     if _use_pg():
         return  # PG path: stub
     db_path = _db_path()
-    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+    ensure_sqlite_dir(db_path)
     with _lock:
         conn = _get_conn()
         try:

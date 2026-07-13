@@ -52,6 +52,7 @@ import hashlib
 import hmac
 import logging
 import os
+import ssl
 import struct
 import sys
 from base64 import urlsafe_b64decode, urlsafe_b64encode
@@ -456,3 +457,54 @@ fips = FIPSEnforcer()
 # Run startup check immediately on import in non-dev environments
 if _ENVIRONMENT != "dev":
     fips.startup_check()
+
+
+# ── Fail-closed federal-profile gate (T-3, SC-13) ─────────────────────────────
+
+EX_CONFIG = 78  # sysexits.h — configuration error
+
+
+def _fips_provider_active() -> bool:
+    """True iff a FIPS-validated crypto provider is demonstrably active.
+
+    Two independent signals, either is sufficient:
+      (a) probing MD5 raises ``ValueError`` — under an active FIPS provider,
+          a non-approved primitive requested *for security* is refused (the
+          validated OpenSSL build blocks MD5).
+      (b) the platform :class:`FIPSEnforcer` detects a FIPS kernel/OpenSSL.
+
+    The commercial distroless image (Debian, no validated provider) satisfies
+    neither, so the gate below fails it; the federal UBI9 flavor satisfies (a)
+    and/or (b).
+    """
+    try:
+        hashlib.md5(b"probe")  # noqa: S324 — deliberate: MUST raise under FIPS
+    except ValueError:
+        return True
+    # Corroborate with the *reliable* kernel signal only. ssl.HAS_FIPS reports
+    # FIPS *capability* of the OpenSSL build, not whether FIPS mode is active —
+    # using it here would wrongly report a normal host as FIPS-active.
+    try:
+        return bool(fips.status.kernel_fips)
+    except Exception:  # pragma: no cover - defensive
+        return False
+
+
+def assert_fips_mode() -> None:
+    """Refuse to serve a federal-profile deployment on non-validated crypto.
+
+    No-op unless ``REQUIRE_FIPS=true``. When required but the validated
+    provider is not active, exit ``78`` (EX_CONFIG) — fail-closed (SC-13).
+    Called first in the app factory and by the ``fips-smoke`` CI job.
+    """
+    if os.getenv("REQUIRE_FIPS", "false").lower() != "true":
+        return
+    if _fips_provider_active():
+        logger.info("FIPS provider active: %s", ssl.OPENSSL_VERSION)
+        return
+    sys.stderr.write(
+        "FATAL: REQUIRE_FIPS=true but the OpenSSL FIPS provider is not active.\n"
+        f"OpenSSL: {ssl.OPENSSL_VERSION}\n"
+        "Deploy the Dockerfile.fips image flavor or unset REQUIRE_FIPS.\n"
+    )
+    sys.exit(EX_CONFIG)

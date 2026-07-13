@@ -32,7 +32,7 @@ Stateful tier: Postgres (primary + read replica), Redis (3-node Sentinel), Click
 | Internal CA issued (`scripts/issue_internal_certs.sh`) |  |
 | Cert paths mounted into containers, env set       |       |
 | Secrets provisioned (see "Secret provisioning") |       |
-| Alembic migrations applied (`alembic upgrade head`) |     |
+| TokenDNA storage migrations applied (`python scripts/migrate_storage.py`) | |
 | Health endpoint reachable on port 8000            |       |
 | Cloudflare Worker `wrangler deploy` succeeded     |       |
 | KV namespace populated by first cron run          |       |
@@ -90,14 +90,14 @@ The secret_gate (`modules/security/secret_gate.py`) rejects:
 
 ```bash
 # In the API container or any host with backend access
-alembic upgrade head
+python scripts/migrate_storage.py
 ```
 
 If migrations fail mid-stream:
 1. The API process exits non-zero — **do not** restart with `--allow-out-of-sync` (this masks real problems).
-2. `alembic current` shows the stuck revision.
-3. Roll back: `alembic downgrade -1`.
-4. Inspect `alembic/versions/<id>.py` for the offending op.
+2. `python scripts/migrate_storage.py --status` shows pending revisions.
+3. Inspect the failing initializer or migration named in the error.
+4. Restore from backup if a destructive partial change occurred.
 5. Fix the migration script in a follow-up PR (never edit the live one in place).
 
 ## Health checks

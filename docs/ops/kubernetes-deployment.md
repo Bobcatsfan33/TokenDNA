@@ -25,10 +25,11 @@ helm install tokendna deploy/helm/tokendna \
   --set image.tag=0.1.0
 ```
 
-A pre-install Helm hook runs `alembic upgrade head` against
-`DATABASE_URL` before the rolling deployment proceeds. Roll-backs use
-`helm rollback`; the migration job is **not** automatically reversed —
-operate Alembic by hand for that.
+A pre-install Helm hook should run `python scripts/migrate_storage.py`
+against `DATABASE_URL` before the rolling deployment proceeds. Roll-backs use
+`helm rollback`; storage migrations are **not** automatically reversed.
+Restore from backup or run an explicit forward-fix migration when schema
+state must change.
 
 ## Hardening defaults
 

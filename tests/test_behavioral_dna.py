@@ -331,8 +331,8 @@ class TestSnapshots(unittest.TestCase):
 class TestAPIRouteRegistration(unittest.TestCase):
 
     def test_api_imports_behavioral_dna(self):
-        import api as api_mod
-        assert hasattr(api_mod, "behavioral_dna")
+        import api_routers.identity_surface as _r
+        assert hasattr(_r, "behavioral_dna")
 
     def test_behavioral_routes_registered(self):
         try:

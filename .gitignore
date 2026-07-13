@@ -13,6 +13,8 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+efficacy_report.json
+efficacy_report.md
 .eggs/
 .venv/
 venv/
@@ -39,3 +41,10 @@ coverage.xml
 # Docker
 *.log
 *.pdf
+
+# Session-scratch helpers that must never be committed
+HANDOFF_CLAUDE_CODE_EXECUTION.md
+tokendna_licensing_install.sh
+
+# Filled trial env (OIDC secrets, trial license) — never commit
+.env.trial

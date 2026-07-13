@@ -31,6 +31,63 @@ jobs:
       - name: Ruff lint
         run: ruff check . --output-format=github
 
+      - name: Storage backend guardrail
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import sys
+
+          allowed = {"modules/storage/pg_connection.py"}
+          offenders = []
+          for path in Path("modules").rglob("*.py"):
+              rel = path.as_posix()
+              if rel in allowed:
+                  continue
+              if "sqlite3.connect" in path.read_text(encoding="utf-8"):
+                  offenders.append(rel)
+
+          if offenders:
+              print("::error::Product modules must use modules.storage.pg_connection instead of sqlite3.connect directly.")
+              for rel in offenders:
+                  print(f"::error file={rel}::direct sqlite3.connect call bypasses the shared storage backend")
+              sys.exit(1)
+
+          print("All product modules use the shared storage backend.")
+          PY
+
+      - name: Monolith ratchet (api.py may only shrink — T-1)
+        run: python scripts/ci/api_monolith_ratchet.py
+
+      - name: API route-surface guard (decomposition preserves the surface — T-1)
+        run: TOKENDNA_ENV=ci python scripts/ci/openapi_route_guard.py
+
+      - name: FIPS crypto-primitive gate (SC-13)
+        run: |
+          # No non-approved hashlib primitive may be requested for security in
+          # product modules. Allow markers: `usedforsecurity=False` (caller
+          # opted out of security use) and `noqa: S324` (the deliberate FIPS
+          # probe in modules/security/fips.py, which MUST raise under FIPS).
+          if git grep -nE "hashlib\.(md5|sha1)\(" -- modules/ \
+               | grep -vE "usedforsecurity|noqa: S324"; then
+            echo "::error::non-approved hash primitive used for security in modules/ (SC-13). Add usedforsecurity=False or route through modules.security.fips."
+            exit 1
+          fi
+          echo "FIPS crypto-primitive gate OK"
+
+      - name: FIPS fail-closed gate must hold on a non-FIPS host
+        run: |
+          # With REQUIRE_FIPS=true on this (non-FIPS) runner, assert_fips_mode()
+          # must exit 78 (fail-closed). Unset, it must be a no-op.
+          set +e
+          REQUIRE_FIPS=true python -c "from modules.security.fips import assert_fips_mode; assert_fips_mode()"
+          code=$?
+          set -e
+          if [ "$code" != "78" ]; then
+            echo "::error::expected assert_fips_mode() to exit 78 under REQUIRE_FIPS=true on a non-FIPS host, got $code"; exit 1
+          fi
+          REQUIRE_FIPS=false python -c "from modules.security.fips import assert_fips_mode; assert_fips_mode(); print('no-op OK when REQUIRE_FIPS unset')"
+          echo "FIPS fail-closed gate OK"
+
       - name: Import verification
         run: |
           python -c "
@@ -38,8 +95,7 @@ jobs:
           mods = [
             'config', 'auth',
             'modules.tenants.models', 'modules.tenants.store', 'modules.tenants.middleware',
-            'modules.identity.cache_redis', 'modules.identity.ml_model',
-            'modules.identity.session_graph', 'modules.identity.async_pipeline',
+            'modules.identity.cache_redis',
             'modules.security.audit_log', 'modules.security.rbac', 'modules.security.headers',
             'onboarding.aws_connector',
             'modules.identity.uis_narrative',
@@ -53,6 +109,56 @@ jobs:
             sys.exit(1)
           print(f'All {len(mods)} modules imported successfully')
           "
+
+  # ── Full monorepo regression suite ─────────────────────────────────────────
+  test-suite:
+    name: Full Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest pytest-asyncio
+
+      - name: Run backend tests
+        run: python -m pytest -q --import-mode=importlib tests
+
+  # ── DoD ATO readiness evidence ─────────────────────────────────────────────
+  ato-evidence:
+    name: DoD ATO Evidence Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install test dependency
+        run: pip install pytest
+
+      - name: Generate OSCAL and evidence artifacts
+        run: |
+          python scripts/generate_oscal.py
+          python scripts/stig_evidence.py
+          python scripts/collect_ato_evidence.py --fail-on-missing
+
+      - name: Run ATO evidence tests
+        run: python -m pytest -q tests/test_ato_evidence.py tests/test_preflight_prod.py
+
+      - name: Upload ATO evidence
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ato-evidence
+          path: dist/ato
+          if-no-files-found: error
 
   # ── Dependency Vulnerability Scan ───────────────────────────────────────────
   dependency-scan:
@@ -69,9 +175,8 @@ jobs:
       - name: pip-audit
         run: |
           pip install pip-audit
-          pip-audit -r requirements.txt --format=json --output=pip-audit-results.json || true
-          pip-audit -r requirements.txt || echo "::warning::pip-audit found vulnerabilities"
-          pip-audit -r requirements.txt || echo "::warning::pip-audit found vulnerabilities — review pip-audit-results.json artifact"
+          pip-audit -r requirements.txt --no-deps --disable-pip --progress-spinner off --format=json --output=pip-audit-results.json
+          pip-audit -r requirements.txt --no-deps --disable-pip --progress-spinner off
 
       - name: Upload audit results
         uses: actions/upload-artifact@v7
@@ -166,7 +271,7 @@ jobs:
 
       - name: Start API for runtime readiness checks
         run: |
-          DEV_MODE=true DATA_DB_PATH=/tmp/tokendna-ci.db AUDIT_LOG_PATH=/tmp/tokendna-ci-audit.jsonl python -m uvicorn api:app --host 127.0.0.1 --port 8000 > /tmp/tokendna-ci.log 2>&1 &
+          TOKENDNA_ENV=ci DEV_MODE=true DATA_DB_PATH=/tmp/tokendna-ci.db AUDIT_LOG_PATH=/tmp/tokendna-ci-audit.jsonl python -m uvicorn api:app --host 127.0.0.1 --port 8000 > /tmp/tokendna-ci.log 2>&1 &
           for i in {1..30}; do
             if python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=1); print('up')" >/dev/null 2>&1; then
               break
@@ -323,10 +428,17 @@ jobs:
       - name: Preflight (production, strong secrets) — must pass
         env:
           DEV_MODE: "false"
+          TOKENDNA_ENV: production
+          TOKENDNA_DB_BACKEND: postgres
+          TOKENDNA_PG_DSN: postgresql://tokendna:tokendna@localhost:5432/tokendna
+          DATABASE_URL: postgresql://tokendna:tokendna@localhost:5432/tokendna
           OIDC_ISSUER: https://example.com
           OIDC_AUDIENCE: ci
+          TOKENDNA_OIDC_TENANT_CLAIM: org_id
           DNA_HMAC_KEY: ci-dna-hmac-key-32-bytes-aaaaaaaa
           AUDIT_HMAC_KEY: ci-audit-hmac-key-32-bytes-aaaaaa
+          AUDIT_BACKEND: file
+          AUDIT_LOG_PATH: /tmp/tokendna-ci-audit.jsonl
           ATTESTATION_CA_KEY_ID: ci-key
           ATTESTATION_CA_SECRET: ci-attestation-secret-32-bytes-aa
         run: |
@@ -336,12 +448,11 @@ jobs:
           export TOKENDNA_POSTURE_SECRET=$(openssl rand -hex 32)
           python scripts/preflight_prod.py --environment production
 
-  # ── Postgres integration tests ────────────────────────────────────────────
-  # Spins up an ephemeral Postgres, applies the Alembic baseline, and runs
-  # the storage-layer test files against the real backend. Catches dialect
-  # divergence before the runtime path goes live in production.
+  # ── Live Postgres deployment gate ─────────────────────────────────────────
+  # Spins up an ephemeral Postgres and runs the same production preflight,
+  # TokenDNA storage migrations, and smoke path operators use locally.
   postgres-integration:
-    name: Postgres Integration
+    name: Live Postgres Deployment Gate
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -358,16 +469,26 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
+      DEV_MODE: "false"
+      TOKENDNA_ENV: production
+      ENVIRONMENT: production
       TOKENDNA_DB_BACKEND: postgres
-      # `+psycopg` selects the psycopg v3 driver (we ship psycopg 3 in
-      # requirements.txt, not the legacy psycopg2 default that SQLAlchemy
-      # otherwise tries to import). Direct psycopg consumers normalise
-      # this back to a plain libpq URI via normalize_dsn_for_psycopg().
-      TOKENDNA_PG_DSN: postgresql+psycopg://tokendna:tokendna@localhost:5432/tokendna
-      # Modules not yet ported to Postgres (attestation_store, agent_lifecycle,
-      # mcp_inspector) fall back to SQLite. The default /data path isn't
-      # writable on the runner, so point them at /tmp.
+      TOKENDNA_PG_DSN: postgresql://tokendna:tokendna@localhost:5432/tokendna
+      DATABASE_URL: postgresql://tokendna:tokendna@localhost:5432/tokendna
       DATA_DB_PATH: /tmp/tokendna-ci.db
+      OIDC_ISSUER: https://ci.example.com
+      OIDC_AUDIENCE: ci
+      TOKENDNA_OIDC_TENANT_CLAIM: org_id
+      DNA_HMAC_KEY: ci-dna-hmac-key-32-bytes-aaaaaaaa
+      AUDIT_HMAC_KEY: ci-audit-hmac-key-32-bytes-aaaaaa
+      AUDIT_BACKEND: file
+      AUDIT_LOG_PATH: /tmp/tokendna-ci-audit.jsonl
+      ATTESTATION_CA_KEY_ID: ci-key
+      ATTESTATION_CA_SECRET: ci-attestation-secret-32-bytes-aa
+      TOKENDNA_DELEGATION_SECRET: ci-delegation-secret-32-bytes-aaaa
+      TOKENDNA_WORKFLOW_SECRET: ci-workflow-secret-32-bytes-aaaaaa
+      TOKENDNA_HONEYPOT_SECRET: ci-honeypot-secret-32-bytes-aaaaaa
+      TOKENDNA_POSTURE_SECRET: ci-posture-secret-32-bytes-aaaaaaa
     steps:
       - uses: actions/checkout@v6
 
@@ -378,21 +499,21 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt -r requirements-prod.txt pytest
+          pip install -r requirements.txt pytest
 
-      - name: Apply Alembic baseline
-        run: alembic upgrade head
+      - name: Run production preflight
+        run: python scripts/preflight_prod.py --environment production
 
-      - name: Run a representative slice against Postgres
+      - name: Apply TokenDNA storage migrations
+        run: python scripts/migrate_storage.py
+
+      - name: Run live Postgres smoke
+        run: python scripts/postgres_smoke.py
+
+      - name: Assert migrations remain current
         run: |
-          python -m pytest -q \
-            tests/test_passport.py \
-            tests/test_uis_store.py \
-            tests/test_trust_graph.py \
-            tests/test_delegation_receipt.py \
-            tests/test_workflow_attestation.py \
-            tests/test_policy_guard.py \
-            tests/test_permission_drift.py
+          python scripts/migrate_storage.py --status
+          python -m pytest -q tests/test_storage_migrations.py tests/test_preflight_prod.py tests/test_db_backend.py
 
   # ── Helm chart lint + template validation ─────────────────────────────────
   helm-lint:
@@ -435,6 +556,7 @@ jobs:
     env:
       DATA_DB_PATH: /tmp/tokendna-stress-smoke.db
       DEV_MODE: "true"
+      TOKENDNA_ENV: ci
       ATTESTATION_CA_SECRET: ci-stress-smoke-secret
     steps:
       - uses: actions/checkout@v6
@@ -475,3 +597,36 @@ jobs:
           name: stress-report
           path: /tmp/stress-report.json
           if-no-files-found: ignore
+
+  # ── Detection-efficacy benchmark (ADVISORY / non-blocking) ─────────────────
+  # Replays the three RSA-2026 scenarios against an in-process instance and
+  # publishes a detection-rate / false-positive / latency report as an artifact.
+  # continue-on-error keeps this off the required-checks path — it informs, it
+  # does not gate. TOKENDNA_ENV=ci satisfies the DEV_MODE deny-by-default guard.
+  efficacy-benchmark:
+    name: Detection Efficacy Benchmark (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      TOKENDNA_ENV: ci
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run detection-efficacy benchmark
+        run: python scripts/efficacy_benchmark.py --iterations 25 --out-dir dist/benchmark --strict
+
+      - name: Upload efficacy report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: efficacy-report
+          path: dist/benchmark
+          if-no-files-found: error

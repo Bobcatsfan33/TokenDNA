@@ -29,12 +29,11 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import threading
 from dataclasses import dataclass, field
 from typing import Any
 
-from modules.storage import db_backend
+from modules.storage.pg_connection import get_adapted_db_conn
 
 
 # ── Impact scoring weights ────────────────────────────────────────────────────
@@ -68,17 +67,6 @@ _lock = threading.Lock()
 
 def _db_path() -> str:
     return os.getenv("DATA_DB_PATH", "/data/tokendna.db")
-
-
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
-
-
-def _use_pg() -> bool:
-    return db_backend.should_use_postgres()
 
 
 # ── Data classes ───────────────────────────────────────────────────────────────
@@ -159,14 +147,6 @@ def simulate_blast_radius(
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
 
-    if _use_pg():
-        return BlastRadiusResult(
-            agent_label=agent_label,
-            tenant_id=tenant_id,
-            simulated_at=now,
-            error="pg_blast_radius_not_implemented",
-        )
-
     from modules.identity.trust_graph import _node_id  # noqa: PLC0415
 
     # Resolve agent node
@@ -231,33 +211,31 @@ def _recent_anomalies_in_blast(
         return []
     label_set = set(blast_labels)
     with _lock:
-        conn = _get_conn()
         try:
-            rows = conn.execute(
-                """
-                SELECT anomaly_type, severity, subject_node, detected_at, detail
-                FROM tg_anomalies
-                WHERE tenant_id = ?
-                ORDER BY detected_at DESC
-                LIMIT ?
-                """,
-                (tenant_id, limit * 4),
-            ).fetchall()
-            return [
-                {
-                    "anomaly_type": r["anomaly_type"],
-                    "severity": r["severity"],
-                    "subject_node": r["subject_node"],
-                    "detected_at": r["detected_at"],
-                    "detail": r["detail"],
-                }
-                for r in rows
-                if r["subject_node"] in label_set
-            ][:limit]
-        except sqlite3.OperationalError:
+            with get_adapted_db_conn(db_path=_db_path()) as conn:
+                rows = conn.execute(
+                    """
+                    SELECT anomaly_type, severity, subject_node, detected_at, detail
+                    FROM tg_anomalies
+                    WHERE tenant_id = ?
+                    ORDER BY detected_at DESC
+                    LIMIT ?
+                    """,
+                    (tenant_id, limit * 4),
+                ).fetchall()
+                return [
+                    {
+                        "anomaly_type": r["anomaly_type"],
+                        "severity": r["severity"],
+                        "subject_node": r["subject_node"],
+                        "detected_at": r["detected_at"],
+                        "detail": r["detail"],
+                    }
+                    for r in rows
+                    if r["subject_node"] in label_set
+                ][:limit]
+        except Exception:
             return []
-        finally:
-            conn.close()
 
 
 def _recent_mcp_violations_in_blast(
@@ -274,51 +252,47 @@ def _recent_mcp_violations_in_blast(
         return []
     label_set = set(blast_labels)
     with _lock:
-        conn = _get_conn()
         try:
-            rows = conn.execute(
-                """
-                SELECT violation_id, agent_id, tool_name, violation_type,
-                       detail, risk_score, created_at
-                FROM mcp_violations
-                WHERE tenant_id = ? AND resolved = 0
-                ORDER BY created_at DESC
-                LIMIT ?
-                """,
-                (tenant_id, limit * 4),
-            ).fetchall()
-            return [
-                {
-                    "violation_id": r["violation_id"],
-                    "agent_id": r["agent_id"],
-                    "tool_name": r["tool_name"],
-                    "violation_type": r["violation_type"],
-                    "detail": r["detail"],
-                    "risk_score": r["risk_score"],
-                    "created_at": r["created_at"],
-                }
-                for r in rows
-                if r["agent_id"] and r["agent_id"] in label_set
-            ][:limit]
-        except sqlite3.OperationalError:
+            with get_adapted_db_conn(db_path=_db_path()) as conn:
+                rows = conn.execute(
+                    """
+                    SELECT violation_id, agent_id, tool_name, violation_type,
+                           detail, risk_score, created_at
+                    FROM mcp_violations
+                    WHERE tenant_id = ? AND resolved = 0
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (tenant_id, limit * 4),
+                ).fetchall()
+                return [
+                    {
+                        "violation_id": r["violation_id"],
+                        "agent_id": r["agent_id"],
+                        "tool_name": r["tool_name"],
+                        "violation_type": r["violation_type"],
+                        "detail": r["detail"],
+                        "risk_score": r["risk_score"],
+                        "created_at": r["created_at"],
+                    }
+                    for r in rows
+                    if r["agent_id"] and r["agent_id"] in label_set
+                ][:limit]
+        except Exception:
             return []
-        finally:
-            conn.close()
 
 
 def _node_exists(tenant_id: str, node_id: str) -> bool:
     with _lock:
-        conn = _get_conn()
         try:
-            row = conn.execute(
-                "SELECT 1 FROM tg_nodes WHERE node_id=? AND tenant_id=?",
-                (node_id, tenant_id),
-            ).fetchone()
-            return row is not None
-        except sqlite3.OperationalError:
+            with get_adapted_db_conn(db_path=_db_path()) as conn:
+                row = conn.execute(
+                    "SELECT 1 FROM tg_nodes WHERE node_id=? AND tenant_id=?",
+                    (node_id, tenant_id),
+                ).fetchone()
+                return row is not None
+        except Exception:
             return False
-        finally:
-            conn.close()
 
 
 def _bfs_reachability(
@@ -331,63 +305,61 @@ def _bfs_reachability(
     Returns all reachable nodes (excluding the start node itself).
     """
     with _lock:
-        conn = _get_conn()
         try:
-            # Bidirectional BFS in Python: compromise propagates BOTH along
-            # outgoing edges (agent trusts X) AND reverse edges (other agents
-            # that share the same issuer/verifier as the compromised agent).
-            # Pre-load all edges for the tenant for efficiency.
-            all_edges = conn.execute(
-                "SELECT src_node, dst_node, edge_type FROM tg_edges WHERE tenant_id=?",
-                (tenant_id,),
-            ).fetchall()
-            # Build adjacency: forward and reverse
-            fwd: dict[str, list[tuple[str, str]]] = {}  # src -> [(dst, etype)]
-            rev: dict[str, list[tuple[str, str]]] = {}  # dst -> [(src, etype)]
-            for e in all_edges:
-                fwd.setdefault(e["src_node"], []).append((e["dst_node"], e["edge_type"]))
-                rev.setdefault(e["dst_node"], []).append((e["src_node"], e["edge_type"]))
-            # Load node metadata
-            node_rows = conn.execute(
-                "SELECT node_id, node_type, label FROM tg_nodes WHERE tenant_id=?",
-                (tenant_id,),
-            ).fetchall()
-            node_meta: dict[str, dict] = {r["node_id"]: dict(r) for r in node_rows}
+            with get_adapted_db_conn(db_path=_db_path()) as conn:
+                # Bidirectional BFS in Python: compromise propagates BOTH along
+                # outgoing edges (agent trusts X) AND reverse edges (other agents
+                # that share the same issuer/verifier as the compromised agent).
+                # Pre-load all edges for the tenant for efficiency.
+                all_edges = conn.execute(
+                    "SELECT src_node, dst_node, edge_type FROM tg_edges WHERE tenant_id=?",
+                    (tenant_id,),
+                ).fetchall()
+                # Build adjacency: forward and reverse
+                fwd: dict[str, list[tuple[str, str]]] = {}
+                rev: dict[str, list[tuple[str, str]]] = {}
+                for e in all_edges:
+                    fwd.setdefault(e["src_node"], []).append((e["dst_node"], e["edge_type"]))
+                    rev.setdefault(e["dst_node"], []).append((e["src_node"], e["edge_type"]))
+                # Load node metadata
+                node_rows = conn.execute(
+                    "SELECT node_id, node_type, label FROM tg_nodes WHERE tenant_id=?",
+                    (tenant_id,),
+                ).fetchall()
+                node_meta: dict[str, dict] = {r["node_id"]: dict(r) for r in node_rows}
 
-            # BFS
-            from collections import deque
-            queue: deque = deque()
-            queue.append((start_node_id, 0, []))
-            visited: dict[str, int] = {start_node_id: 0}  # node_id -> first hop seen
-            result_map: dict[str, ReachableNode] = {}
+                # BFS
+                from collections import deque
+                queue: deque = deque()
+                queue.append((start_node_id, 0, []))
+                visited: dict[str, int] = {start_node_id: 0}
+                result_map: dict[str, ReachableNode] = {}
 
-            while queue:
-                cur_id, hop, path_edges = queue.popleft()
-                if hop >= max_hops:
-                    continue
-                neighbors = list(fwd.get(cur_id, [])) + list(rev.get(cur_id, []))
-                for (nbr_id, etype) in neighbors:
-                    if nbr_id not in visited:
-                        visited[nbr_id] = hop + 1
-                        new_path = path_edges + [etype]
-                        if nbr_id in node_meta:
-                            m = node_meta[nbr_id]
-                            result_map[nbr_id] = ReachableNode(
-                                node_id=nbr_id,
-                                node_type=m["node_type"],
-                                label=m["label"],
-                                hop_distance=hop + 1,
-                                path_edge_types=new_path,
-                                impact_contribution=NODE_TYPE_IMPACT.get(m["node_type"], 5),
-                            )
-                        queue.append((nbr_id, hop + 1, new_path))
+                while queue:
+                    cur_id, hop, path_edges = queue.popleft()
+                    if hop >= max_hops:
+                        continue
+                    neighbors = list(fwd.get(cur_id, [])) + list(rev.get(cur_id, []))
+                    for (nbr_id, etype) in neighbors:
+                        if nbr_id not in visited:
+                            visited[nbr_id] = hop + 1
+                            new_path = path_edges + [etype]
+                            if nbr_id in node_meta:
+                                m = node_meta[nbr_id]
+                                result_map[nbr_id] = ReachableNode(
+                                    node_id=nbr_id,
+                                    node_type=m["node_type"],
+                                    label=m["label"],
+                                    hop_distance=hop + 1,
+                                    path_edge_types=new_path,
+                                    impact_contribution=NODE_TYPE_IMPACT.get(m["node_type"], 5),
+                                )
+                            queue.append((nbr_id, hop + 1, new_path))
 
-            result = sorted(result_map.values(), key=lambda n: n.hop_distance)
-            return result
-        except sqlite3.OperationalError:
+                result = sorted(result_map.values(), key=lambda n: n.hop_distance)
+                return result
+        except Exception:
             return []
-        finally:
-            conn.close()
 
 
 def _policies_in_blast(tenant_id: str, node_labels: list[str]) -> list[str]:
@@ -422,11 +394,8 @@ def _policies_in_blast(tenant_id: str, node_labels: list[str]) -> list[str]:
 
 def store_simulation(result: BlastRadiusResult) -> None:
     """Persist a simulation result for audit and trending."""
-    if _use_pg():
-        return
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS blast_radius_simulations (
@@ -458,9 +427,6 @@ def store_simulation(result: BlastRadiusResult) -> None:
                     json.dumps(result.as_dict()),
                 ),
             )
-            conn.commit()
-        finally:
-            conn.close()
 
 
 def list_simulations(
@@ -469,38 +435,34 @@ def list_simulations(
     limit: int = 20,
 ) -> list[dict[str, Any]]:
     """Return recent blast radius simulation history for a tenant."""
-    if _use_pg():
-        return []
     with _lock:
-        conn = _get_conn()
         try:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS blast_radius_simulations (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    tenant_id TEXT NOT NULL, agent_label TEXT NOT NULL,
-                    simulated_at TEXT NOT NULL, impact_score INTEGER NOT NULL,
-                    risk_tier TEXT NOT NULL, nodes_reached INTEGER NOT NULL,
-                    result_json TEXT NOT NULL
+            with get_adapted_db_conn(db_path=_db_path()) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS blast_radius_simulations (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tenant_id TEXT NOT NULL, agent_label TEXT NOT NULL,
+                        simulated_at TEXT NOT NULL, impact_score INTEGER NOT NULL,
+                        risk_tier TEXT NOT NULL, nodes_reached INTEGER NOT NULL,
+                        result_json TEXT NOT NULL
+                    )
+                    """
                 )
-                """
-            )
-            params: list[Any] = [tenant_id]
-            where = "WHERE tenant_id=?"
-            if agent_label:
-                where += " AND agent_label=?"
-                params.append(agent_label)
-            rows = conn.execute(
-                f"""SELECT id, agent_label, simulated_at, impact_score, risk_tier,
-                           nodes_reached
-                    FROM blast_radius_simulations
-                    {where}
-                    ORDER BY simulated_at DESC
-                    LIMIT ?""",
-                tuple(params) + (min(limit, 100),),
-            ).fetchall()
-            return [dict(r) for r in rows]
-        except sqlite3.OperationalError:
+                params: list[Any] = [tenant_id]
+                where = "WHERE tenant_id=?"
+                if agent_label:
+                    where += " AND agent_label=?"
+                    params.append(agent_label)
+                rows = conn.execute(
+                    f"""SELECT id, agent_label, simulated_at, impact_score, risk_tier,
+                               nodes_reached
+                        FROM blast_radius_simulations
+                        {where}
+                        ORDER BY simulated_at DESC
+                        LIMIT ?""",
+                    tuple(params) + (min(limit, 100),),
+                ).fetchall()
+                return [dict(r) for r in rows]
+        except Exception:
             return []
-        finally:
-            conn.close()

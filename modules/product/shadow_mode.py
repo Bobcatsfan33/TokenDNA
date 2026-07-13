@@ -64,6 +64,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable
 
+from modules.storage.pg_connection import get_adapted_db_conn
+
 log = logging.getLogger(__name__)
 
 _lock = threading.Lock()
@@ -316,14 +318,11 @@ def generate_trial_report(
     Read-only — never writes.  Safe to invoke against a live customer
     instance.
     """
-    import sqlite3
     from datetime import timedelta
 
     db = db_path or os.getenv("DATA_DB_PATH", "/data/tokendna.db")
     cutoff = (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
-    conn = sqlite3.connect(db, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    try:
+    with get_adapted_db_conn(db_path=db) as conn:
         events_observed = _safe_count(
             conn,
             "SELECT COUNT(*) AS n FROM uis_events WHERE tenant_id=? AND event_timestamp>=?",
@@ -400,7 +399,7 @@ def generate_trial_report(
                         "agent": row["agent"],
                         "reach": row["reach"],
                     })
-        except sqlite3.OperationalError:
+        except Exception:
             # Trust graph tables may not exist yet on a brand-new trial
             # database — leave high_blast empty rather than failing the
             # whole report.
@@ -431,8 +430,6 @@ def generate_trial_report(
             high_blast_radius_agents=high_blast,
             top_findings=top_findings,
         )
-    finally:
-        conn.close()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

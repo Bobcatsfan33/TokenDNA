@@ -415,8 +415,8 @@ class TestAuditExport(unittest.TestCase):
 class TestAPIRouteRegistration(unittest.TestCase):
 
     def test_api_imports_compliance_engine(self):
-        import api as api_mod
-        assert hasattr(api_mod, "compliance_engine")
+        import api_routers.compliance as _r
+        assert hasattr(_r, "compliance_engine")
 
     def test_compliance_routes_registered(self):
         try:

@@ -57,12 +57,13 @@ class ApiKey:
     key_hash:   str          # SHA-256 of raw key
     is_active:  bool
     created_at: datetime
+    role:       str = "readonly"
     last_used:  datetime | None = None
 
     # ── class helpers ─────────────────────────────────────────────────────────
 
     @staticmethod
-    def generate(tenant_id: str, name: str) -> tuple["ApiKey", str]:
+    def generate(tenant_id: str, name: str, *, role: str = "readonly") -> tuple["ApiKey", str]:
         """
         Generate a new key. Returns (ApiKey record, raw_key).
         Caller must show raw_key to the user — it will not be recoverable.
@@ -77,6 +78,7 @@ class ApiKey:
             key_hash=hashed,
             is_active=True,
             created_at=datetime.utcnow(),
+            role=role,
         )
         return record, raw
 
@@ -92,4 +94,4 @@ class TenantContext:
     tenant_name: str
     plan:       Plan
     api_key_id: str
-    role:       str = "owner"  # default owner for dev; production keys carry their own role
+    role:       str = "readonly"

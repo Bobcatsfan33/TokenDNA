@@ -55,11 +55,10 @@ def test_deployment_template_uses_existing_secret():
     assert ".Values.secrets.existingSecret" in body
 
 
-def test_migration_job_runs_alembic_upgrade_head():
+def test_migration_job_runs_tokendna_storage_migrations():
     body = (_CHART / "templates" / "migration-job.yaml").read_text()
-    assert "alembic" in body
-    assert "upgrade" in body
-    assert "head" in body
+    assert "python" in body
+    assert "scripts/migrate_storage.py" in body
     assert '"helm.sh/hook": pre-install,pre-upgrade' in body
 
 
