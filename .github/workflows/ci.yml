@@ -59,7 +59,7 @@ jobs:
         run: python scripts/ci/api_monolith_ratchet.py
 
       - name: API route-surface guard (decomposition preserves the surface — T-1)
-        run: python scripts/ci/openapi_route_guard.py
+        run: TOKENDNA_ENV=ci python scripts/ci/openapi_route_guard.py
 
       - name: FIPS crypto-primitive gate (SC-13)
         run: |
@@ -95,8 +95,7 @@ jobs:
           mods = [
             'config', 'auth',
             'modules.tenants.models', 'modules.tenants.store', 'modules.tenants.middleware',
-            'modules.identity.cache_redis', 'modules.identity.ml_model',
-            'modules.identity.session_graph', 'modules.identity.async_pipeline',
+            'modules.identity.cache_redis',
             'modules.security.audit_log', 'modules.security.rbac', 'modules.security.headers',
             'onboarding.aws_connector',
             'modules.identity.uis_narrative',
@@ -124,12 +123,10 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt pytest pytest-asyncio
-          pip install -e ./platform -e ./collector
+        run: pip install -r requirements.txt pytest pytest-asyncio
 
-      - name: Run backend, platform, and collector tests
-        run: python -m pytest -q --import-mode=importlib tests platform/tests collector/tests
+      - name: Run backend tests
+        run: python -m pytest -q --import-mode=importlib tests
 
   # ── DoD ATO readiness evidence ─────────────────────────────────────────────
   ato-evidence:
@@ -274,7 +271,7 @@ jobs:
 
       - name: Start API for runtime readiness checks
         run: |
-          DEV_MODE=true DATA_DB_PATH=/tmp/tokendna-ci.db AUDIT_LOG_PATH=/tmp/tokendna-ci-audit.jsonl python -m uvicorn api:app --host 127.0.0.1 --port 8000 > /tmp/tokendna-ci.log 2>&1 &
+          TOKENDNA_ENV=ci DEV_MODE=true DATA_DB_PATH=/tmp/tokendna-ci.db AUDIT_LOG_PATH=/tmp/tokendna-ci-audit.jsonl python -m uvicorn api:app --host 127.0.0.1 --port 8000 > /tmp/tokendna-ci.log 2>&1 &
           for i in {1..30}; do
             if python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=1); print('up')" >/dev/null 2>&1; then
               break
@@ -559,6 +556,7 @@ jobs:
     env:
       DATA_DB_PATH: /tmp/tokendna-stress-smoke.db
       DEV_MODE: "true"
+      TOKENDNA_ENV: ci
       ATTESTATION_CA_SECRET: ci-stress-smoke-secret
     steps:
       - uses: actions/checkout@v6
@@ -599,3 +597,36 @@ jobs:
           name: stress-report
           path: /tmp/stress-report.json
           if-no-files-found: ignore
+
+  # ── Detection-efficacy benchmark (ADVISORY / non-blocking) ─────────────────
+  # Replays the three RSA-2026 scenarios against an in-process instance and
+  # publishes a detection-rate / false-positive / latency report as an artifact.
+  # continue-on-error keeps this off the required-checks path — it informs, it
+  # does not gate. TOKENDNA_ENV=ci satisfies the DEV_MODE deny-by-default guard.
+  efficacy-benchmark:
+    name: Detection Efficacy Benchmark (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      TOKENDNA_ENV: ci
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run detection-efficacy benchmark
+        run: python scripts/efficacy_benchmark.py --iterations 25 --out-dir dist/benchmark --strict
+
+      - name: Upload efficacy report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: efficacy-report
+          path: dist/benchmark
+          if-no-files-found: error

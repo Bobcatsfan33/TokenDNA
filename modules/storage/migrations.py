@@ -61,8 +61,6 @@ INIT_TARGETS: tuple[tuple[str, str], ...] = (
     ("modules.identity.decision_audit", "init_db"),
     ("modules.identity.trust_federation", "init_db"),
     ("modules.product.metering", "init_db"),
-    ("modules.product.threat_sharing", "init_db"),
-    ("modules.product.threat_sharing_flywheel", "init_db"),
     ("modules.product.staged_rollout", "init_db"),
     ("modules.identity.delegation_receipt", "init_db"),
     ("modules.identity.workflow_attestation", "init_db"),

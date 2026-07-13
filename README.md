@@ -12,9 +12,21 @@
 
 ## TokenDNA Runtime Risk Engine
 
-**An integrated runtime risk engine for AI agents.**
+**Agent identity assurance for the AI workforce.**
 
-OAuth tells you *who* called a tool. TokenDNA aims to tell you *whether the call is what it claims to be, whether the agent is allowed to make it, and what happens to your blast radius if it turns out it isn't.*
+OAuth tells you *who* called a tool. TokenDNA aims to tell you *whether the call is a real agent identity, whether that agent is allowed to do what it is doing, whether it looks compromised, and what the blast radius is if it is.*
+
+The product surface should collapse to one enterprise verdict:
+
+```python
+from modules.identity.agent_assurance import AgentActionRequest, assess_agent_action
+
+verdict = assess_agent_action(AgentActionRequest(...))
+assert verdict.outcome in {"allow", "review", "block"}
+```
+
+See [Agent Assurance Wedge](docs/AGENT_ASSURANCE_WEDGE.md) for the
+acquisition-oriented product focus and simplification map.
 
 ### What it's designed to catch
 
@@ -60,11 +72,11 @@ Walks through baseline → drift → self-modification → MCP chain → decepti
 
 ---
 
-> **Underlying platform** — v2.2.0 hardening: RBAC, immutable audit log, security headers middleware, HMAC-SHA256 IP fingerprinting, secrets manager backend, CIS Docker hardening, Postgres + Helm + Grafana + SAML/SCIM all implemented.
+> **Underlying platform** — RBAC, immutable hash-chained audit log, security headers middleware, secrets manager backend, CIS Docker hardening, Postgres + Helm + Grafana + SAML/SCIM.
 
-**Zero-Trust token integrity and session behavioral analytics.**
+**Agent behavioral DNA.**
 
-TokenDNA's identity primitives originated as a stolen-JWT detector that built a behavioral "DNA" fingerprint for each user — device, IP, geolocation, ASN, browser, OS — and flagged anomalies like impossible travel, session branching, Tor/VPN usage, and known-malicious IPs. Every request is scored and responded to adaptively: allow, step-up MFA, block, or auto-revoke. Those primitives are the foundation the Runtime Risk Engine sits on top of.
+Every agent gets a behavioral fingerprint (`behavioral_dna`): its attested identity, scope, tool-call patterns, and delegation chains. TokenDNA scores each action against that baseline and responds adaptively — allow, step-up, block, or revoke — and drift from the baseline is what powers AUTHORIZE and CONTAIN. This is the agent-behavioral layer the Runtime Risk Engine is built on.
 
 ---
 
@@ -213,6 +225,21 @@ Wrapper endpoints for SDK-style integrations:
 
 These wrappers intentionally return stable metadata fields (`sdk_version`,
 `schema_version`, `generated_at`) so third-party SDKs can map them directly.
+
+### Standalone open-source projects
+
+Two components are published as standalone, Apache-2.0-licensed repositories so
+they can be adopted independently of the TokenDNA platform:
+
+- **[uis-spec](https://github.com/Bobcatsfan33/uis-spec)** — the Universal
+  Identity Schema as an open spec: JSON schema, written specification,
+  conformance levels, a `uis-validate` validator, and SPIFFE/SPIRE + OAuth
+  agent-identity mappings. TokenDNA is its reference implementation, serving the
+  same schema at `GET /api/schema/uis.json`.
+- **[mcp-auditor](https://github.com/Bobcatsfan33/mcp-auditor)** — a standalone
+  CLI that inspects MCP server manifests and tool-call traffic for chain-attack
+  patterns (the bounded-gap subsequence matcher extracted from the TokenDNA MCP
+  gateway).
 
 ---
 

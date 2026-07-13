@@ -23,6 +23,15 @@ jobs:
       - name: Build package
         run: python -m build
 
+      - name: Validate distribution (twine check + confirm it is tokendna-sdk)
+        run: |
+          set -eu
+          pip install twine
+          twine check dist/*
+          # Guard: the monorepo root must build the SDK, not the backend.
+          ls dist/ | grep -Eq '^tokendna[_-]sdk-' \
+            || { echo "::error::built artifact is not tokendna-sdk (got: $(ls dist/))"; exit 1; }
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:

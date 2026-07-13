@@ -1544,3 +1544,150 @@ def check_permission_drift(
     )
     store_anomaly(anomaly)
     return anomaly
+
+
+# ── Credential-revocation marking (kill-switch plane, P2.1) ────────────────────
+#
+# When the kill switch rips an agent's credentials, the trust graph must say so:
+# an operator looking at the blast-radius view needs to see that the node at the
+# centre of it is already contained. The mark lives on the agent node's meta and
+# raises a CRITICAL anomaly so it surfaces in the incident feed.
+
+REVOKED_ANOMALY = "AGENT_CREDENTIALS_REVOKED"
+
+
+def _agent_node_id(tenant_id: str, agent_label: str) -> str:
+    return _node_id(tenant_id, "agent", agent_label)
+
+
+def _set_node_revocation(
+    tenant_id: str,
+    agent_label: str,
+    revocation: dict[str, Any] | None,
+) -> bool:
+    """Merge (or clear) the ``revoked`` key on an agent node's meta.
+
+    Returns False when the agent has no node in the graph — never an error: an
+    agent TokenDNA has not observed simply has nothing to mark.
+    """
+    init_db()  # the kill switch may fire before anything has been ingested
+    nid = _agent_node_id(tenant_id, agent_label)
+
+    if _use_pg():
+        import psycopg
+        with psycopg.connect(_pg_dsn()) as conn:
+            row = conn.execute(
+                "SELECT meta_json FROM tg_nodes WHERE node_id=%s AND tenant_id=%s",
+                (nid, tenant_id),
+            ).fetchone()
+            if row is None:
+                return False
+            meta = dict(row[0] or {})
+            if revocation is None:
+                meta.pop("revoked", None)
+            else:
+                meta["revoked"] = revocation
+            conn.execute(
+                "UPDATE tg_nodes SET meta_json=%s WHERE node_id=%s AND tenant_id=%s",
+                (json.dumps(meta), nid, tenant_id),
+            )
+            conn.commit()
+            return True
+
+    with _lock:
+        conn = _get_conn()
+        try:
+            row = conn.execute(
+                "SELECT meta_json FROM tg_nodes WHERE node_id=? AND tenant_id=?",
+                (nid, tenant_id),
+            ).fetchone()
+            if row is None:
+                return False
+            meta = json.loads(row["meta_json"] or "{}")
+            if revocation is None:
+                meta.pop("revoked", None)
+            else:
+                meta["revoked"] = revocation
+            conn.execute(
+                "UPDATE tg_nodes SET meta_json=? WHERE node_id=? AND tenant_id=?",
+                (json.dumps(meta), nid, tenant_id),
+            )
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+
+
+def mark_agent_revoked(
+    tenant_id: str,
+    agent_label: str,
+    *,
+    actor: str,
+    reason: str = "",
+) -> bool:
+    """Mark an agent's credentials as revoked in the graph + raise an anomaly.
+
+    Idempotent. Returns False if the agent is not present in the graph.
+    """
+    now = _now()
+    marked = _set_node_revocation(tenant_id, agent_label, {
+        "revoked_at": now,
+        "revoked_by": actor,
+        "reason": reason,
+    })
+    if not marked:
+        return False
+
+    store_anomaly(GraphAnomaly(
+        anomaly_type=REVOKED_ANOMALY,
+        tenant_id=tenant_id,
+        detected_at=now,
+        subject_node=_agent_node_id(tenant_id, agent_label),
+        detail=(
+            f"credentials revoked for agent '{agent_label}' by {actor}"
+            + (f": {reason}" if reason else "")
+        ),
+        severity="critical",
+        context={
+            "agent_label": agent_label,
+            "actor": actor,
+            "reason": reason,
+            "plane": "trust_graph",
+        },
+    ))
+    return True
+
+
+def clear_agent_revoked(tenant_id: str, agent_label: str, *, actor: str) -> bool:
+    """Lift a revocation mark (the kill switch was reversed)."""
+    return _set_node_revocation(tenant_id, agent_label, None)
+
+
+def is_agent_revoked(tenant_id: str, agent_label: str) -> bool:
+    """True when the agent node carries a live revocation mark."""
+    init_db()
+    nid = _agent_node_id(tenant_id, agent_label)
+
+    if _use_pg():
+        import psycopg
+        with psycopg.connect(_pg_dsn()) as conn:
+            row = conn.execute(
+                "SELECT meta_json FROM tg_nodes WHERE node_id=%s AND tenant_id=%s",
+                (nid, tenant_id),
+            ).fetchone()
+            meta = dict((row[0] if row else None) or {})
+            return bool(meta.get("revoked"))
+
+    with _lock:
+        conn = _get_conn()
+        try:
+            row = conn.execute(
+                "SELECT meta_json FROM tg_nodes WHERE node_id=? AND tenant_id=?",
+                (nid, tenant_id),
+            ).fetchone()
+            if row is None:
+                return False
+            meta = json.loads(row["meta_json"] or "{}")
+            return bool(meta.get("revoked"))
+        finally:
+            conn.close()

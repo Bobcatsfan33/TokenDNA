@@ -200,6 +200,18 @@ _DEFAULT_FACTORIES: list[Callable[[], RevocationConnector]] = [
 _connectors: dict[str, RevocationConnector] = {}
 
 
+def register_default_factory(factory: Callable[[], RevocationConnector]) -> None:
+    """Add a connector factory to the default set (idempotent).
+
+    Optional connector modules (IdP, MCP, session, data planes) call this at
+    import so they are present after every ``reset_connectors()`` — gated by
+    each connector's ``is_connected()`` so unconfigured planes are skipped.
+    """
+    if factory not in _DEFAULT_FACTORIES:
+        _DEFAULT_FACTORIES.append(factory)
+        reset_connectors()
+
+
 def reset_connectors() -> None:
     """Re-install the default connector set (used by tests + at import)."""
     _connectors.clear()
@@ -340,6 +352,65 @@ def rip_credentials(
 
     return KillReceipt(agent_id=agent_id, tenant_id=tenant_id, actor=actor,
                        reason=reason, action="rip", planes=plane_results)
+
+
+def cascade_rip(
+    tenant_id: str,
+    agent_id: str,
+    *,
+    actor: str,
+    reason: str = "",
+    planes: Optional[list[str]] = None,
+    context: Optional[dict[str, Any]] = None,
+    timeout_ms: int = DEFAULT_PLANE_TIMEOUT_MS,
+    max_hops: int = 6,
+) -> dict[str, Any]:
+    """Rip the agent AND every agent/workload reachable in its blast radius.
+
+    Uses blast_radius.simulate_blast_radius to compute the reachable set, then
+    rips exactly that set (and no more). Returns the root receipt + a receipt
+    per downstream agent. OWNER/step-up gating is enforced at the API layer.
+    """
+    if not actor:
+        raise ValueError("actor is required to cascade-rip")
+
+    root = rip_credentials(tenant_id, agent_id, actor=actor, reason=reason,
+                           planes=planes, context=context, timeout_ms=timeout_ms)
+
+    reachable_labels: list[str] = []
+    blast_summary: dict[str, Any] = {}
+    try:
+        from modules.identity import blast_radius
+        result = blast_radius.simulate_blast_radius(tenant_id, agent_id, max_hops=max_hops)
+        blast_summary = {
+            "impact_score": result.impact_score,
+            "risk_tier": result.risk_tier,
+            "total_nodes_reached": result.total_nodes_reached,
+        }
+        seen = {agent_id}
+        for node in result.reachable_nodes:
+            if node.node_type in ("agent", "workload") and node.label not in seen:
+                seen.add(node.label)
+                reachable_labels.append(node.label)
+    except Exception as exc:  # noqa: BLE001 - cascade still returns the root rip
+        logger.warning("cascade blast-radius failed for %s: %s", agent_id, exc)
+
+    _emit("KILL_CASCADE_INITIATED", tenant_id=tenant_id, agent_id=agent_id, actor=actor,
+          detail={"reason": reason, "reachable_agents": reachable_labels, **blast_summary})
+
+    downstream = [
+        rip_credentials(tenant_id, label, actor=actor,
+                        reason=f"cascade from {agent_id}: {reason}",
+                        planes=planes, context=context, timeout_ms=timeout_ms)
+        for label in reachable_labels
+    ]
+
+    return {
+        "root": root.as_dict(),
+        "blast": blast_summary,
+        "reachable_count": len(downstream),
+        "downstream": [r.as_dict() for r in downstream],
+    }
 
 
 def reverse_rip(

@@ -96,7 +96,10 @@ ANOMALY_Z_THRESHOLD = float(os.getenv("MCP_ANOMALY_Z_THRESHOLD", "3.0"))
 ANOMALY_MIN_SAMPLES = int(os.getenv("MCP_ANOMALY_MIN_SAMPLES", "5"))
 
 _lock = threading.Lock()
-_db_initialized = False
+# Track which db_paths have had their schema applied. Per-path (not a single
+# bool) so switching db_path — e.g. tests, or the kill connector touching the
+# default DB before a tenant test runs — always initializes the new path.
+_initialized_paths: set[str] = set()
 
 
 # ── DB bootstrap ──────────────────────────────────────────────────────────────
@@ -193,18 +196,48 @@ _DDL_STATEMENTS: tuple[str, ...] = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_gw_anomaly_tenant ON gw_anomaly_alerts(tenant_id, acknowledged)",
+    # ── Credential / tool-grant brokering (Gap roadmap Epic 2.2) ──────────────
+    # The gateway brokers an agent's MCP credentials + tool grants so the kill
+    # switch can pull them. Credential refs point at the secret store; the raw
+    # secret never lands here.
+    """
+    CREATE TABLE IF NOT EXISTS gw_credentials (
+        credential_id   TEXT PRIMARY KEY,
+        tenant_id       TEXT NOT NULL,
+        agent_id        TEXT NOT NULL,
+        server_id       TEXT NOT NULL,
+        credential_ref  TEXT NOT NULL,
+        status          TEXT NOT NULL DEFAULT 'active',
+        granted_at      TEXT NOT NULL,
+        revoked_at      TEXT,
+        revoked_by      TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_gw_cred_agent ON gw_credentials(tenant_id, agent_id, status)",
+    """
+    CREATE TABLE IF NOT EXISTS gw_tool_grants (
+        grant_id     TEXT PRIMARY KEY,
+        tenant_id    TEXT NOT NULL,
+        agent_id     TEXT NOT NULL,
+        server_id    TEXT NOT NULL,
+        tool_name    TEXT NOT NULL,
+        status       TEXT NOT NULL DEFAULT 'enabled',
+        granted_at   TEXT NOT NULL,
+        disabled_at  TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_gw_grant_agent ON gw_tool_grants(tenant_id, agent_id, status)",
 )
 
 
 def init_db(db_path: str = _DB_PATH) -> None:
-    global _db_initialized
-    if _db_initialized:
+    if db_path in _initialized_paths:
         return
     with _lock:
-        if _db_initialized:
+        if db_path in _initialized_paths:
             return
         run_ddl(_DDL_STATEMENTS, db_path)
-        _db_initialized = True
+        _initialized_paths.add(db_path)
 
 
 @contextmanager
@@ -1041,3 +1074,130 @@ def _row_to_anomaly_alert(row: sqlite3.Row) -> dict[str, Any]:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# ── Credential / tool-grant brokering + revocation (Gap roadmap Epic 2.2) ──────
+
+
+def grant_credential(
+    *,
+    tenant_id: str,
+    agent_id: str,
+    server_id: str,
+    credential_ref: str,
+    db_path: str = _DB_PATH,
+) -> dict[str, Any]:
+    """Broker an MCP credential for an agent (so the kill switch can pull it).
+
+    credential_ref points at the secret store — the raw secret is never stored.
+    """
+    init_db(db_path)
+    cid = str(uuid.uuid4())
+    now = _now()
+    with _cursor(db_path) as cur:
+        cur.execute(
+            """
+            INSERT INTO gw_credentials
+                (credential_id, tenant_id, agent_id, server_id, credential_ref,
+                 status, granted_at)
+            VALUES (?, ?, ?, ?, ?, 'active', ?)
+            """,
+            (cid, tenant_id, agent_id, server_id, credential_ref, now),
+        )
+    return {"credential_id": cid, "status": "active"}
+
+
+def grant_tool(
+    *,
+    tenant_id: str,
+    agent_id: str,
+    server_id: str,
+    tool_name: str,
+    db_path: str = _DB_PATH,
+) -> dict[str, Any]:
+    """Grant an agent access to a specific MCP tool."""
+    init_db(db_path)
+    gid = str(uuid.uuid4())
+    now = _now()
+    with _cursor(db_path) as cur:
+        cur.execute(
+            """
+            INSERT INTO gw_tool_grants
+                (grant_id, tenant_id, agent_id, server_id, tool_name, status, granted_at)
+            VALUES (?, ?, ?, ?, ?, 'enabled', ?)
+            """,
+            (gid, tenant_id, agent_id, server_id, tool_name, now),
+        )
+    return {"grant_id": gid, "status": "enabled"}
+
+
+def list_agent_grants(
+    *, tenant_id: str, agent_id: str, db_path: str = _DB_PATH,
+) -> dict[str, Any]:
+    """Return an agent's active credentials, enabled tool grants, open sessions."""
+    init_db(db_path)
+    with _cursor(db_path) as cur:
+        creds = cur.execute(
+            "SELECT credential_id, server_id, credential_ref, status FROM gw_credentials "
+            "WHERE tenant_id=? AND agent_id=? AND status='active'",
+            (tenant_id, agent_id),
+        ).fetchall()
+        grants = cur.execute(
+            "SELECT grant_id, server_id, tool_name, status FROM gw_tool_grants "
+            "WHERE tenant_id=? AND agent_id=? AND status='enabled'",
+            (tenant_id, agent_id),
+        ).fetchall()
+        sessions = cur.execute(
+            "SELECT session_id, server_id FROM gw_sessions "
+            "WHERE tenant_id=? AND agent_id=? AND status='open'",
+            (tenant_id, agent_id),
+        ).fetchall()
+    return {
+        "credentials": [dict(r) for r in creds],
+        "tool_grants": [dict(r) for r in grants],
+        "open_sessions": [dict(r) for r in sessions],
+    }
+
+
+def revoke_agent_mcp(
+    *, tenant_id: str, agent_id: str, revoked_by: str, db_path: str = _DB_PATH,
+) -> dict[str, Any]:
+    """Kill-switch action: revoke all MCP credentials, disable all tool grants,
+    and close all open sessions for an agent. Idempotent. Returns counts."""
+    if not revoked_by:
+        raise ValueError("revoked_by is required")
+    init_db(db_path)
+    now = _now()
+    with _cursor(db_path) as cur:
+        creds = cur.execute(
+            "SELECT COUNT(*) AS n FROM gw_credentials WHERE tenant_id=? AND agent_id=? AND status='active'",
+            (tenant_id, agent_id),
+        ).fetchone()["n"]
+        cur.execute(
+            "UPDATE gw_credentials SET status='revoked', revoked_at=?, revoked_by=? "
+            "WHERE tenant_id=? AND agent_id=? AND status='active'",
+            (now, revoked_by, tenant_id, agent_id),
+        )
+        grants = cur.execute(
+            "SELECT COUNT(*) AS n FROM gw_tool_grants WHERE tenant_id=? AND agent_id=? AND status='enabled'",
+            (tenant_id, agent_id),
+        ).fetchone()["n"]
+        cur.execute(
+            "UPDATE gw_tool_grants SET status='disabled', disabled_at=? "
+            "WHERE tenant_id=? AND agent_id=? AND status='enabled'",
+            (now, tenant_id, agent_id),
+        )
+        sess = cur.execute(
+            "SELECT COUNT(*) AS n FROM gw_sessions WHERE tenant_id=? AND agent_id=? AND status='open'",
+            (tenant_id, agent_id),
+        ).fetchone()["n"]
+        cur.execute(
+            "UPDATE gw_sessions SET status='closed', closed_at=? "
+            "WHERE tenant_id=? AND agent_id=? AND status='open'",
+            (now, tenant_id, agent_id),
+        )
+    return {
+        "credentials_revoked": int(creds),
+        "tool_grants_disabled": int(grants),
+        "sessions_closed": int(sess),
+    }
