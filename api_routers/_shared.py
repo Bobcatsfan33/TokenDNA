@@ -1,0 +1,185 @@
+"""Shared helpers used by extracted domain routers (T-1).
+
+Helpers that used to live as module-level functions in api.py and are referenced
+by moved handlers land here so routers don't import api.py (which would create a
+cycle: api.py imports api_routers).
+"""
+from __future__ import annotations
+
+import os
+
+from fastapi import HTTPException
+
+
+def _delegation_error_to_http(exc: Exception) -> HTTPException:
+    """Translate DelegationError reason codes to structured 4xx responses."""
+    code_map = {
+        "scope_must_be_list_of_strings":      400,
+        "expires_in_seconds_must_be_positive": 400,
+        "root_delegator_must_be_human":       400,
+        "parent_not_found":                   404,
+        "parent_cross_tenant":                403,
+        "parent_revoked":                     409,
+        "parent_expired":                     409,
+        "delegator_not_parent_delegatee":     403,
+        "scope_exceeds_parent":               403,
+        "not_found":                          404,
+        "cross_tenant":                       403,
+    }
+    reason = str(exc)
+    return HTTPException(
+        status_code=code_map.get(reason, 400),
+        detail={"error": reason, "message": reason.replace("_", " ")},
+    )
+
+
+# ── Rate-limit dependencies (moved from api.py) ───────────────────────────────
+from fastapi import Depends, Request  # noqa: E402
+
+from config import RATE_LIMIT_OPEN_PER_MINUTE, RATE_LIMIT_PER_MINUTE  # noqa: E402
+from modules.identity.cache_redis import increment_rate  # noqa: E402
+from modules.tenants.middleware import get_tenant  # noqa: E402
+from modules.tenants.models import TenantContext  # noqa: E402
+
+
+async def check_rate_limit(
+    request: Request,
+    tenant: TenantContext = Depends(get_tenant),
+) -> None:
+    ip = request.client.host if request.client else "unknown"
+    key = f"rate:{ip}"
+    count = increment_rate(key, window_seconds=60, tenant_id=tenant.tenant_id)
+    if count > RATE_LIMIT_PER_MINUTE:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded ({RATE_LIMIT_PER_MINUTE} req/min)",
+            headers={"Retry-After": "60"},
+        )
+
+
+async def check_rate_limit_open(request: Request) -> None:
+    """Rate-limit dependency for open (unauthenticated) endpoints (IP-only, global)."""
+    ip = request.client.host if request.client else "unknown"
+    key = f"open_rate:{ip}"
+    count = increment_rate(key, window_seconds=60, tenant_id="_open_")
+    if count > RATE_LIMIT_OPEN_PER_MINUTE:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded ({RATE_LIMIT_OPEN_PER_MINUTE} req/min on open endpoint)",
+            headers={"Retry-After": "60"},
+        )
+
+
+# ── Cursor + SDK helpers (moved from api.py) ──────────────────────────────────
+import base64  # noqa: E402
+
+from modules.integrations.sdk_wrappers import sdk_create_attestation  # noqa: E402
+
+
+def _encode_cursor(value: str) -> str:
+    return base64.urlsafe_b64encode(value.encode("utf-8")).decode("utf-8")
+
+
+def _decode_cursor(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        raw = base64.urlsafe_b64decode(value.encode("utf-8"))
+        return raw.decode("utf-8")
+    except Exception:
+        return None
+
+
+def sdk_attest_agent(**kwargs):
+    """Thin alias — maps tenant_name->owner_org for sdk_create_attestation."""
+    if "tenant_name" in kwargs:
+        kwargs["owner_org"] = kwargs.pop("tenant_name")
+    return sdk_create_attestation(**kwargs)
+
+
+# ── App version + edge-sync auth (moved from api.py) ──────────────────────────
+import hmac as _edge_hmac  # noqa: E402
+
+APP_VERSION = "2.5.0"
+
+
+def _edge_sync_authorized(request: Request) -> bool:
+    expected = (os.getenv("EDGE_SYNC_TOKEN") or "").strip()
+    if not expected:
+        return False
+    presented = (request.headers.get("X-Edge-Sync-Token") or "").strip()
+    return bool(presented) and _edge_hmac.compare_digest(presented, expected)
+
+
+# ── SCIM + dashboard + tenant-subject helpers (moved from api.py) ─────────────
+from pathlib import Path  # noqa: E402
+
+from fastapi.responses import JSONResponse  # noqa: E402
+
+# Repo-root-relative (this file lives in api_routers/, so go up one level).
+_DASHBOARD_DIR = Path(__file__).resolve().parent.parent / "dashboard"
+_DASHBOARD_PATH = _DASHBOARD_DIR / "index.html"
+_STATIC_DIR = _DASHBOARD_DIR / "static"
+
+import hashlib  # noqa: E402
+
+from fastapi.responses import HTMLResponse  # noqa: E402
+
+
+def asset_version() -> str:
+    """Cache-busting token derived from the static assets' size+mtime.
+
+    Any edit to a /static file changes this, so versioned script URLs
+    (``?v=<token>``) bust the browser cache automatically in dev.
+    """
+    h = hashlib.sha1()
+    if _STATIC_DIR.is_dir():
+        for p in sorted(_STATIC_DIR.rglob("*")):
+            if p.is_file():
+                st = p.stat()
+                h.update(p.name.encode())
+                h.update(str(st.st_mtime_ns).encode())
+                h.update(str(st.st_size).encode())
+    return h.hexdigest()[:12]
+
+
+def serve_dashboard_html(path: "Path"):
+    """Serve a dashboard HTML file with dev-friendly cache headers.
+
+    Injects the current asset version into ``?v=__ASSET_VER__`` placeholders and
+    returns the page with ``Cache-Control: no-store`` so edits to the HTML and
+    its local /static assets always show up on a normal reload (no hard-refresh).
+    """
+    html = Path(path).read_text(encoding="utf-8")
+    html = html.replace("__ASSET_VER__", asset_version())
+    return HTMLResponse(
+        html,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+def _tenant_subject(tenant: TenantContext) -> str:
+    return str(getattr(tenant, "owner_email", "") or tenant.api_key_id or tenant.tenant_id)
+
+
+def _scim_response(body: dict, status: int = 200):
+    return JSONResponse(
+        content=body,
+        status_code=status,
+        media_type="application/scim+json",
+    )
+
+
+def _scim_handle(coro):  # decorator-like wrapper
+    """Translate SCIMError into a SCIM-formatted JSON response."""
+    from functools import wraps
+    from modules.auth.scim import SCIMError
+
+    @wraps(coro)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await coro(*args, **kwargs)
+        except SCIMError as exc:
+            return _scim_response(exc.to_response(), status=exc.status)
+
+    return wrapper

@@ -56,9 +56,15 @@ env:
 
 jobs:
   build-and-publish:
-    name: Build, sign, push
+    name: Build, sign, push (${{ matrix.flavor.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor:
+          - { name: "commercial", dockerfile: "Dockerfile",      suffix: "" }
+          - { name: "federal",    dockerfile: "Dockerfile.fips",  suffix: "-fips" }
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -82,7 +88,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.flavor.suffix }}
           tags: |
             type=ref,event=tag
             type=semver,pattern={{version}}
@@ -99,7 +105,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile
+          file: ${{ matrix.flavor.dockerfile }}
           platforms: linux/amd64,linux/arm64
           push: true
           provenance: true            # SLSA build provenance
@@ -137,6 +143,35 @@ jobs:
             --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/release-docker.yml@.*" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
+      # ── Cosign-signed SBOM attestation ──────────────────────────────────────
+      # buildx already attaches an SBOM (sbom: true), but as an OCI referrer, not
+      # a cosign-signed in-toto attestation. This adds an independently
+      # verifiable, keyless-signed SPDX SBOM attestation bound to the digest.
+      - name: Generate SPDX SBOM for the published image
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.flavor.suffix }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          artifact-name: sbom-${{ matrix.flavor.name }}.spdx.json
+
+      - name: Attest SBOM (cosign, keyless OIDC)
+        env:
+          IMG: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.flavor.suffix }}@${{ steps.build.outputs.digest }}
+        run: |
+          set -eu
+          # Attestations attach to the digest; all tags resolve to it.
+          cosign attest --yes --type spdxjson --predicate sbom.spdx.json "$IMG"
+
+      - name: Verify SBOM attestation (smoke)
+        env:
+          IMG: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.flavor.suffix }}@${{ steps.build.outputs.digest }}
+        run: |
+          set -eu
+          cosign verify-attestation --type spdxjson "$IMG" \
+            --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/release-docker.yml@.*" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
       - name: Summary
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -159,3 +194,80 @@ jobs:
             echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  fips-smoke:
+    name: FIPS gate must hold
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build both flavors locally (amd64, load — no push) so the gate is
+      # self-contained and does not depend on registry tags.
+      - name: Build federal image (local)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.fips
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: tokendna-fips:smoke
+          cache-from: type=gha
+
+      - name: Build commercial image (local)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: tokendna:smoke
+          cache-from: type=gha
+
+      - name: Federal image bakes in REQUIRE_FIPS and is fail-closed
+        run: |
+          set -eu
+          # The federal flavor must ship REQUIRE_FIPS=true so it can never start
+          # on non-validated crypto.
+          baked=$(docker run --rm tokendna-fips:smoke sh -c 'echo "$REQUIRE_FIPS"' 2>/dev/null || \
+                  docker run --rm tokendna-fips:smoke python -c 'import os;print(os.getenv("REQUIRE_FIPS",""))')
+          if [ "$baked" != "true" ]; then
+            echo "::error::federal image must bake REQUIRE_FIPS=true (got '$baked')"; exit 1
+          fi
+          # Run the gate. On a CMVP-validated FIPS host it prints 'fips ok' and
+          # exits 0; on a generic (non-FIPS) CI runner it must FAIL-CLOSED (78).
+          # Silent success without FIPS is the only failure mode.
+          set +e
+          out=$(docker run --rm tokendna-fips:smoke \
+                python -c "from modules.security.fips import assert_fips_mode; assert_fips_mode(); print('fips ok')" 2>&1)
+          code=$?
+          set -e
+          echo "federal gate output: $out (exit $code)"
+          if [ "$code" = "0" ]; then
+            echo "$out" | grep -q "fips ok" || { echo "::error::federal image started without confirming FIPS"; exit 1; }
+            echo "federal image: validated FIPS provider active ✓"
+          elif [ "$code" = "78" ]; then
+            echo "federal image: fail-closed on this non-FIPS runner ✓ (true PASS requires a CMVP-validated base/host)"
+          else
+            echo "::error::federal gate exited $code (expected 0 with FIPS or 78 fail-closed)"; exit 1
+          fi
+
+      - name: Commercial image must FAIL the FIPS gate (exit 78)
+        run: |
+          set +e
+          docker run --rm -e REQUIRE_FIPS=true tokendna:smoke \
+            python -c "from modules.security.fips import assert_fips_mode; assert_fips_mode()"
+          code=$?
+          set -e
+          if [ "$code" != "78" ]; then
+            echo "::error::commercial image must FAIL the FIPS gate with exit 78 (got $code)"; exit 1
+          fi
+          echo "commercial image correctly fails the FIPS gate (exit 78) ✓"

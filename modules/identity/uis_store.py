@@ -9,12 +9,12 @@ from __future__ import annotations
 import base64
 import json
 import os
-import sqlite3
 import threading
 from contextlib import contextmanager
 from typing import Any
 
 from modules.storage import db_backend
+from modules.storage.pg_connection import ensure_sqlite_dir, AdaptedCursor, get_adapted_db_conn, get_db_conn
 
 
 _lock = threading.Lock()
@@ -25,9 +25,10 @@ def _db_path() -> str:
 
 
 def _pg_dsn() -> str:
-    from modules.storage.pg_connection import normalize_dsn_for_psycopg
+    from modules.storage.pg_connection import ensure_sqlite_dir, normalize_dsn_for_psycopg
 
-    return normalize_dsn_for_psycopg(os.getenv("TOKENDNA_PG_DSN", ""))
+    dsn = db_backend.get_backend_config().postgres_dsn or ""
+    return normalize_dsn_for_psycopg(dsn)
 
 
 def _encode_cursor(event_timestamp: str, event_id: str) -> str:
@@ -50,14 +51,6 @@ def _decode_cursor(cursor: str | None) -> tuple[str, str] | None:
     return event_timestamp, event_id
 
 
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
 def _pg_connect():
     import psycopg
 
@@ -72,16 +65,8 @@ def _pg_connect():
 @contextmanager
 def _cursor():
     with _lock:
-        conn = _get_conn()
-        try:
-            cur = conn.cursor()
-            yield cur
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        with get_db_conn(db_path=_db_path()) as conn:
+            yield AdaptedCursor(conn.cursor())
 
 
 def init_db() -> None:
@@ -89,7 +74,7 @@ def init_db() -> None:
         _pg_init_db()
         return
     db_path = _db_path()
-    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+    ensure_sqlite_dir(db_path)
     with _cursor() as cur:
         cur.execute(
             """
@@ -114,7 +99,7 @@ def init_db() -> None:
         _sqlite_add_column_if_missing(cur, "uis_events", "narrative_json", "TEXT")
 
 
-def _sqlite_add_column_if_missing(cur: sqlite3.Cursor, table: str, column: str, col_type: str) -> None:
+def _sqlite_add_column_if_missing(cur: Any, table: str, column: str, col_type: str) -> None:
     """Idempotent ALTER TABLE — adds column only if it doesn't already exist."""
     existing = {row[1] for row in cur.execute(f"PRAGMA table_info({table})").fetchall()}
     if column not in existing:
@@ -299,19 +284,16 @@ def _maybe_refresh_agent_dna(tenant_id: str, event: dict[str, Any]) -> None:
         return
     # Check observation count from trust graph nodes table
     try:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             row = conn.execute(
                 "SELECT observation_count FROM tg_nodes WHERE tenant_id=? AND label=?",
                 (tenant_id, agent_id),
             ).fetchone()
-        finally:
-            conn.close()
     except Exception:  # noqa: BLE001
         return
     if row is None:
         return
-    obs = row["observation_count"] if isinstance(row, sqlite3.Row) else row[0]
+    obs = row["observation_count"] if hasattr(row, "keys") else row[0]
     if obs % 10 != 0:
         return
 

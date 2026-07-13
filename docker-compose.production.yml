@@ -5,19 +5,21 @@
 #
 # This overlay:
 #   1. Adds a Postgres service (production-required).
-#   2. Sets DATABASE_URL and DATA_BACKEND=postgres on the api container.
+#   2. Sets TOKENDNA_PG_DSN and TOKENDNA_DB_BACKEND=postgres on the api
+#      container. DATABASE_URL / DATA_BACKEND are also set as compatibility
+#      aliases for tooling that expects conventional names.
 #   3. Wires TOKENDNA_ENV=production so modules/security/secret_gate.py
 #      enforces real HMAC secrets at startup.
 #   4. Requires every TOKENDNA_*_SECRET env var to be supplied via .env or
 #      a secrets backend — there is no fallback in this overlay.
-
-version: "3.9"
 
 services:
 
   tokendna:
     environment:
       - TOKENDNA_ENV=production
+      - TOKENDNA_DB_BACKEND=postgres
+      - TOKENDNA_PG_DSN=postgresql://tokendna:${POSTGRES_PASSWORD}@postgres:5432/tokendna
       - DATA_BACKEND=postgres
       - DATABASE_URL=postgresql://tokendna:${POSTGRES_PASSWORD}@postgres:5432/tokendna
       # The four production HMAC secrets — these MUST come from the host
@@ -36,10 +38,6 @@ services:
     restart: unless-stopped
     networks:
       - aegis-internal
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
     environment:
       POSTGRES_DB: tokendna
       POSTGRES_USER: tokendna
@@ -66,6 +64,30 @@ services:
       options:
         max-size: "50m"
         max-file: "5"
+
+  tokendna-deployment-gate:
+    build: .
+    image: aegis-security/tokendna:latest
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    networks:
+      - aegis-internal
+    env_file:
+      - .env
+    environment:
+      - ENVIRONMENT=production
+      - TOKENDNA_ENV=production
+      - TOKENDNA_DB_BACKEND=postgres
+      - TOKENDNA_PG_DSN=postgresql://tokendna:${POSTGRES_PASSWORD}@postgres:5432/tokendna
+      - DATA_BACKEND=postgres
+      - DATABASE_URL=postgresql://tokendna:${POSTGRES_PASSWORD}@postgres:5432/tokendna
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["python"]
+    command: ["scripts/local_appliance_gate.py"]
 
 volumes:
   postgres-data:

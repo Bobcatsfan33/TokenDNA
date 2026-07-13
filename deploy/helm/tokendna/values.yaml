@@ -24,7 +24,10 @@ env:
   TOKENDNA_ENV: production
   ENVIRONMENT: production
   DEV_MODE: "false"
+  TOKENDNA_COMPLIANCE_PROFILE: commercial
   DATA_BACKEND: postgres
+  TOKENDNA_OIDC_TENANT_CLAIM: org_id
+  TOKENDNA_OIDC_ALLOW_SUB_TENANT_FALLBACK: "false"
 
 # -----------------------------------------------------------------------------
 # Secrets
@@ -151,8 +154,8 @@ observability:
 # -----------------------------------------------------------------------------
 migrations:
   enabled: true
-  # Pre-upgrade hook job that runs `alembic upgrade head` before the
-  # rolling deployment proceeds. Skipped on first install.
+  # Pre-install/pre-upgrade hook job that runs TokenDNA storage migrations
+  # before the rolling deployment proceeds.
   image:
     repository: ghcr.io/bobcatsfan33/tokendna
     tag: ""
@@ -169,3 +172,15 @@ networkPolicy:
     - monitoring
   egressCidrs:
     - 0.0.0.0/0  # tighten in production; OTel + KMS endpoints typically need DNS + 443
+
+# -----------------------------------------------------------------------------
+# Internal mTLS PKI (T-2) — cert-manager-issued certs for the :8443 internal
+# plane. Requires cert-manager in the cluster and a one-time root CA secret
+# (rootSecretName). Certs rotate automatically; SPIFFE URI SANs are authorized
+# by modules.security.mtls_peer.require_internal_peer.
+# -----------------------------------------------------------------------------
+internalPKI:
+  enabled: false
+  rootSecretName: tokendna-internal-root  # created once — see deploy runbook
+  duration: 2160h      # 90 days
+  renewBefore: 720h    # 30 days

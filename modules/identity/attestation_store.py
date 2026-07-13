@@ -1,23 +1,33 @@
 """
-TokenDNA -- Persistent store for agent attestation records and certificates.
+TokenDNA -- Agent attestation: the record model and its persistent store.
 
 Uses SQLite for portability. In production this can be swapped for Postgres
 behind the same function interface.
+
+The attestation primitives (DNA fingerprint derivation, the 4D WHO/WHAT/HOW/WHY
+record model, deterministic id + integrity digest) were merged in from the
+151-line ``attestation.py`` in P2.3: a record model and the store that persists it
+are one concern, and splitting them bought nothing but an extra import.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import math
 import os
 import sqlite3
 import threading
+import time
+import uuid
 from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from modules.storage import db_backend
-from modules.storage.pg_connection import AdaptedCursor, get_db_conn
+from modules.storage.pg_connection import ensure_sqlite_dir, AdaptedCursor, get_db_conn
 
 
 _lock = threading.Lock()
@@ -28,9 +38,10 @@ def _db_path() -> str:
 
 
 def _pg_dsn() -> str:
-    from modules.storage.pg_connection import normalize_dsn_for_psycopg
+    from modules.storage.pg_connection import ensure_sqlite_dir, normalize_dsn_for_psycopg
 
-    return normalize_dsn_for_psycopg(str(os.getenv("TOKENDNA_PG_DSN", "")).strip())
+    dsn = db_backend.get_backend_config().postgres_dsn or ""
+    return normalize_dsn_for_psycopg(dsn)
 
 
 def _encode_cursor(order_value: str, item_id: str) -> str:
@@ -63,7 +74,7 @@ def _cursor():
 
 def init_db() -> None:
     db_path = _db_path()
-    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+    ensure_sqlite_dir(db_path)
     with _cursor() as cur:
         cur.execute(
             """
@@ -855,3 +866,136 @@ def list_ca_keys(status: str | None = None, limit: int = 50) -> list[dict[str, A
         }
         for row in rows
     ]
+
+
+# ── Attestation primitives (merged from attestation.py — P2.3) ───────────────
+
+def _sha256_hex(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _canonical_json(data: dict[str, Any]) -> str:
+    return json.dumps(data, sort_keys=True, separators=(",", ":"))
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def build_agent_dna_fingerprint(
+    agent_id: str,
+    runtime_context: dict[str, Any],
+    behavior_features: dict[str, Any],
+) -> str:
+    """
+    Create a deterministic machine-identity fingerprint for an agent session.
+
+    This is intentionally deterministic given the same inputs so downstream
+    systems can correlate/compare fingerprints.
+    """
+    payload = {
+        "agent_id": agent_id,
+        "runtime": runtime_context,
+        "behavior": behavior_features,
+    }
+    return _sha256_hex(_canonical_json(payload))
+
+
+@dataclass
+class AttestationRecord:
+    attestation_id: str
+    created_at: str
+    who: dict[str, Any]
+    what: dict[str, Any]
+    how: dict[str, Any]
+    why: dict[str, Any]
+    integrity_digest: str
+    agent_dna_fingerprint: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "attestation_id": self.attestation_id,
+            "created_at": self.created_at,
+            "who": self.who,
+            "what": self.what,
+            "how": self.how,
+            "why": self.why,
+            "integrity_digest": self.integrity_digest,
+            "agent_dna_fingerprint": self.agent_dna_fingerprint,
+        }
+
+
+def create_attestation_record(
+    *,
+    agent_id: str,
+    owner_org: str,
+    created_by: str,
+    soul_hash: str,
+    directive_hashes: list[str],
+    model_fingerprint: str,
+    mcp_manifest_hash: str,
+    auth_method: str,
+    dpop_bound: bool,
+    mtls_bound: bool,
+    behavior_confidence: float,
+    declared_purpose: str,
+    scope: list[str],
+    delegation_chain: list[str],
+    policy_trace_id: str | None = None,
+    runtime_context: dict[str, Any] | None = None,
+    behavior_features: dict[str, Any] | None = None,
+) -> AttestationRecord:
+    runtime_context = runtime_context or {}
+    behavior_features = behavior_features or {}
+
+    agent_dna = build_agent_dna_fingerprint(
+        agent_id=agent_id,
+        runtime_context=runtime_context,
+        behavior_features=behavior_features,
+    )
+
+    who = {
+        "agent_id": agent_id,
+        "created_by": created_by,
+        "owner_org": owner_org,
+    }
+    what = {
+        "soul_hash": soul_hash,
+        "directive_hashes": directive_hashes,
+        "model_fingerprint": model_fingerprint,
+        "mcp_manifest_hash": mcp_manifest_hash,
+    }
+    how = {
+        "auth_method": auth_method,
+        "dpop_bound": dpop_bound,
+        "mtls_bound": mtls_bound,
+        "behavior_confidence": round(float(behavior_confidence), 4),
+    }
+    why = {
+        "declared_purpose": declared_purpose,
+        "scope": scope,
+        "delegation_chain": delegation_chain,
+        "policy_trace_id": policy_trace_id,
+    }
+
+    integrity_payload = {
+        "who": who,
+        "what": what,
+        "how": how,
+        "why": why,
+        "agent_dna": agent_dna,
+    }
+    digest = _sha256_hex(_canonical_json(integrity_payload))
+    entropy = uuid.uuid4().hex
+    attestation_id = _sha256_hex(f"{agent_id}:{time.time_ns()}:{entropy}")[:32]
+
+    return AttestationRecord(
+        attestation_id=attestation_id,
+        created_at=_utc_now(),
+        who=who,
+        what=what,
+        how=how,
+        why=why,
+        integrity_digest=digest,
+        agent_dna_fingerprint=agent_dna,
+    )

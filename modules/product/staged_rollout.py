@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import logging
 import os
-import sqlite3
 import threading
 import uuid
 from dataclasses import dataclass
@@ -39,7 +38,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from modules.product import commercial_tiers
-from modules.storage import db_backend
+from modules.storage.ddl_runner import run_ddl
+from modules.storage.pg_connection import get_adapted_db_conn
 
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
@@ -47,18 +47,6 @@ _lock = threading.Lock()
 
 def _db_path() -> str:
     return os.getenv("DATA_DB_PATH", "/data/tokendna.db")
-
-
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
-def _use_pg() -> bool:
-    return db_backend.should_use_postgres()
 
 
 def _now() -> datetime:
@@ -93,17 +81,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_allowlist_active
 
 
 def init_db() -> None:
-    if _use_pg():
-        return
-    db_path = _db_path()
-    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
-    with _lock:
-        conn = _get_conn()
-        try:
-            conn.executescript(_SCHEMA)
-            conn.commit()
-        finally:
-            conn.close()
+    run_ddl(_SCHEMA, db_path=_db_path())
 
 
 # ── Data classes ──────────────────────────────────────────────────────────────
@@ -146,14 +124,11 @@ class AllowlistError(ValueError):
 
 def is_allowlisted(tenant_id: str, feature_key: str) -> bool:
     """Hot-path check: does this tenant have an active grant for this
-    feature? Defensive: missing table or PG mode → return False (fail
+    feature? Defensive: missing table/backend outage → return False (fail
     closed for the override, never overrides true entitlement)."""
-    if _use_pg():
-        return False
     try:
         with _lock:
-            conn = _get_conn()
-            try:
+            with get_adapted_db_conn(db_path=_db_path()) as conn:
                 row = conn.execute(
                     """
                     SELECT 1 FROM tenant_feature_allowlists
@@ -163,9 +138,7 @@ def is_allowlisted(tenant_id: str, feature_key: str) -> bool:
                     (tenant_id, feature_key),
                 ).fetchone()
                 return row is not None
-            finally:
-                conn.close()
-    except sqlite3.OperationalError:
+    except Exception:
         # Table not yet initialized — treat as no override.
         return False
 
@@ -186,15 +159,12 @@ def grant_access(
     """
     if feature_key not in commercial_tiers.COMMERCIAL_FEATURES:
         raise AllowlistError("unknown_feature_key")
-    if _use_pg():
-        raise NotImplementedError("staged_rollout PG path not implemented")
     if is_allowlisted(tenant_id, feature_key):
         raise AllowlistError("already_active")
     grant_id = f"grant:{uuid.uuid4().hex[:24]}"
     granted_at = _iso(_now())
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             conn.execute(
                 """
                 INSERT INTO tenant_feature_allowlists
@@ -204,9 +174,6 @@ def grant_access(
                 (grant_id, tenant_id, feature_key, granted_at,
                  granted_by, reason or ""),
             )
-            conn.commit()
-        finally:
-            conn.close()
     logger.info(
         "staged_rollout grant tenant=%s feature=%s by=%s reason=%s",
         tenant_id, feature_key, granted_by, reason or "-",
@@ -226,12 +193,9 @@ def revoke_access(
     """Revoke the *active* grant for (tenant, feature). Idempotent: returns
     ``{"revoked": False, "reason": "no_active_grant"}`` if there's nothing
     to revoke."""
-    if _use_pg():
-        return {"revoked": False, "reason": "pg_not_implemented"}
     revoked_at = _iso(_now())
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             cur = conn.execute(
                 """
                 UPDATE tenant_feature_allowlists
@@ -241,9 +205,6 @@ def revoke_access(
                 (revoked_at, revoked_by, reason or "",
                  tenant_id, feature_key),
             )
-            conn.commit()
-        finally:
-            conn.close()
     if cur.rowcount == 0:
         return {"revoked": False, "reason": "no_active_grant"}
     logger.info(
@@ -264,11 +225,8 @@ def list_grants(
     *,
     include_revoked: bool = False,
 ) -> list[AllowlistGrant]:
-    if _use_pg():
-        return []
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             sql = "SELECT * FROM tenant_feature_allowlists WHERE tenant_id=?"
             if not include_revoked:
                 sql += " AND revoked_at IS NULL"
@@ -288,17 +246,12 @@ def list_grants(
                 )
                 for r in rows
             ]
-        finally:
-            conn.close()
 
 
 def list_active_grants_for_feature(feature_key: str) -> list[AllowlistGrant]:
     """Operator query: which tenants have been allowlisted onto this feature?"""
-    if _use_pg():
-        return []
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM tenant_feature_allowlists
@@ -321,5 +274,3 @@ def list_active_grants_for_feature(feature_key: str) -> list[AllowlistGrant]:
                 )
                 for r in rows
             ]
-        finally:
-            conn.close()

@@ -69,6 +69,34 @@ Longer explanation if needed. Reference issues with #123.
 
 Types: `feat`, `fix`, `chore`, `docs`, `security`, `perf`, `refactor`
 
+## Developer Certificate of Origin (DCO)
+
+Every commit must be **signed off**, certifying you have the right to submit it
+under the project license (see the [DCO](https://developercertificate.org/)).
+This is enforced in CI by the `DCO` workflow — a PR with any unsigned commit
+fails the check.
+
+Sign off by adding the `-s` flag when you commit:
+
+```bash
+git commit -s -m "feat(scope): ..."
+```
+
+This appends a trailer using your `git config user.name` / `user.email`:
+
+```
+Signed-off-by: Your Name <you@example.com>
+```
+
+Forgot to sign off? Fix the whole branch at once:
+
+```bash
+git rebase --signoff origin/main
+git push --force-with-lease
+```
+
+Merge commits are exempt.
+
 ## License
 
 By contributing, you agree your contributions are licensed under the same [Business Source License 1.1](LICENSE) that covers this project.

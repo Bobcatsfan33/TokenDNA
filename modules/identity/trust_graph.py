@@ -52,6 +52,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from modules.storage import db_backend
+from modules.storage.pg_connection import ensure_sqlite_dir, open_adapted_db_conn
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -72,18 +73,15 @@ def _db_path() -> str:
     return os.getenv("DATA_DB_PATH", "/data/tokendna.db")
 
 
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+def _get_conn():
+    return open_adapted_db_conn(db_path=_db_path())
 
 
 def _pg_dsn() -> str:
-    from modules.storage.pg_connection import normalize_dsn_for_psycopg
+    from modules.storage.pg_connection import ensure_sqlite_dir, normalize_dsn_for_psycopg
 
-    return normalize_dsn_for_psycopg(os.getenv("TOKENDNA_PG_DSN", ""))
+    dsn = db_backend.get_backend_config().postgres_dsn or ""
+    return normalize_dsn_for_psycopg(dsn)
 
 
 def _use_pg() -> bool:
@@ -164,7 +162,7 @@ def init_db() -> None:
         _pg_init()
         return
     db_path = _db_path()
-    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+    ensure_sqlite_dir(db_path)
     with _lock:
         conn = _get_conn()
         try:
@@ -1326,6 +1324,56 @@ def record_policy_governance(tenant_id: str, policy_label: str,
             conn.close()
 
 
+def record_lifecycle_transition(
+    tenant_id: str,
+    agent_id: str,
+    to_state: str,
+    from_state: str | None = None,
+    actor: str | None = None,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    """Reflect an agent lifecycle transition in the trust graph (T-4).
+
+    Upserts the agent node (carrying its current lifecycle status in meta) and
+    a ``transitioned_to`` edge agent -> ``lifecycle_state:<to_state>``, so the
+    graph is the single source of truth for who is active / suspended /
+    decommissioned. Terminal decommission also stores an anomaly so ghost-agent
+    offboarding surfaces in get_anomalies / dashboards.
+
+    Returns a descriptor of the recorded edge. Caller-best-effort: never raises
+    into the lifecycle write path.
+    """
+    init_db()
+    now = _now()
+    nodes = [
+        ("agent", agent_id, json.dumps({"lifecycle_status": to_state, "actor": actor})),
+        ("lifecycle_state", to_state, "{}"),
+    ]
+    edges = [("agent", agent_id, "lifecycle_state", to_state, "transitioned_to")]
+    _upsert_nodes(tenant_id, nodes, now)
+    _upsert_edges(tenant_id, edges, now)
+
+    agent_node = _node_id(tenant_id, "agent", agent_id)
+    if to_state == "decommissioned":
+        store_anomaly(GraphAnomaly(
+            anomaly_type="AGENT_DECOMMISSIONED",
+            tenant_id=tenant_id,
+            detected_at=now,
+            subject_node=agent_node,
+            detail=f"agent {agent_id} decommissioned" + (f": {reason}" if reason else ""),
+            severity="medium",
+            context={"from_state": from_state, "actor": actor, "reason": reason},
+        ))
+
+    state_node = _node_id(tenant_id, "lifecycle_state", to_state)
+    return {
+        "agent_id": agent_id,
+        "from_state": from_state,
+        "to_state": to_state,
+        "edge_id": _edge_id(tenant_id, agent_node, state_node, "transitioned_to"),
+    }
+
+
 def record_permission_scope(tenant_id: str, agent_label: str,
                              policy_label: str, scope: list[str],
                              source_event: str | None = None) -> None:
@@ -1496,3 +1544,150 @@ def check_permission_drift(
     )
     store_anomaly(anomaly)
     return anomaly
+
+
+# ── Credential-revocation marking (kill-switch plane, P2.1) ────────────────────
+#
+# When the kill switch rips an agent's credentials, the trust graph must say so:
+# an operator looking at the blast-radius view needs to see that the node at the
+# centre of it is already contained. The mark lives on the agent node's meta and
+# raises a CRITICAL anomaly so it surfaces in the incident feed.
+
+REVOKED_ANOMALY = "AGENT_CREDENTIALS_REVOKED"
+
+
+def _agent_node_id(tenant_id: str, agent_label: str) -> str:
+    return _node_id(tenant_id, "agent", agent_label)
+
+
+def _set_node_revocation(
+    tenant_id: str,
+    agent_label: str,
+    revocation: dict[str, Any] | None,
+) -> bool:
+    """Merge (or clear) the ``revoked`` key on an agent node's meta.
+
+    Returns False when the agent has no node in the graph — never an error: an
+    agent TokenDNA has not observed simply has nothing to mark.
+    """
+    init_db()  # the kill switch may fire before anything has been ingested
+    nid = _agent_node_id(tenant_id, agent_label)
+
+    if _use_pg():
+        import psycopg
+        with psycopg.connect(_pg_dsn()) as conn:
+            row = conn.execute(
+                "SELECT meta_json FROM tg_nodes WHERE node_id=%s AND tenant_id=%s",
+                (nid, tenant_id),
+            ).fetchone()
+            if row is None:
+                return False
+            meta = dict(row[0] or {})
+            if revocation is None:
+                meta.pop("revoked", None)
+            else:
+                meta["revoked"] = revocation
+            conn.execute(
+                "UPDATE tg_nodes SET meta_json=%s WHERE node_id=%s AND tenant_id=%s",
+                (json.dumps(meta), nid, tenant_id),
+            )
+            conn.commit()
+            return True
+
+    with _lock:
+        conn = _get_conn()
+        try:
+            row = conn.execute(
+                "SELECT meta_json FROM tg_nodes WHERE node_id=? AND tenant_id=?",
+                (nid, tenant_id),
+            ).fetchone()
+            if row is None:
+                return False
+            meta = json.loads(row["meta_json"] or "{}")
+            if revocation is None:
+                meta.pop("revoked", None)
+            else:
+                meta["revoked"] = revocation
+            conn.execute(
+                "UPDATE tg_nodes SET meta_json=? WHERE node_id=? AND tenant_id=?",
+                (json.dumps(meta), nid, tenant_id),
+            )
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+
+
+def mark_agent_revoked(
+    tenant_id: str,
+    agent_label: str,
+    *,
+    actor: str,
+    reason: str = "",
+) -> bool:
+    """Mark an agent's credentials as revoked in the graph + raise an anomaly.
+
+    Idempotent. Returns False if the agent is not present in the graph.
+    """
+    now = _now()
+    marked = _set_node_revocation(tenant_id, agent_label, {
+        "revoked_at": now,
+        "revoked_by": actor,
+        "reason": reason,
+    })
+    if not marked:
+        return False
+
+    store_anomaly(GraphAnomaly(
+        anomaly_type=REVOKED_ANOMALY,
+        tenant_id=tenant_id,
+        detected_at=now,
+        subject_node=_agent_node_id(tenant_id, agent_label),
+        detail=(
+            f"credentials revoked for agent '{agent_label}' by {actor}"
+            + (f": {reason}" if reason else "")
+        ),
+        severity="critical",
+        context={
+            "agent_label": agent_label,
+            "actor": actor,
+            "reason": reason,
+            "plane": "trust_graph",
+        },
+    ))
+    return True
+
+
+def clear_agent_revoked(tenant_id: str, agent_label: str, *, actor: str) -> bool:
+    """Lift a revocation mark (the kill switch was reversed)."""
+    return _set_node_revocation(tenant_id, agent_label, None)
+
+
+def is_agent_revoked(tenant_id: str, agent_label: str) -> bool:
+    """True when the agent node carries a live revocation mark."""
+    init_db()
+    nid = _agent_node_id(tenant_id, agent_label)
+
+    if _use_pg():
+        import psycopg
+        with psycopg.connect(_pg_dsn()) as conn:
+            row = conn.execute(
+                "SELECT meta_json FROM tg_nodes WHERE node_id=%s AND tenant_id=%s",
+                (nid, tenant_id),
+            ).fetchone()
+            meta = dict((row[0] if row else None) or {})
+            return bool(meta.get("revoked"))
+
+    with _lock:
+        conn = _get_conn()
+        try:
+            row = conn.execute(
+                "SELECT meta_json FROM tg_nodes WHERE node_id=? AND tenant_id=?",
+                (nid, tenant_id),
+            ).fetchone()
+            if row is None:
+                return False
+            meta = json.loads(row["meta_json"] or "{}")
+            return bool(meta.get("revoked"))
+        finally:
+            conn.close()

@@ -73,6 +73,19 @@ Bearer-token auth (`Authorization: Bearer <token>`). Tokens are scoped
 per tenant and rotated by the operator via the admin console. SCIM
 requests carry the same tenant context as the rest of the TokenDNA API.
 
+Production OIDC tenant mapping is explicit and fail-closed:
+
+```
+TOKENDNA_OIDC_TENANT_CLAIM=org_id
+TOKENDNA_OIDC_ROLE_CLAIM=tokendna_role,role
+TOKENDNA_OIDC_GROUPS_CLAIM=roles,groups
+TOKENDNA_OIDC_GROUP_ROLE_MAP_JSON={"Security Owners":"owner","SOC Analysts":"analyst"}
+TOKENDNA_OIDC_ALLOW_SUB_TENANT_FALLBACK=false
+```
+
+Do not map tenant identity from `sub` / `client_id` in production; those
+identify a subject, not the enterprise tenant boundary.
+
 ### 2.3 Schemas
 
 * User — `urn:ietf:params:scim:schemas:core:2.0:User`
@@ -80,6 +93,16 @@ requests carry the same tenant context as the rest of the TokenDNA API.
 
 Custom enterprise extension schema (`urn:ietf:params:scim:schemas:extension:enterprise:2.0:User`) is not yet supported. Most IdPs degrade
 gracefully when the extension is absent.
+
+SCIM groups can drive TokenDNA roles via an explicit map:
+
+```
+TOKENDNA_SCIM_GROUP_ROLE_MAP_JSON={"SOC Analysts":"analyst","Platform Owners":"owner"}
+```
+
+When a mapped group is created, patched, or deleted, user roles are
+recomputed from current membership. The default is least privilege:
+unmapped users have no elevated role.
 
 ### 2.4 What is intentionally NOT supported (yet)
 

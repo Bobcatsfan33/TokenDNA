@@ -38,6 +38,18 @@ def _reload(module_path: str):
     return importlib.reload(mod)
 
 
+def test_audit_log_accepts_legacy_env_aliases(tmp_path, monkeypatch):
+    monkeypatch.delenv("AUDIT_BACKEND", raising=False)
+    monkeypatch.delenv("AUDIT_LOG_PATH", raising=False)
+    monkeypatch.setenv("AUDIT_BACKENDS", "file")
+    monkeypatch.setenv("AUDIT_LOG_FILE", str(tmp_path / "alias-audit.jsonl"))
+
+    audit = _reload("modules.security.audit_log")
+
+    assert audit.AUDIT_BACKEND == "file"
+    assert audit.AUDIT_FILE.endswith("alias-audit.jsonl")
+
+
 # ── policy_guard ──────────────────────────────────────────────────────────────
 
 

@@ -1,0 +1,25 @@
+# CODEOWNERS — SH-2 engineering governance.
+#
+# Code-owner review is REQUIRED on the security-sensitive paths below
+# (enforced by scripts/org/protect.sh -> require_code_owner_reviews=true).
+# No unreviewed code reaches these paths.
+#
+# A named SECOND MAINTAINER must be added alongside @Bobcatsfan33 here before
+# the "two maintainers with enforced review" deployable gate is satisfied.
+# Replace @Bobcatsfan33-SECOND-MAINTAINER-TODO with the real handle once the
+# second maintainer accepts the invite, then re-run scripts/org/protect.sh.
+
+# Default owner for everything in the repo.
+*                       @Bobcatsfan33
+
+# --- Security-sensitive paths (code-owner review mandatory) ---
+/auth.py                @Bobcatsfan33
+/modules/security/      @Bobcatsfan33
+/modules/tenants/       @Bobcatsfan33
+/modules/auth/          @Bobcatsfan33
+/compliance/            @Bobcatsfan33
+/.github/               @Bobcatsfan33
+/scripts/org/           @Bobcatsfan33
+
+# Decomposed API surface (T-1) — every router carries explicit auth + tier gates.
+/api_routers/           @Bobcatsfan33

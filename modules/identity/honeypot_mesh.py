@@ -53,7 +53,6 @@ import json
 import logging
 import os
 import secrets
-import sqlite3
 import threading
 import uuid
 from dataclasses import dataclass
@@ -61,6 +60,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from modules.storage import db_backend
+from modules.storage.ddl_runner import run_ddl
+from modules.storage.pg_connection import get_adapted_db_conn
 
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
@@ -82,18 +83,6 @@ def _secret() -> bytes:
 
 def _db_path() -> str:
     return os.getenv("DATA_DB_PATH", "/data/tokendna.db")
-
-
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
-def _use_pg() -> bool:
-    return db_backend.should_use_postgres()
 
 
 def _now() -> datetime:
@@ -158,17 +147,7 @@ CREATE INDEX IF NOT EXISTS idx_honeypot_hits_decoy
 
 
 def init_db() -> None:
-    if _use_pg():
-        return
-    db_path = _db_path()
-    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
-    with _lock:
-        conn = _get_conn()
-        try:
-            conn.executescript(_SCHEMA)
-            conn.commit()
-        finally:
-            conn.close()
+    run_ddl(_SCHEMA, db_path=_db_path())
 
 
 # ── Data classes ──────────────────────────────────────────────────────────────
@@ -278,16 +257,13 @@ def _create_decoy(
     secret_value: str,
     metadata: dict[str, Any],
 ) -> Decoy:
-    if _use_pg():
-        raise NotImplementedError("honeypot_mesh PG path not implemented")
     if kind not in DECOY_KINDS:
         raise ValueError(f"unknown_kind:{kind}")
     decoy_id = f"decoy:{uuid.uuid4().hex[:24]}"
     now = _iso(_now())
     secret_hash = _hash_token(secret_value)
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             conn.execute(
                 """
                 INSERT INTO honeypot_decoys
@@ -300,9 +276,6 @@ def _create_decoy(
                     json.dumps(metadata, sort_keys=True), now,
                 ),
             )
-            conn.commit()
-        finally:
-            conn.close()
     return Decoy(
         decoy_id=decoy_id,
         tenant_id=tenant_id,
@@ -329,24 +302,27 @@ def is_honeytoken(token_value: str) -> dict[str, Any] | None:
     credential check so the system never reveals via timing or response
     code whether the caller's input would have been a real credential.
     """
-    if _use_pg() or not token_value:
+    if not token_value:
+        return None
+    if not db_backend.should_use_postgres() and not os.path.exists(_db_path()):
         return None
     h = _hash_token(token_value)
     with _lock:
-        conn = _get_conn()
         try:
-            row = conn.execute(
-                "SELECT * FROM honeypot_decoys WHERE secret_hash=? AND active=1",
-                (h,),
-            ).fetchone()
-        finally:
-            conn.close()
+            with get_adapted_db_conn(db_path=_db_path()) as conn:
+                row = conn.execute(
+                    "SELECT * FROM honeypot_decoys WHERE secret_hash=? AND active=1",
+                    (h,),
+                ).fetchone()
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).debug("honeytoken lookup unavailable: %s", exc)
+            return None
     if not row:
         return None
     return _row_to_safe_dict(row)
 
 
-def _row_to_safe_dict(row: sqlite3.Row) -> dict[str, Any]:
+def _row_to_safe_dict(row: Any) -> dict[str, Any]:
     return {
         "decoy_id": row["decoy_id"],
         "tenant_id": row["tenant_id"],
@@ -375,13 +351,10 @@ def record_decoy_hit(
     """Log that a decoy was touched. Bumps the hit counter on the decoy
     row in the same transaction. Returns the hit record; None if the
     decoy doesn't exist or is cross-tenant."""
-    if _use_pg():
-        return None
     now = _iso(_now())
     hit_id = f"hhit:{uuid.uuid4().hex[:24]}"
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             row = conn.execute(
                 "SELECT * FROM honeypot_decoys WHERE decoy_id=?",
                 (decoy_id,),
@@ -413,9 +386,6 @@ def record_decoy_hit(
                 """,
                 (now, decoy_id),
             )
-            conn.commit()
-        finally:
-            conn.close()
     logger.warning(
         "honeypot hit decoy=%s tenant=%s ip=%s severity=%s",
         decoy_id, row["tenant_id"], source_ip or "?", severity,
@@ -439,12 +409,9 @@ def acknowledge_hit(
     acknowledged_by: str,
     tenant_id: str | None = None,
 ) -> bool:
-    if _use_pg():
-        return False
     now = _iso(_now())
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             sql = (
                 "UPDATE honeypot_hits "
                 "SET acknowledged=1, acknowledged_at=?, acknowledged_by=? "
@@ -455,10 +422,7 @@ def acknowledge_hit(
                 sql += " AND tenant_id=?"
                 params.append(tenant_id)
             cur = conn.execute(sql, tuple(params))
-            conn.commit()
             return cur.rowcount > 0
-        finally:
-            conn.close()
 
 
 # ── Listing ───────────────────────────────────────────────────────────────────
@@ -468,11 +432,8 @@ def get_decoy_inventory(
     kind: str | None = None,
     active_only: bool = True,
 ) -> list[dict[str, Any]]:
-    if _use_pg():
-        return []
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             sql = "SELECT * FROM honeypot_decoys WHERE tenant_id=?"
             params: list[Any] = [tenant_id]
             if kind:
@@ -483,8 +444,6 @@ def get_decoy_inventory(
             sql += " ORDER BY created_at DESC"
             rows = conn.execute(sql, tuple(params)).fetchall()
             return [_row_to_safe_dict(r) for r in rows]
-        finally:
-            conn.close()
 
 
 def get_decoy_hits(
@@ -493,11 +452,8 @@ def get_decoy_hits(
     acknowledged: bool | None = False,
     limit: int = 200,
 ) -> list[dict[str, Any]]:
-    if _use_pg():
-        return []
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             sql = "SELECT * FROM honeypot_hits WHERE tenant_id=?"
             params: list[Any] = [tenant_id]
             if decoy_id is not None:
@@ -527,23 +483,15 @@ def get_decoy_hits(
                 }
                 for r in rows
             ]
-        finally:
-            conn.close()
 
 
 def deactivate_decoy(decoy_id: str, tenant_id: str | None = None) -> bool:
-    if _use_pg():
-        return False
     with _lock:
-        conn = _get_conn()
-        try:
+        with get_adapted_db_conn(db_path=_db_path()) as conn:
             sql = "UPDATE honeypot_decoys SET active=0 WHERE decoy_id=? AND active=1"
             params: list[Any] = [decoy_id]
             if tenant_id is not None:
                 sql += " AND tenant_id=?"
                 params.append(tenant_id)
             cur = conn.execute(sql, tuple(params))
-            conn.commit()
             return cur.rowcount > 0
-        finally:
-            conn.close()

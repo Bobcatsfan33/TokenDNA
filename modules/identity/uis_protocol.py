@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from modules.identity.uis import normalize_from_protocol
-from modules.identity.uis_validator import (
+from modules.identity.uis import (
     field_set_descriptions as _fs_descriptions,
     required_field_sets as _fs_required,
 )

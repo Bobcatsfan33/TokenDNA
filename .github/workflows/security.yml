@@ -1,0 +1,50 @@
+# .github/workflows/security.yml — supply-chain SBOM (SH-1).
+#
+# Self-contained CycloneDX SBOM generation. CodeQL, Trivy image scan, and the
+# container build already run in ci.yml; image signing + SLSA provenance run in
+# release-docker.yml on tags (cosign keyless). This workflow adds the SBOM
+# artifact (retained 90 days), kept side-effect-free so it is reliably green on
+# every PR and push.
+#
+# NOTE: the org-level reusable workflow Bobcatsfan33/.github/security-reusable.yml
+# referenced a non-existent SLSA generator path and was startup-failing; until
+# that shared workflow is fixed, this repo runs its SBOM step inline.
+name: security
+
+on:
+  push: { branches: [main] }
+  pull_request: { branches: [main] }
+
+permissions:
+  contents: read
+
+jobs:
+  sbom:
+    name: CycloneDX SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generate CycloneDX SBOM (source)
+        run: |
+          python -m pip install --quiet cyclonedx-bom
+          # No `|| empty-stub` fallback: a supply-chain SBOM that silently
+          # degrades to zero components on failure defeats its own purpose.
+          cyclonedx-py requirements requirements.txt \
+            --output-format JSON --output-file sbom-source.cdx.json
+          COMPONENTS=$(python -c 'import json;print(len(json.load(open("sbom-source.cdx.json")).get("components",[])))')
+          echo "SBOM components: $COMPONENTS"
+          if [ "$COMPONENTS" -eq 0 ]; then
+            echo "::error::SBOM generated with zero components — supply-chain evidence is empty." >&2
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom-source.cdx.json
+          retention-days: 90

@@ -4,23 +4,24 @@
 # ── Web framework ─────────────────────────────────────────────────────────────
 fastapi==0.115.6
 uvicorn[standard]==0.29.0
-python-multipart==0.0.26
+python-multipart==0.0.31
 
 # ── JWT / OIDC ────────────────────────────────────────────────────────────────
 python-jose[cryptography]==3.4.0
-cryptography==46.0.7
+cryptography==48.0.1
 
 # ── HTTP client (JWKS fetch, webhooks, AbuseIPDB, ip-api) ────────────────────
 requests==2.33.0
 httpx==0.28.1                    # async-capable alternative used by some deps
 psycopg[binary]==3.3.3           # PostgreSQL backend for production data plane
+psycopg-pool==3.3.1              # ConnectionPool used by modules.storage.pg_connection
 
 # ── Redis ─────────────────────────────────────────────────────────────────────
 redis==7.3.0
 # redis-py 7.x requires async_timeout on Python < 3.12; pip resolves it via
 # transitive deps in some environments but a fresh distroless install does
 # not, so we pin it explicitly.
-async-timeout>=4.0,<6.0; python_version < "3.12"
+async-timeout==5.0.1; python_version < "3.12"
 
 # ── ClickHouse ────────────────────────────────────────────────────────────────
 clickhouse-connect==0.15.1
@@ -41,4 +42,4 @@ numpy==1.26.4                    # lightweight — used for profile distance mat
 # ── Utilities ─────────────────────────────────────────────────────────────────
 pydantic==2.13.3                  # FastAPI model validation (v2 API)
 python-dotenv==1.2.2             # load .env in development
-eval_type_backport>=0.2.0   # Python 3.9 compat for PEP 604 type unions
+eval_type_backport==0.3.1   # Python 3.9 compat for PEP 604 type unions

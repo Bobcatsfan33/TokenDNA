@@ -1,0 +1,35 @@
+# TokenDNA self-host trial — single app container + one data volume, SQLite only.
+#
+# Real OIDC auth stays ON (TOKENDNA_TRIAL_MODE, NOT DEV_MODE). The prospect's data
+# lives in the `tokendna-trial-data` volume and never leaves the host. No Postgres/
+# Redis/ClickHouse required — the trial runs on SQLite.
+#
+#   cp .env.trial.example .env.trial     # fill in OIDC + trial license
+#   make trial-up                        # build + run
+#   make trial-reset                     # wipe imported data + re-seed fixtures
+#
+services:
+  tokendna:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: tokendna-trial:local
+    env_file: ../../.env.trial
+    # serve.py binds 0.0.0.0 and self-seeds demo fixtures when the DB is empty.
+    entrypoint: ["python", "serve.py"]
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - tokendna-trial-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  tokendna-trial-data:

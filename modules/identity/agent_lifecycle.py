@@ -53,7 +53,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from modules.storage.pg_connection import AdaptedCursor, get_db_conn
+from modules.storage.pg_connection import ensure_sqlite_dir, AdaptedCursor, get_db_conn
 
 log = logging.getLogger(__name__)
 
@@ -71,6 +71,76 @@ _TRANSITIONS: dict[str, set[str]] = {
     "suspended": {"active", "decommissioned"},
     "decommissioned": set(),  # terminal
 }
+
+# Map lifecycle transition -> security AuditEventType name (T-4). Kept as names
+# so audit_log stays a lazy import (no import cycle at module load).
+_AUDIT_EVENT_FOR: dict[str, str] = {
+    "registered": "AGENT_REGISTERED",
+    "suspended": "AGENT_SUSPENDED",
+    "reactivated": "AGENT_REACTIVATED",
+    "decommissioned": "AGENT_DECOMMISSIONED",
+}
+
+
+def _sync_trust_graph(
+    *,
+    tenant_id: str,
+    agent_id: str,
+    to_state: str,
+    from_state: str | None = None,
+    actor: str | None = None,
+    reason: str | None = None,
+) -> None:
+    """Best-effort: reflect the transition in the central trust graph (T-4).
+
+    Cross-module integration — lifecycle state becomes a graph edge so blast
+    radius / anomaly views see who is active vs decommissioned. Never blocks
+    the lifecycle write (failures are logged, not raised).
+    """
+    try:
+        from modules.identity import trust_graph  # noqa: PLC0415
+        trust_graph.record_lifecycle_transition(
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            to_state=to_state,
+            from_state=from_state,
+            actor=actor,
+            reason=reason,
+        )
+    except Exception as exc:  # noqa: BLE001 - integration is best-effort
+        log.warning("trust_graph lifecycle sync failed for %s: %s", agent_id, exc)
+
+
+def _emit_audit(
+    *,
+    transition: str,
+    tenant_id: str,
+    agent_id: str,
+    actor: str | None,
+    reason: str | None,
+    from_state: str | None = None,
+    to_state: str | None = None,
+) -> None:
+    """Best-effort SOC 2 audit emission for a lifecycle transition (T-4)."""
+    try:
+        from modules.security.audit_log import (  # noqa: PLC0415
+            AuditEventType, AuditOutcome, log_event,
+        )
+        event = getattr(AuditEventType, _AUDIT_EVENT_FOR[transition])
+        log_event(
+            event,
+            AuditOutcome.SUCCESS,
+            tenant_id=tenant_id,
+            subject=actor or "system",
+            resource=f"agent/{agent_id}",
+            detail={
+                "from_state": from_state,
+                "to_state": to_state,
+                "reason": reason,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - audit is best-effort
+        log.warning("audit emission failed for %s %s: %s", transition, agent_id, exc)
 
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
@@ -96,7 +166,7 @@ def _cursor():
 def init_db() -> None:
     """Create lifecycle tables if they don't exist."""
     db_path = _db_path()
-    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+    ensure_sqlite_dir(db_path)
     with _cursor() as cur:
         cur.execute(
             """
@@ -282,6 +352,11 @@ def register_agent(
             actor=owner,
             reason="initial registration",
         )
+    _sync_trust_graph(tenant_id=tenant_id, agent_id=agent_id, to_state="active", actor=owner)
+    _emit_audit(
+        transition="registered", tenant_id=tenant_id, agent_id=agent_id,
+        actor=owner, reason="initial registration", to_state="active",
+    )
     return get_agent(tenant_id=tenant_id, agent_id=agent_id)
 
 
@@ -358,6 +433,14 @@ def suspend_agent(
             actor=actor,
             reason=reason,
         )
+    _sync_trust_graph(
+        tenant_id=tenant_id, agent_id=agent_id, to_state="suspended",
+        from_state=agent["status"], actor=actor, reason=reason,
+    )
+    _emit_audit(
+        transition="suspended", tenant_id=tenant_id, agent_id=agent_id,
+        actor=actor, reason=reason, from_state=agent["status"], to_state="suspended",
+    )
     log.info("Agent %s suspended by %s", agent_id, actor)
     return get_agent(tenant_id=tenant_id, agent_id=agent_id)
 
@@ -402,6 +485,14 @@ def reactivate_agent(
             actor=actor,
             reason=reason,
         )
+    _sync_trust_graph(
+        tenant_id=tenant_id, agent_id=agent_id, to_state="active",
+        from_state=agent["status"], actor=actor, reason=reason,
+    )
+    _emit_audit(
+        transition="reactivated", tenant_id=tenant_id, agent_id=agent_id,
+        actor=actor, reason=reason, from_state=agent["status"], to_state="active",
+    )
     return get_agent(tenant_id=tenant_id, agent_id=agent_id)
 
 
@@ -498,6 +589,15 @@ def decommission_agent(
                 agent_id,
                 decoy_id,
             )
+
+    _sync_trust_graph(
+        tenant_id=tenant_id, agent_id=agent_id, to_state="decommissioned",
+        from_state=agent["status"], actor=actor, reason=reason,
+    )
+    _emit_audit(
+        transition="decommissioned", tenant_id=tenant_id, agent_id=agent_id,
+        actor=actor, reason=reason, from_state=agent["status"], to_state="decommissioned",
+    )
 
     result = get_agent(tenant_id=tenant_id, agent_id=agent_id)
     result["credentials_revoked"] = revoked
