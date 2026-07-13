@@ -35,12 +35,12 @@ from api_routers.mcp import router as mcp_router
 from api_routers.misc import router as misc_router
 from api_routers.passport import router as passport_router
 from api_routers.policy_bundles import router as policy_bundles_router
-from api_routers.policy_export import router as policy_export_router
 from api_routers.policy_guard import router as policy_guard_router
 from api_routers.policy_suggestions import router as policy_suggestions_router
 from api_routers.product import router as product_router
 from api_routers.retrieval import router as retrieval_router
 from api_routers.siem import router as siem_router
+from api_routers.v1 import router as v1_router
 from api_routers.verifier import router as verifier_router
 from api_routers.workflow import router as workflow_router
 
@@ -64,12 +64,12 @@ ALL_ROUTERS: tuple[APIRouter, ...] = (
     misc_router,
     passport_router,
     policy_bundles_router,
-    policy_export_router,
     policy_guard_router,
     policy_suggestions_router,
     product_router,
     retrieval_router,
     siem_router,
+    v1_router,
     verifier_router,
     workflow_router,
 )
@@ -172,6 +172,12 @@ def mount_all(app: FastAPI) -> None:
     """
     for router in ALL_ROUTERS:
         app.include_router(router)
+    # Trial-mode router — mounted ONLY when TOKENDNA_TRIAL_MODE is on, so the
+    # production route surface is unchanged when the flag is off (T0.3/T0.6).
+    from modules.trial.guard import trial_enabled  # noqa: PLC0415
+    if trial_enabled():
+        from api_routers.trial import router as trial_router  # noqa: PLC0415
+        app.include_router(trial_router)
     if _STATIC_DIR.is_dir():
         app.mount("/static", _CachingStatic(directory=str(_STATIC_DIR)), name="static")
     # Optional public-demo password gate (no-op unless DEMO_PASSWORD is set, so

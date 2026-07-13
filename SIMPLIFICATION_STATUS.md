@@ -3,18 +3,16 @@
 Progress tracker for `SIMPLIFICATION_PLAN.md`. Updated at the start and end of
 every session (Operating Rule 9).
 
-- **Current phase:** Phase 1 — Dead Code Removal (IN PROGRESS)
-- **Session status:** Phase 0 merged (#146). Phase 1 started with the
-  platform/+collector/ cut (P1.1, P1.13 — D-5). Collector extracted to its own
-  archived repo `github.com/Bobcatsfan33/tokendna-collector`.
-- **Next action:** continue Phase 1 — next clean cuts: `network_intel`+`geo_intel`
-  (P1.6), the small stubs (P1.12: session_graph, schema_registry, siem_schema,
-  ml_model, async_pipeline, policy_export), `cert_dashboard` (P1.7),
-  legacy `compliance` (P1.9). Then the arc-touching cuts `honeypot_mesh` (P1.8,
-  demo scene 5) and `federation` (P1.2, scenes 8-10 + policy_guard CONST-06) —
-  rebuild `demo_runtime_risk_engine.py` around the three questions in the same
-  commits so the demo-smoke gate stays green (D-7). Remember the INIT_TARGETS +
-  ci.yml import-list checks (Lessons above).
+- **Current phase:** Phase 2 — Consolidation & Kill Path (IN PROGRESS)
+- **Session status:** Phase 1's clean cuts are landed (#146–#155). Phase 2 opened
+  with **P2.1 — the kill path** (the plan calls it "the most important item in the
+  whole plan"). See "Phase 2 progress" below: the plan's premise for P2.1 was
+  **stale** — the bus already existed and was already wired — so the cut was
+  re-scoped to the two planes that were genuinely missing (`passport`,
+  `trust_graph`) plus the e2e proof the DoD demands.
+- **Next action:** P2.2 (tamper-evident TraceReport) → P2.4 (`/v1` endpoints via
+  the `evaluate()` core) → P2.3 (micro-merges) → P2.5 (zero-dependency storage
+  defaults). P2.2 + P2.4 together unblock the trial mission's T4 "money screen".
 
 ## Phase 1 progress + metrics delta
 
@@ -25,7 +23,19 @@ every session (Operating Rule 9).
 | threat_sharing (+flywheel) (P1.4) | `d559706` | ~1,100 | 85 | 1988 pass |
 | campaign_correlation (P1.10) | `13684a5` | ~360 | 12 | 1976 pass |
 
-Route surface: 331 → 314 (threat-sharing + campaigns removed; snapshot re-baselined).
+| policy_export (P1.12) | `ecda322` | ~200 | 1 | 1963 pass |
+| phantom-import hygiene | `7bba4f4` | 0 | 0 | 1963 pass |
+| **legacy behavioral layer** (P1.12) | `823a668` | ~1,900 (391 enterprise + 4 modules) | 0 | 1965 pass |
+
+Route surface: 331 → 308 (threat-sharing, campaigns, policy-export, and the
+enterprise `/secure`+`/profile`+`/revoke` behavioral endpoints removed).
+**Coverage floor re-baselined: `modules/` 84% → 85%** (cutting untested behavioral
+code raised the ratio; new floor = 85%). Legacy behavioral layer cut per owner:
+excised `/secure`+`/profile`+`/revoke`; cut geo_intel/ml_model/session_graph/
+async_pipeline; KEPT SAML/SCIM/admin (→ admin.py in Phase 3); README reframed to
+lead with behavioral_dna. **`network_intel` still pending** (its own PR — entangled
+with `intel.py` router + `compliance.py`; owner leaned attic since the flywheel
+partner is gone).
 
 **Lessons (apply to every remaining cut):**
 - `modules/storage/migrations.py` `INIT_TARGETS` is a **dynamic-import (importlib)
@@ -47,6 +57,240 @@ Route surface: 331 → 314 (threat-sharing + campaigns removed; snapshot re-base
   84% post-cut.** (The cuts removed their own code+tests, not `modules/`
   coverage, so the % held.)
 - Running LOC delta: **-6,530** (95,961 → ~89,431 Python LOC).
+
+## Phase 2 progress
+
+### P2.1 — Unify revocation / wire the kill path (DONE, re-scoped)
+
+**The plan's premise was stale — verified at cut time (Rule 2).** P2.1 says to
+merge `revocation_bus` + `idp_revocation` + `session_revocation` + `mcp_revocation`
+into one `revocation.py` and "wire it into `api_routers/kill.py` (which currently
+imports NONE of them)". At cut time, **`kill.py` already imports all four** and the
+four files are not four disconnected implementations — they are one bus
+(`revocation_bus` = core + registry) plus three self-registering connectors, each
+implementing the `RevocationConnector` Protocol. "One call revokes across
+IdP/session/MCP" (DoD #4) was already true architecturally.
+
+What was actually missing was the part the plan's own acceptance test names:
+
+| DoD assertion | Before | Now |
+|---|---|---|
+| passport revoked | ✗ **no passport plane existed** | ✓ `passport_revocation.py` |
+| sessions invalidated | ✓ `live_sessions` | ✓ |
+| MCP access cut | ✓ `mcp` | ✓ |
+| trust_graph edge marked | ✗ **no graph plane existed** | ✓ `graph_revocation.py` |
+| audit chain entry | ✓ (KILL_* events) | ✓ verified in the e2e |
+| **e2e test proving it** | ✗ **did not exist** | ✓ `tests/test_kill_path_e2e.py` |
+
+The passport gap was the sharp one: every other plane could be ripped and the
+agent's **passport — the credential of record — still said ISSUED**, so any
+verifier checking it (including TokenDNA's own verify path) kept saying yes.
+
+Shipped: `modules/identity/passport_revocation.py` (revokes every trust-conferring
+passport, idempotent, leaves PENDING alone), `modules/identity/graph_revocation.py`
+(marks the agent node revoked + raises a CRITICAL `AGENT_CREDENTIALS_REVOKED`
+anomaly; reversible), `trust_graph.{mark,clear,is}_agent_revoked` (SQLite + PG),
+both connectors wired into `kill.py`, and an 11-test e2e file whose headline test
+seeds a compromised agent across all planes, makes ONE `rip_credentials` call, and
+asserts every plane moved **and** the hash chain still verifies.
+
+Kill planes: **6 → 8**. Suite 1965 → 1976. Coverage: `graph_revocation` 100%,
+`passport_revocation` 97%, `trust_graph` 87% (all ≥ the 80% touched-module gate).
+
+**DEV-3 — the 4→1 file merge was NOT done (deliberate; owner may overrule).**
+Merging the bus + connectors into one `revocation.py` would produce a ~700-LOC file,
+destroy a clean plugin boundary (the Protocol + `register_default_factory` seam that
+external IdP/MCP connectors extend), and contradict the repo's own "many small
+files" rule — all to satisfy a file-count target the plan set when it believed the
+four files were disconnected duplicates. The plan's *intent* (one bus, one call, one
+audit trail, wired to `kill.py`) is satisfied and now e2e-proven. Cutting the seam
+is reversible later if the owner still wants the single file.
+
+**DECISION NEEDED — audit events log the Python enum repr, not their AU-2 value.**
+Pre-existing and system-wide, not introduced here: `log_event()` does
+`event_type=str(event_type)`, and for a `(str, Enum)` on Python 3.11+ that yields
+`"AuditEventType.KILL_RIP_INITIATED"` rather than the value the taxonomy defines,
+`"kill.rip.initiated"`. So **every** audit record in the repo carries the enum repr,
+while `docs/` and SIEM correlation rules key on the dotted values. The one-line fix
+(`event_type.value if isinstance(event_type, Enum) else str(event_type)`) changes the
+audit wire format globally — SOC2 evidence chains, SIEM mappings, any stored logs —
+so it is the owner's call, not a Phase-2 improvisation (Rule 11). Flagged; the e2e
+pins today's actual behaviour so the fix will surface as an intentional diff.
+
+### P2.2 — Tamper-evident TraceReport (DONE)
+
+`modules/identity/trace_report.py` — pure orchestration, no new algorithms. Composes
+`trust_graph` anomalies (why we are looking) + `uis_store` events (what the agent did)
++ `delegation_receipt` (how it got its authority) + `audit_log` (what TokenDNA did
+about it) + `blast_radius` (how far it could have gone) into one time-ordered report
+of `(timestamp, agent, credential, action, resource, evidence_pointer)`.
+
+**Tamper-evidence has two independent layers, and both are tested by trying to forge
+them:**
+
+1. **The report chains itself.** Each row carries `prev_hash`/`row_hash`, hashed via
+   the new `audit_log.compute_evidence_hash` seam — HMAC-SHA256 when `AUDIT_HMAC_KEY`
+   is set, SHA-256 otherwise — so the report inherits the audit log's crypto posture
+   instead of inventing a second, weaker one. Editing, reordering, dropping or
+   appending a row is caught, and `report_hash` must match the chain.
+2. **Its citations are re-derived.** This is the layer that matters, and the first cut
+   of it was **wrong** — the tests caught it. Checking only that a cited audit entry
+   *exists with the right hash* is insufficient: a forger can rewrite a row's
+   narrative, leave the pointer intact, re-chain the whole report, and pass. So
+   `verify_trace_report` now rebuilds every audit-sourced row **from the record the
+   live log actually holds** (via `_audit_row_from_record`, the same builder the
+   composer uses) and compares the material fields. A report that agrees with itself
+   but lies about the log it cites is now caught — as is any edit to the underlying
+   audit log.
+
+Exposed as `GET /api/kill/{agent_id}/trace` (ANALYST+), returning the report **and**
+its verification result, so a reader never has to take the report's word for itself.
+Route surface 308 → 309 (snapshot re-baselined via the guard's `--update`). P2.4 will
+re-expose this as `GET /v1/contain/{agent_id}`; the kill router is its home until then
+because shipping a module nothing imports would violate DoD #2 (zero orphans,
+CI-enforced) — the ALLOWLIST is for cuts, not for new code.
+
+Also added `audit_log.read_records()` — the log had no read path at all, only append +
+verify. Anything that wants to cite it as evidence has to be able to read it.
+
+Suite 1976 → 1990. Coverage: `trace_report` 92%, `audit_log` 85%.
+
+**DEV-4 — `uis_narrative` was NOT used for the trace's English annotations.** The plan
+names it as the annotation source, but its templates are shaped for the *human-session*
+layer that Phase 1 cut (they format `{user}`/`{country}`/`{device}` and read "User X
+signed in from…"), so rendering agent rows through them would produce misleading prose.
+The trace uses deterministic per-source templates instead, and reads the MITRE technique
+straight off the event's `metadata`. If the owner wants `uis_narrative` reused here it
+needs agent-shaped templates first — a real (small) piece of work, not a one-liner.
+
+### P2.4 — The three flagship /v1 endpoints + the evaluate() core (DONE)
+
+`modules/identity/evaluate.py` — **one** `evaluate(question, subject) -> Verdict`
+core (D-6), 200 lines, well inside the ≤300 guardrail. It is a **dispatcher, not a
+framework**: it owns no detection logic, gathers evidence from the pillars, and
+hands scoring to the existing `agent_assurance` facade (PR #144) rather than adding
+a second verdict brain. `api_routers/v1.py` is thin orchestration over it.
+
+| Endpoint | Question | Composes |
+|---|---|---|
+| `POST /v1/verify` | is the identity real? | passport + **dpop** + proof-of-control |
+| `POST /v1/authorize` | is it allowed? | enforcement_plane (kill-switch + policies) + permission_drift + **scopes** |
+| `GET /v1/contain/{agent}` | is it compromised? | trust_graph + behavioral_dna + mcp_inspector + blast_radius + **the P2.2 TraceReport** |
+| `POST /v1/contain/{agent}/revoke` | contain it | the P2.1 RevocationBus, then **re-diagnoses** |
+
+Verdict → HTTP: ALLOW 200, STEP_UP 202, BLOCK 403 (**401 on verify** — the identity
+failed, nothing was refused on policy grounds), REVOKE 403. CONTAIN always returns
+200: a diagnosis is not a refusal, and the operator needs the evidence to act on.
+
+**D-2 wire-ins landed for real, not nominally.** Orphan count **8 → 5**: `dpop` is
+now evidence in the verify verdict, and `modules.auth.scopes` is now evaluated in
+authorize — honouring the module's own `TOKENDNA_SCOPES_ENFORCE` log-only rollout,
+so wiring it cannot silently start denying traffic that used to flow (both states
+are tested).
+
+**Three real bugs the tests caught, worth recording:**
+1. **`agent_assurance` scores three dimensions at once and blocks if *any* is
+   unsatisfied.** Passing an empty list for a dimension a question does not ask
+   about silently reads as *denied* — so every `/v1` answer was BLOCK. Each question
+   now marks its out-of-scope dimensions explicitly neutral. This is the contract of
+   the three-question split: `/v1/authorize` does not re-verify identity, it presumes
+   `/v1/verify` answered that.
+2. **A failed DPoP proof was gathered but never affected the verdict** — it produced
+   ALLOW with a reason politely noting the proof was rejected. Proof-of-possession
+   failing means the presenter cannot show they hold the key the credential is bound
+   to, so the credential is not theirs. Now modelled by dropping the credential's
+   trust to zero (→ UNVERIFIED in the scoring brain), not by special-casing the
+   verdict afterwards.
+3. A test with a hard-coded date (P2.2) silently expired overnight against the
+   rolling 24h trace window. Trace-test timestamps are now relative to now.
+
+**`confidence` is honest, not decoration.** 1.0 when a decisive signal exists
+(revoked passport, active kill switch, critical anomaly, explicit BLOCK); ~0.6 for
+inference; and **low when we say ALLOW while the pillars returned little or nothing**
+— an ALLOW on an empty evidence set is a confession of ignorance and should not look
+identical to an ALLOW backed by a fresh attestation.
+
+Route surface 309 → 313. Suite 1990 → 2012. Coverage: `evaluate` 95%, `v1` 98%.
+
+### P2.5 — Zero-dependency storage defaults (DONE)
+
+**Redis was the last hard dependency in the default path**, and its absence failed in
+the worst available way: `get_redis()` handed back a client whose every call threw,
+each caller swallowed the exception, and so token revocation, rate limits and
+baseline caching all silently degraded to **no-ops**. A revoked token kept working
+and nothing said so.
+
+`modules/identity/memory_cache.py` — an in-process, thread-safe, TTL-aware,
+LRU-bounded stand-in implementing the Redis subset this codebase actually uses
+(enumerated from the call sites, not guessed). It is deliberately **not** a Redis
+clone: an unsupported command raises rather than pretending to work. `cache_redis`
+now probes once and falls back to it, **logging loudly that the fallback is
+single-process** — two workers do not share a revocation list, so a token revoked on
+worker A is still accepted by worker B. That is a real limitation, stated out loud;
+production compose/Helm still ship Redis. Explicit opt-in via `TOKENDNA_CACHE=memory`.
+
+**ClickHouse: the plan's premise was wrong (verified, Rule 2).** P2.5 says to make the
+UIS event store's ClickHouse path conditional — but **`uis_store` never touches
+ClickHouse at all**; it has always been SQLite/Postgres. ClickHouse is a Tier-3
+*analytics* store (`api_routers/misc.py` + the health checks), and it already
+soft-failed to `None`. So it was already optional by accident. Two real fixes:
+`clickhouse_client.is_configured()` now gates the connection attempt on
+`CLICKHOUSE_HOST` actually being set — "not deployed" and "deployed and down" are
+different things, and only the second should look like a failure — and a **phantom
+`clickhouse_client` import in `api_routers/passport.py`** was removed (same bug class
+as the Phase-1 hygiene sweep in #152).
+
+New CI job `zero-dependency-boot` starts **no Redis, no Postgres, no ClickHouse**,
+boots the app, and takes a real verdict off `/v1/authorize`. If Tier 1 ever regresses,
+that job goes red.
+
+Suite 2012 → 2028. Coverage: `memory_cache` 94%.
+
+### P2.3 — Micro-module merges (DONE, one commit each)
+
+| Merge | Result |
+|---|---|
+| `attestation.py` (151) → `attestation_store.py` | A record model and the store that persists it are one concern. No collisions; 6 call sites repointed. |
+| `uis_validator.py` (229) → **`uis.py`**, *not* `uis_protocol.py` | **Plan deviation — see below.** |
+| `scoring.py` (140) + `token_dna.py` (162) → new `pipeline.py` (284) | Two halves of one job: derive the DNA fingerprint, then score it. ~34 call sites repointed mechanically. |
+
+`modules/identity/` file count **67 → 64**. Suite 2028 throughout — the merges are
+pure moves: same functions, same signatures, same behaviour.
+
+**DEV-5 — `uis_validator` was merged into `uis.py`, not `uis_protocol.py` as the plan
+says. The plan's target would create a circular import.** The real dependency
+direction is `uis_protocol → uis → uis_validator`: the validator is a **leaf**, and
+*both* of the others import it. Moving it up into `uis_protocol` would force `uis.py`
+to import `uis_protocol`, which imports `uis`. Merging into `uis.py` gets the same
+file-count reduction with the arrow pointing the right way. `uis.py` is 438 lines,
+inside the 800 ceiling.
+
+Second trap in the same merge, worth writing down: the validator body had to be
+inserted **above** `UIS_VERSION = schema_version()`, which `uis.py` evaluates at
+module level. Appending the merged code at the end of the file — the obvious move,
+and what the other two merges do — is a `NameError` at import. Caught by importing
+the module, not by the suite.
+
+---
+
+## Phase 2 — COMPLETE
+
+| Item | PR | State |
+|---|---|---|
+| P2.1 kill path (passport + trust-graph planes + e2e) | #156 | merged |
+| P2.2 tamper-evident TraceReport | #157 | merged |
+| P2.4 the three `/v1` endpoints + the `evaluate()` core | #158 | merged |
+| P2.5 zero-dependency storage defaults | #159 | merged |
+| P2.3 micro-module merges | #160 | this PR |
+
+**Phase 2 exit criteria, against the plan:**
+- ✅ *Kill path real and e2e-tested* — 8 planes, one call, hash-chain verified.
+- ✅ *TraceReport rendering* — `GET /api/kill/{agent}/trace` and inside `/v1/contain`.
+- ✅ *Zero-dependency boot in CI* — the `zero-dependency-boot` job starts no services at all and takes a real verdict.
+- ⚠️ *67 → ~38 files in `modules/identity/`* — **NOT met: 67 → 64.** The remaining reduction is not a Phase-2 merge job; it comes from the Phase-3 router consolidation and the Phase-1 decouplings still parked (`cert_dashboard`, legacy `compliance`, `verifier_reputation`, `network_intel`, `federation`, `honeypot`). The four micro-merges P2.3 actually names are done. Recorded rather than fudged.
+
+**Next: Phase 3 — 31 routers → 9.** Note the surface has grown by design during
+Phase 2: 308 → 313 routes (`/api/kill/{agent}/trace` + the four `/v1` endpoints).
 
 ## Sequencing override (owner-approved 2026-07-04)
 
@@ -101,6 +345,41 @@ uses 3.12). Command: `pytest --import-mode=importlib --cov=modules tests
 platform/tests collector/tests` with `PYTHONPATH=$PWD/platform:$PWD/collector`.
 
 ---
+
+## Phase 1 cut-list reality check (IMPORTANT — needs owner decisions)
+
+At-cut-time verification (Rule 2) shows the audit's remaining cut-list is **mostly
+NOT dead code**. The audit traced `api_routers/` top-level reachability only; these
+modules are in fact wired into kept code (`enterprise.py` legacy behavioral layer,
+`misc.py`, `siem.py`, `certs.py`, `compliance_posture.py`) or into each other.
+The genuinely-clean orphan removal is now essentially **done**:
+
+**CLEAN — cut (done):** platform/, collector/, threat_sharing(+flywheel),
+campaign_correlation, **policy_export** (`ecda322`).
+
+**WIRED — NOT clean orphans (each is a product decision, not dead-code removal):**
+
+| Module(s) | Wired into (kept) | Decision needed |
+|---|---|---|
+| `geo_intel`, `ml_model`, `session_graph`, `async_pipeline` (P1.12) | `api_routers/enterprise.py` — the legacy behavioral-analytics/JWT layer ("stolen-JWT detector" origin) | **Keep or cut the legacy behavioral layer?** It's not part of the verify/authorize/contain thesis, but it's live + tested. Cutting = gut those enterprise endpoints (overlaps Phase 3 `enterprise.py`→`admin.py`). |
+| `network_intel` (P1.6) | `misc.py` (threat feed), `compliance.py`, `enterprise.py`, `intel.py` (13 uses) + INIT_TARGETS | Keep the network threat-intel feed, or cut the feed endpoints too? |
+| `schema_registry`, `siem_schema` (P1.12) | `misc.py`/`identity_surface.py`; `siem.py` | Tied to misc/siem — resolve during Phase 3 dissolution of misc.py. |
+| `cert_dashboard` (P1.7) | `certs.py` + `compliance_posture.py` (federal, KEEP) — 22 uses + INIT_TARGETS | Decouple `compliance_posture` first, or keep cert_dashboard. |
+| legacy `compliance` (P1.9) | `compliance_posture`, `fips`, `feature_gates`, `metering`, `hvip`, `dpop` (7) | Migrate importers to `compliance_engine`/`compliance_posture` first (bigger). |
+| `verifier_reputation` (P1.3) | `proof_of_control.py` (KEEP) + INIT_TARGETS | Inline what proof_of_control uses, or keep. |
+
+**ARC-TOUCHING (doable, needs demo-arc rebuild + decoupling):**
+- `honeypot_mesh` (P1.8) — demo scene 5 + **`edge_enforcement` product import** (honeytoken) + INIT_TARGETS. Inline the honeytoken primitive edge_enforcement needs, cut the rest, drop demo scene 5.
+- `federation`+`trust_federation` (P1.2) — demo scenes 8-10 + **`policy_guard` CONST-06** + `agent_lifecycle` + INIT_TARGETS. Remove CONST-06, drop Act 2 from the arc.
+
+**RECOMMENDATION:** the biggest lever is a single owner call — **keep or cut the
+legacy behavioral-analytics layer** (`enterprise.py` + geo_intel/ml_model/
+session_graph/async_pipeline/network_intel). If cut, it's ~1,500+ LOC and should
+be done as its own decision, likely fused with the Phase-3 `enterprise.py`→
+`admin.py` consolidation rather than piecemeal. The remaining decouplings
+(cert_dashboard, compliance, verifier, federation, honeypot) are then a clean
+follow-on. Continuing to force these as "dead-code" cuts would break the suite or
+require gutting kept endpoints — out of scope for Phase 1 without these calls.
 
 ## Decisions
 

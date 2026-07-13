@@ -196,6 +196,17 @@ def _compute_hash(canonical_bytes: bytes) -> str:
     return hashlib.sha256(canonical_bytes).hexdigest()
 
 
+def compute_evidence_hash(canonical_bytes: bytes) -> str:
+    """Public seam over the audit log's hash primitive.
+
+    Other tamper-evident artefacts (e.g. the TraceReport's row chain) hash
+    themselves with this so they inherit the audit log's crypto posture —
+    HMAC-SHA256 when AUDIT_HMAC_KEY is configured, SHA-256 otherwise — instead of
+    inventing a second, weaker one.
+    """
+    return _compute_hash(canonical_bytes)
+
+
 # ── Core logger ───────────────────────────────────────────────────────────────
 _sequence_counter = 0
 
@@ -311,6 +322,50 @@ def _write_siem(record: AuditRecord) -> None:
         )
     except Exception as e:  # noqa: BLE001
         logger.warning("Audit SIEM forward failed: %s", e)
+
+
+# ── Reading ───────────────────────────────────────────────────────────────────
+def read_records(
+    log_path: Optional[str] = None,
+    *,
+    tenant_id: Optional[str] = None,
+    resource: Optional[str] = None,
+    event_prefix: Optional[str] = None,
+    limit: int = 500,
+) -> list[dict]:
+    """Read audit entries from the file backend, newest last.
+
+    The audit log is the tamper-evident record of what TokenDNA *did*. Anything
+    that wants to cite it as evidence (e.g. the TraceReport) needs to read it,
+    not just append to it. Filters are AND-ed; ``event_prefix`` matches the start
+    of the serialised event type.
+
+    Returns raw dicts (each carrying ``sequence`` and ``entry_hash``, which is
+    what an evidence pointer references). Never raises on a malformed line — a
+    corrupt tail must not take down a read path; use ``verify_log_integrity`` to
+    detect tampering.
+    """
+    path = Path(log_path or AUDIT_FILE)
+    if not path.exists():
+        return []
+
+    out: list[dict] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+        except Exception:  # noqa: BLE001 - skip corrupt lines, don't fail the read
+            continue
+        if tenant_id is not None and rec.get("tenant_id") != tenant_id:
+            continue
+        if resource is not None and rec.get("resource") != resource:
+            continue
+        if event_prefix is not None and not str(rec.get("event_type", "")).startswith(event_prefix):
+            continue
+        out.append(rec)
+
+    return out[-limit:] if limit and len(out) > limit else out
 
 
 # ── Integrity verification ────────────────────────────────────────────────────

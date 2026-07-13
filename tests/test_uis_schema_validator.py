@@ -35,7 +35,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-from modules.identity import uis_validator
+from modules.identity import uis as uis_validator
 from modules.identity.uis import (
     SUPPORTED_PROTOCOLS,
     UIS_VERSION,

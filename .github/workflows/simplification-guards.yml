@@ -77,3 +77,57 @@ jobs:
         run: |
           pkill -f "uvicorn api:app" || true
           cat /tmp/tokendna-smoke.log || true
+
+  zero-dependency-boot:
+    name: Zero-dependency boot (no Redis, no Postgres, no ClickHouse)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (+ the SDK, editable)
+        run: pip install -r requirements.txt -e .
+
+      # No services block: this job deliberately starts NO Redis, NO Postgres and
+      # NO ClickHouse. Tier 1 of the deployment story is "pip install, run it, get
+      # a verdict" on a bare machine — if that regresses, this job goes red (P2.5).
+      - name: Boot with zero external services and take a verdict
+        env:
+          DEV_MODE: "true"
+          TOKENDNA_ENV: ci
+          DATA_DB_PATH: /tmp/tokendna-zerodep.db
+          AUDIT_LOG_PATH: /tmp/tokendna-zerodep-audit.jsonl
+          TOKENDNA_CACHE: memory
+          DEV_TENANT_ID: acme
+        run: |
+          set -eu
+          python -m uvicorn api:app --host 127.0.0.1 --port 8000 \
+            > /tmp/tokendna-zerodep.log 2>&1 &
+          for _ in $(seq 1 30); do
+            if python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=1)" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          python - <<'PY'
+          import json, urllib.request
+          req = urllib.request.Request(
+              "http://127.0.0.1:8000/v1/authorize",
+              data=json.dumps({"agent_id": "agent-1", "action": "read",
+                               "resource": "db://acme/x"}).encode(),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          with urllib.request.urlopen(req, timeout=10) as resp:
+              body = json.load(resp)
+              assert resp.status == 200, resp.status
+              assert body["verdict"] == "ALLOW", body
+              print("zero-dependency verdict:", body["verdict"])
+          PY
+
+      - name: Stop server + dump log on failure
+        if: always()
+        run: |
+          pkill -f "uvicorn api:app" || true
+          cat /tmp/tokendna-zerodep.log || true

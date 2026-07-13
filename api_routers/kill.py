@@ -9,9 +9,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 
-from modules.identity import revocation_bus
+from modules.identity import revocation_bus, trace_report
+from modules.identity import graph_revocation  # noqa: F401 — self-registers trust-graph connector
 from modules.identity import idp_revocation  # noqa: F401 — self-registers IdP connectors
 from modules.identity import mcp_revocation  # noqa: F401 — self-registers MCP connector
+from modules.identity import passport_revocation  # noqa: F401 — self-registers passport connector
 from modules.identity import session_revocation  # noqa: F401 — self-registers session connector
 from modules.security.rbac import Role, require_role
 from modules.tenants.models import TenantContext
@@ -31,6 +33,31 @@ async def kill_preview(
     """Pre-flight: which planes are connected and would be revoked. No effect."""
     receipt = revocation_bus.preview(tenant.tenant_id, agent_id)
     return receipt.as_dict()
+
+
+@router.get("/{agent_id}/trace")
+async def kill_trace(
+    agent_id: str,
+    window_hours: int = 24,
+    tenant: TenantContext = Depends(require_role(Role.ANALYST)),
+):
+    """Tamper-evident TraceReport for an agent (P2.2).
+
+    Time-ordered evidence — anomalies, the agent's own actions, its delegated
+    authority, and every containment action TokenDNA took — with each row chained
+    and each citing its source of record. ``verification`` is the result of
+    re-deriving that chain and re-checking its audit citations, so a reader never
+    has to take the report's word for itself.
+
+    P2.4 re-exposes this as ``GET /v1/contain/{agent_id}``.
+    """
+    report = trace_report.build_trace_report(
+        tenant.tenant_id, agent_id, window_hours=window_hours,
+    )
+    return {
+        **report.as_dict(),
+        "verification": trace_report.verify_trace_report(report),
+    }
 
 
 @router.post("/{agent_id}")
