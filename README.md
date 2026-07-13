@@ -3,14 +3,80 @@
 [![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL%201.1-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue)](https://www.python.org/)
 [![CI](https://github.com/Bobcatsfan33/TokenDNA/actions/workflows/ci.yml/badge.svg)](https://github.com/Bobcatsfan33/TokenDNA/actions/workflows/ci.yml)
-[![Security: FedRAMP-aligned](https://img.shields.io/badge/Security-FedRAMP%20High%20%7C%20IL6%20aligned-red)](SECURITY.md)
+[![Security: Designed toward FedRAMP High / IL4+](https://img.shields.io/badge/Security-Designed%20toward%20FedRAMP%20High%20%2F%20IL4%2B-red)](compliance/dod/control_matrix.json)
 [![PRs: owner approval required](https://img.shields.io/badge/PRs-owner%20approval%20required-yellow)](CONTRIBUTING.md)
 
-> **v2.2.0** — Security hardening release: RBAC, immutable audit log, security headers middleware, HMAC-SHA256 IP fingerprinting, secrets manager backend, CIS Docker hardening.
+> **v3.0.0 — Runtime Risk Engine.** Targets three runtime-security gaps highlighted at RSA 2026: (1) agent self-modification of policy, (2) silent permission drift, (3) MCP intent-aware inspection. End-to-end demo arc shippable in 10 minutes against a fresh deployment.
 
-**Zero-Trust token integrity and session behavioral analytics.**
+> **Project status.** Early-stage, single-maintainer project. The code is functional and CI-gated, but it has **not** had an independent security audit or penetration test, has no production deployments or reference customers yet, and all compliance references describe control *mappings and design intent* — not third-party certification or accreditation. Evaluate accordingly.
 
-TokenDNA detects stolen JWT/Bearer tokens in real time by building a behavioral "DNA" fingerprint for each user — device, IP, geolocation, ASN, browser, OS — and flagging anomalies like impossible travel, session branching, Tor/VPN usage, and known-malicious IPs. Every request is scored and responded to adaptively: allow, step-up MFA, block, or auto-revoke.
+## TokenDNA Runtime Risk Engine
+
+**Agent identity assurance for the AI workforce.**
+
+OAuth tells you *who* called a tool. TokenDNA aims to tell you *whether the call is a real agent identity, whether that agent is allowed to do what it is doing, whether it looks compromised, and what the blast radius is if it is.*
+
+The product surface should collapse to one enterprise verdict:
+
+```python
+from modules.identity.agent_assurance import AgentActionRequest, assess_agent_action
+
+verdict = assess_agent_action(AgentActionRequest(...))
+assert verdict.outcome in {"allow", "review", "block"}
+```
+
+See [Agent Assurance Wedge](docs/AGENT_ASSURANCE_WEDGE.md) for the
+acquisition-oriented product focus and simplification map.
+
+### What it's designed to catch
+
+| Gap (RSA 2026) | Detection | Severity |
+|---|---|---|
+| Agent self-modification of governing policy (CrowdStrike F50 incident) | `POLICY_SCOPE_MODIFICATION` in trust graph + `policy_guard` BLOCK | CRITICAL |
+| Silent permission drift — scope grows without attestation | `PERMISSION_WEIGHT_DRIFT` in trust graph + `permission_drift` alert | HIGH |
+| MCP intent-aware tool inspection — chain pattern detection | `mcp_inspector` bounded-gap subsequence matcher with confidence scoring | CRITICAL |
+
+### The integrated runtime loop
+
+```
+   UIS event   →   trust_graph     →   anomaly fires
+                          │                    │
+                          ▼                    ▼
+                  blast_radius           policy_guard
+                  (live signals          (BLOCK)
+                   on the blast)              │
+                          │                    ▼
+                          │            policy_advisor
+                          │            (tightening
+                          │             suggestion)
+                          ▼                    │
+                  intent_correlation    operator approves
+                  (chain to MITRE)       in dashboard
+```
+
+Every state-changing operation in every security module emits an `AuditEvent`
+into a tamper-evident hash-chained log, intended to provide SOC 2-relevant audit evidence.
+
+### 10-minute demo
+
+```bash
+DEV_MODE=true uvicorn api:app --port 8000 &
+python scripts/demo_runtime_risk_engine.py
+```
+
+Walks through baseline → drift → self-modification → MCP chain → deception trip → blast radius (with live signals attached) → policy_guard verdict → policy_advisor recommendation → operator approval. Idempotent, replay-safe.
+
+### Commercial tiers
+
+`ent.blast_radius`, `ent.intent_correlation`, `ent.enforcement_plane` (policy_guard + policy_advisor + cert_dashboard), `ent.behavioral_dna` (permission_drift + agent_lifecycle), `ent.mcp_gateway` (mcp_inspector + mcp_gateway). Defined in `modules/product/commercial_tiers.py`; gated via `require_feature("ent.<key>")`.
+
+---
+
+> **Underlying platform** — RBAC, immutable hash-chained audit log, security headers middleware, secrets manager backend, CIS Docker hardening, Postgres + Helm + Grafana + SAML/SCIM.
+
+**Agent behavioral DNA.**
+
+Every agent gets a behavioral fingerprint (`behavioral_dna`): its attested identity, scope, tool-call patterns, and delegation chains. TokenDNA scores each action against that baseline and responds adaptively — allow, step-up, block, or revoke — and drift from the baseline is what powers AUTHORIZE and CONTAIN. This is the agent-behavioral layer the Runtime Risk Engine is built on.
 
 ---
 
@@ -72,7 +138,7 @@ curl http://localhost:8000/
 For local development without an OIDC provider:
 ```bash
 DEV_MODE=true docker compose up -d
-# All JWT verification is bypassed; a synthetic dev-user payload is used
+# JWT verification is bypassed and a synthetic dev tenant is injected.
 ```
 
 ---
@@ -84,8 +150,16 @@ All settings are read from environment variables (see `.env.example`).
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DEV_MODE` | `false` | Disable JWT verification (dev only) |
+| `DEV_TENANT_ROLE` | `owner` | Synthetic tenant role used only when `DEV_MODE=true` |
+| `TOKENDNA_COMPLIANCE_PROFILE` | `commercial` | Deployment gate profile: `commercial`, `cmmc_l2`, `fedramp_high`, `dod_il4`, `dod_il5`, or `dod_il6` |
 | `OIDC_ISSUER` | — | OIDC provider base URL |
 | `OIDC_AUDIENCE` | — | Expected `aud` claim in JWTs |
+| `TOKENDNA_OIDC_TENANT_CLAIM` | `org_id,tenant_id,tid,organization` | JWT claim used to resolve the tenant |
+| `TOKENDNA_OIDC_ROLE_CLAIM` | `tokendna_role,role` | JWT claim used for direct TokenDNA role mapping |
+| `TOKENDNA_OIDC_GROUPS_CLAIM` | `roles,groups` | JWT claim used for group-based role mapping |
+| `TOKENDNA_OIDC_GROUP_ROLE_MAP_JSON` | — | JSON map from IdP groups to `owner`, `admin`, `analyst`, or `readonly` |
+| `TOKENDNA_OIDC_ALLOW_SUB_TENANT_FALLBACK` | `false` in production | Allow `sub`/`client_id` tenant fallback outside hardened production mode |
+| `TOKENDNA_SCIM_GROUP_ROLE_MAP_JSON` | — | JSON map from SCIM groups to TokenDNA roles |
 | `REDIS_HOST` | `redis` | Redis hostname |
 | `CLICKHOUSE_HOST` | `clickhouse` | ClickHouse hostname |
 | `GEOIP_PROVIDER` | `ip-api` | `ip-api` or `maxmind` |
@@ -94,6 +168,20 @@ All settings are read from environment variables (see `.env.example`).
 | `SCORE_THRESHOLD_STEP_UP` | `50` | Score above → STEP_UP |
 | `SCORE_THRESHOLD_BLOCK` | `30` | Score above → BLOCK |
 | `SCORE_THRESHOLD_REVOKE` | `15` | Score at/below → REVOKE |
+| `EDGE_DECISION_SLO_MS` | `5` | Runtime enforcement target latency in ms |
+| `EDGE_SLO_VIOLATION_ACTION` | `allow` | SLO breach action: `allow`, `step_up`, or `block` |
+| `NETWORK_INTEL_MIN_OBSERVATIONS` | `2` | Anti-poisoning minimum observations before full confidence |
+| `NETWORK_INTEL_ANTI_POISONING_MIN_TENANTS` | `2` | Minimum tenant corroboration threshold for runtime penalty |
+| `NETWORK_INTEL_DECAY_DAYS` | `30` | Stale intelligence decay window for cleanup |
+| `ATTESTATION_KEY_BACKEND` | `software` | `software`, `hsm`, or `aws_kms` signer backend |
+| `ATTESTATION_CA_KEY_ID` | `tokendna-ca-default` | Active CA key id used for certificate issuance |
+| `ATTESTATION_ACTIVE_KEY_ID` | — | Explicit active key selection override |
+| `ATTESTATION_KEYRING_JSON` | — | JSON keyring for rotation lifecycle automation |
+| `TOKENDNA_DB_BACKEND` | `sqlite` | Data backend selector: `sqlite` or `postgres` |
+| `TOKENDNA_PG_DSN` | — | PostgreSQL DSN used when backend is `postgres` |
+| `TOKENDNA_DB_DUAL_WRITE` | `false` | When true, SQLite writes are mirrored to Postgres for migration |
+| `AUDIT_BACKEND` | `file` | Comma-separated audit sinks: `file`, `redis`, `siem` |
+| `AUDIT_LOG_PATH` | `audit.jsonl` | Hash-chained audit log path when file audit is enabled |
 | `IMPOSSIBLE_TRAVEL_SPEED_KMH` | `900` | km/h threshold |
 | `BRANCHING_THRESHOLD` | `3` | Distinct devices before flagging |
 | `SIEM_WEBHOOK_URL` | — | HTTPS webhook for SIEM events |
@@ -108,7 +196,7 @@ All settings are read from environment variables (see `.env.example`).
 | `GET` | `/` | None | Health check |
 | `GET` | `/secure` | READONLY+ | Main integrity check — validate token DNA |
 | `GET` | `/profile/{uid}` | ANALYST+ | Inspect user behavioral profile |
-| `DELETE` | `/profile/{uid}` | ANALYST+ | Reset user profile baseline |
+| `DELETE` | `/profile/{uid}` | ADMIN+ | Reset user profile baseline |
 | `POST` | `/revoke` | ANALYST+ | Manually revoke token by `jti` |
 | `GET` | `/api/sessions` | ANALYST+ | Active session risk profiles |
 | `GET` | `/api/cloud-findings` | ANALYST+ | Cloud scan findings with severity summary |
@@ -116,6 +204,42 @@ All settings are read from environment variables (see `.env.example`).
 | `GET` | `/admin/tenants` | ADMIN+ | List tenants |
 | `POST` | `/admin/tenants` | OWNER only | Create a new tenant |
 | `GET` | `/docs` | Dev only | Swagger UI (disabled in production) |
+
+---
+
+## OSS Schema & SDK Onboarding
+
+TokenDNA now publishes machine-readable identity artifacts to speed ecosystem adoption:
+
+- `GET /api/schema/bundle` — consolidated UIS + attestation schema bundle.
+- `GET /api/schema/uis.json` — UIS JSON schema artifact.
+- `GET /api/schema/attestation.json` — attestation JSON schema artifact.
+- `GET /api/schema/artifacts` — catalog of all schema artifacts.
+- `GET /api/schema/artifacts/{name}` — fetch a specific artifact by name.
+- `POST /api/schema/publish` — generate and return publish-ready schema artifacts.
+
+Wrapper endpoints for SDK-style integrations:
+
+- `POST /api/oss/sdk/normalize` — request/response wrapped UIS normalization.
+- `POST /api/oss/sdk/attest` — request/response wrapped attestation creation.
+
+These wrappers intentionally return stable metadata fields (`sdk_version`,
+`schema_version`, `generated_at`) so third-party SDKs can map them directly.
+
+### Standalone open-source projects
+
+Two components are published as standalone, Apache-2.0-licensed repositories so
+they can be adopted independently of the TokenDNA platform:
+
+- **[uis-spec](https://github.com/Bobcatsfan33/uis-spec)** — the Universal
+  Identity Schema as an open spec: JSON schema, written specification,
+  conformance levels, a `uis-validate` validator, and SPIFFE/SPIRE + OAuth
+  agent-identity mappings. TokenDNA is its reference implementation, serving the
+  same schema at `GET /api/schema/uis.json`.
+- **[mcp-auditor](https://github.com/Bobcatsfan33/mcp-auditor)** — a standalone
+  CLI that inspects MCP server manifests and tool-call traffic for chain-attack
+  patterns (the bounded-gap subsequence matcher extracted from the TokenDNA MCP
+  gateway).
 
 ---
 
@@ -177,7 +301,7 @@ LIMIT 20;
 
 ## Security & Compliance
 
-TokenDNA is built toward **FedRAMP High** and **DoD IL6** alignment. Key controls in v2.2.0:
+TokenDNA is **designed toward FedRAMP High and DoD IL4+** alignment; IL5/IL6 deployment profiles are on the roadmap and gated behind the customer-managed federal build. These are design targets, not accreditations — no control has been assessed or authorized by a third party. The implemented posture is tracked control-by-control in [`compliance/dod/control_matrix.json`](compliance/dod/control_matrix.json). Key controls in v2.2.0:
 
 | Control Family | Implementation |
 |---|---|

@@ -1,0 +1,6 @@
+[
+  {"endpoint": "/healthz", "weight": 5, "method": "GET"},
+  {"endpoint": "/api/uis/spec", "weight": 2, "method": "GET"},
+  {"endpoint": "/scim/v2/ServiceProviderConfig", "weight": 1, "method": "GET"},
+  {"endpoint": "/saml/metadata", "weight": 1, "method": "GET"}
+]

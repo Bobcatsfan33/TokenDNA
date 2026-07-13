@@ -1,0 +1,111 @@
+{
+  "_about": "Curated subset of MITRE ATT&CK Enterprise techniques most relevant to AI-agent attack scenarios. Source: https://attack.mitre.org/ — public, vendor-neutral framework. Used by demo_seed_v2.py to tag every demo event with a real T-ID so customers see the framework they already know.",
+  "_license": "MITRE ATT&CK is provided under https://attack.mitre.org/resources/terms-of-use/",
+  "techniques": [
+    {
+      "id": "T1078",
+      "name": "Valid Accounts",
+      "tactic": "Defense Evasion",
+      "description": "Adversaries use credentials of existing accounts to gain Initial Access, Persistence, Privilege Escalation, or Defense Evasion.",
+      "agent_relevance": "Stolen agent passport tokens; agent acting outside its sanctioned scope."
+    },
+    {
+      "id": "T1078.004",
+      "name": "Valid Accounts: Cloud Accounts",
+      "tactic": "Defense Evasion",
+      "description": "Adversaries obtain and abuse credentials of cloud accounts to gain access to cloud resources.",
+      "agent_relevance": "Compromised service-account credentials used by an autonomous agent."
+    },
+    {
+      "id": "T1110.004",
+      "name": "Brute Force: Credential Stuffing",
+      "tactic": "Credential Access",
+      "description": "Adversaries try lists of stolen credentials at high velocity hoping for matches.",
+      "agent_relevance": "Bot-driven credential testing against agent identity endpoints."
+    },
+    {
+      "id": "T1098",
+      "name": "Account Manipulation",
+      "tactic": "Persistence",
+      "description": "Adversaries manipulate accounts to maintain or elevate access to victim systems.",
+      "agent_relevance": "Agent self-modifying its own permission scope (RSA gap 1)."
+    },
+    {
+      "id": "T1548",
+      "name": "Abuse Elevation Control Mechanism",
+      "tactic": "Privilege Escalation",
+      "description": "Adversaries circumvent mechanisms designed to control elevated privileges.",
+      "agent_relevance": "Agent escalating tool-call access mode without operator approval."
+    },
+    {
+      "id": "T1021",
+      "name": "Remote Services",
+      "tactic": "Lateral Movement",
+      "description": "Adversaries use valid accounts to log into a service that accepts remote connections.",
+      "agent_relevance": "Cross-org agent action without federation handshake."
+    },
+    {
+      "id": "T1550",
+      "name": "Use Alternate Authentication Material",
+      "tactic": "Lateral Movement",
+      "description": "Adversaries authenticate using stolen tokens or session cookies.",
+      "agent_relevance": "Replay of attestation bundle from a compromised agent."
+    },
+    {
+      "id": "T1037",
+      "name": "Boot or Logon Initialization Scripts",
+      "tactic": "Persistence",
+      "description": "Adversaries establish persistence by modifying scripts executed during system startup.",
+      "agent_relevance": "Tampering with agent bootstrap chain."
+    },
+    {
+      "id": "T1539",
+      "name": "Steal Web Session Cookie",
+      "tactic": "Credential Access",
+      "description": "Adversaries steal session cookies to bypass MFA.",
+      "agent_relevance": "Stolen agent passport bearer tokens."
+    },
+    {
+      "id": "T1528",
+      "name": "Steal Application Access Token",
+      "tactic": "Credential Access",
+      "description": "Adversaries steal user/application access tokens.",
+      "agent_relevance": "OAuth tokens issued to agents being exfiltrated."
+    },
+    {
+      "id": "T1537",
+      "name": "Transfer Data to Cloud Account",
+      "tactic": "Exfiltration",
+      "description": "Adversaries transfer data to attacker-controlled cloud storage.",
+      "agent_relevance": "Agent invokes exfil-class MCP tool against attacker URL."
+    },
+    {
+      "id": "T1048",
+      "name": "Exfiltration Over Alternative Protocol",
+      "tactic": "Exfiltration",
+      "description": "Adversaries steal data by exfiltrating over a non-C2 protocol.",
+      "agent_relevance": "MCP send_email / http_request after a sensitive read — classic chain pattern."
+    },
+    {
+      "id": "T1074",
+      "name": "Data Staged",
+      "tactic": "Collection",
+      "description": "Adversaries stage data to a central location before exfiltration.",
+      "agent_relevance": "Bulk read followed by write — MCP data_staging chain pattern."
+    },
+    {
+      "id": "T1136",
+      "name": "Create Account",
+      "tactic": "Persistence",
+      "description": "Adversaries create accounts to maintain access.",
+      "agent_relevance": "Agent issuing iam:CreateAccessKey to bootstrap a follow-on identity."
+    },
+    {
+      "id": "T1036",
+      "name": "Masquerading",
+      "tactic": "Defense Evasion",
+      "description": "Adversaries manipulate features of artifacts to look legitimate.",
+      "agent_relevance": "Agent name-spoofing across federation boundary."
+    }
+  ]
+}

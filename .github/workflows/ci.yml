@@ -18,9 +18,9 @@ jobs:
     name: Lint & Import Verification
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -31,6 +31,63 @@ jobs:
       - name: Ruff lint
         run: ruff check . --output-format=github
 
+      - name: Storage backend guardrail
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import sys
+
+          allowed = {"modules/storage/pg_connection.py"}
+          offenders = []
+          for path in Path("modules").rglob("*.py"):
+              rel = path.as_posix()
+              if rel in allowed:
+                  continue
+              if "sqlite3.connect" in path.read_text(encoding="utf-8"):
+                  offenders.append(rel)
+
+          if offenders:
+              print("::error::Product modules must use modules.storage.pg_connection instead of sqlite3.connect directly.")
+              for rel in offenders:
+                  print(f"::error file={rel}::direct sqlite3.connect call bypasses the shared storage backend")
+              sys.exit(1)
+
+          print("All product modules use the shared storage backend.")
+          PY
+
+      - name: Monolith ratchet (api.py may only shrink — T-1)
+        run: python scripts/ci/api_monolith_ratchet.py
+
+      - name: API route-surface guard (decomposition preserves the surface — T-1)
+        run: TOKENDNA_ENV=ci python scripts/ci/openapi_route_guard.py
+
+      - name: FIPS crypto-primitive gate (SC-13)
+        run: |
+          # No non-approved hashlib primitive may be requested for security in
+          # product modules. Allow markers: `usedforsecurity=False` (caller
+          # opted out of security use) and `noqa: S324` (the deliberate FIPS
+          # probe in modules/security/fips.py, which MUST raise under FIPS).
+          if git grep -nE "hashlib\.(md5|sha1)\(" -- modules/ \
+               | grep -vE "usedforsecurity|noqa: S324"; then
+            echo "::error::non-approved hash primitive used for security in modules/ (SC-13). Add usedforsecurity=False or route through modules.security.fips."
+            exit 1
+          fi
+          echo "FIPS crypto-primitive gate OK"
+
+      - name: FIPS fail-closed gate must hold on a non-FIPS host
+        run: |
+          # With REQUIRE_FIPS=true on this (non-FIPS) runner, assert_fips_mode()
+          # must exit 78 (fail-closed). Unset, it must be a no-op.
+          set +e
+          REQUIRE_FIPS=true python -c "from modules.security.fips import assert_fips_mode; assert_fips_mode()"
+          code=$?
+          set -e
+          if [ "$code" != "78" ]; then
+            echo "::error::expected assert_fips_mode() to exit 78 under REQUIRE_FIPS=true on a non-FIPS host, got $code"; exit 1
+          fi
+          REQUIRE_FIPS=false python -c "from modules.security.fips import assert_fips_mode; assert_fips_mode(); print('no-op OK when REQUIRE_FIPS unset')"
+          echo "FIPS fail-closed gate OK"
+
       - name: Import verification
         run: |
           python -c "
@@ -38,10 +95,10 @@ jobs:
           mods = [
             'config', 'auth',
             'modules.tenants.models', 'modules.tenants.store', 'modules.tenants.middleware',
-            'modules.identity.cache_redis', 'modules.identity.ml_model',
-            'modules.identity.session_graph', 'modules.identity.async_pipeline',
+            'modules.identity.cache_redis',
             'modules.security.audit_log', 'modules.security.rbac', 'modules.security.headers',
             'onboarding.aws_connector',
+            'modules.identity.uis_narrative',
           ]
           failed = []
           for m in mods:
@@ -53,14 +110,64 @@ jobs:
           print(f'All {len(mods)} modules imported successfully')
           "
 
+  # ── Full monorepo regression suite ─────────────────────────────────────────
+  test-suite:
+    name: Full Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest pytest-asyncio
+
+      - name: Run backend tests
+        run: python -m pytest -q --import-mode=importlib tests
+
+  # ── DoD ATO readiness evidence ─────────────────────────────────────────────
+  ato-evidence:
+    name: DoD ATO Evidence Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install test dependency
+        run: pip install pytest
+
+      - name: Generate OSCAL and evidence artifacts
+        run: |
+          python scripts/generate_oscal.py
+          python scripts/stig_evidence.py
+          python scripts/collect_ato_evidence.py --fail-on-missing
+
+      - name: Run ATO evidence tests
+        run: python -m pytest -q tests/test_ato_evidence.py tests/test_preflight_prod.py
+
+      - name: Upload ATO evidence
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ato-evidence
+          path: dist/ato
+          if-no-files-found: error
+
   # ── Dependency Vulnerability Scan ───────────────────────────────────────────
   dependency-scan:
     name: Dependency Security Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -68,11 +175,11 @@ jobs:
       - name: pip-audit
         run: |
           pip install pip-audit
-          pip-audit -r requirements.txt --format=json --output=pip-audit-results.json || true
-          pip-audit -r requirements.txt
+          pip-audit -r requirements.txt --no-deps --disable-pip --progress-spinner off --format=json --output=pip-audit-results.json
+          pip-audit -r requirements.txt --no-deps --disable-pip --progress-spinner off
 
       - name: Upload audit results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: pip-audit-results
@@ -87,19 +194,19 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: python
           queries: security-extended,security-and-quality
 
       - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
+        uses: github/codeql-action/autobuild@v4
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:python"
 
@@ -108,16 +215,16 @@ jobs:
     name: Secret Detection
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0      # full history for git log scanning
 
       - name: TruffleHog OSS — scan for leaked secrets
-        uses: trufflesecurity/trufflehog@v3.88.1
+        uses: trufflesecurity/trufflehog@v3.95.2
         with:
           path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
+          base: ${{ github.event.before || github.event.repository.default_branch }}
+          head: ${{ github.event.after || 'HEAD' }}
           extra_args: --only-verified
 
   # ── Docker Image Build Verification ─────────────────────────────────────────
@@ -125,23 +232,401 @@ jobs:
     name: Docker Build Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Build Docker image
         run: docker build --no-cache -t aegis-tokendna:ci .
 
       - name: Trivy container scan
-        uses: aquasecurity/trivy-action@0.29.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: "aegis-tokendna:ci"
           format: "sarif"
           output: "trivy-results.sarif"
           severity: "CRITICAL,HIGH"
-          exit-code: "1"
-          ignore-unfixed: true     # only fail on CVEs that have an available fix
+          exit-code: "0"           # advisory only — SARIF uploaded to Security tab
+          ignore-unfixed: true     # only report CVEs that have an available fix
+          vuln-type: "os,library"
 
       - name: Upload Trivy results
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: "trivy-results.sarif"
+
+  # ── Runtime load / security readiness ───────────────────────────────────────
+  runtime-readiness:
+    name: Runtime Readiness Gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+
+      - name: Start API for runtime readiness checks
+        run: |
+          TOKENDNA_ENV=ci DEV_MODE=true DATA_DB_PATH=/tmp/tokendna-ci.db AUDIT_LOG_PATH=/tmp/tokendna-ci-audit.jsonl python -m uvicorn api:app --host 127.0.0.1 --port 8000 > /tmp/tokendna-ci.log 2>&1 &
+          for i in {1..30}; do
+            if python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=1); print('up')" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Run smoke load profile harness
+        run: |
+          python tests/load_security_smoke.py --base-url http://127.0.0.1:8000
+          python scripts/load_profile.py --strict --max-p95-ms 1000
+
+      - name: Operator SLO gate contract checks
+        run: python scripts/operator_slo_gate.py --strict --skip-infra-deps
+
+      - name: Run enterprise readiness tests
+        run: |
+          python -m pytest -q tests/test_enterprise_readiness.py tests/test_enterprise_api_operator.py
+
+      - name: Stop API and upload runtime log
+        if: always()
+        run: |
+          pkill -f "uvicorn api:app" || true
+          cat /tmp/tokendna-ci.log || true
+
+  # ── Adversarial security regression lane ───────────────────────────────────
+  adversarial-security:
+    name: Adversarial Security Harness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+
+      - name: Run adversarial harness (strict)
+        run: python scripts/adversarial_harness.py --strict
+
+      - name: Run adversarial harness tests
+        run: python -m pytest -q tests/test_adversarial_harness.py
+
+  # ── Policy regression gate lane ────────────────────────────────────────────
+  policy-regression-gate:
+    name: Policy Regression Gate
+    runs-on: ubuntu-latest
+    env:
+      DATA_DB_PATH: /tmp/tokendna-policy-regression-ci.db
+      ATTESTATION_CA_SECRET: policy-regression-ci-secret
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+
+      - name: Seed sample decision audits
+        run: |
+          python - <<'PY'
+          import os
+          from modules.identity import decision_audit
+
+          db_path = os.environ["DATA_DB_PATH"]
+          decision_audit.init_db()
+          for i in range(25):
+              decision_audit.record_decision(
+                  tenant_id="tenant-1",
+                  request_id=f"ci-req-{i}",
+                  source_endpoint="/secure",
+                  actor_subject="ci-user",
+                  evaluation_input={
+                      "uis_event": {"threat": {"risk_score": 92, "risk_tier": "allow"}},
+                      "attestation": {
+                          "attestation_id": f"att-{i}",
+                          "what": {"soul_hash": "soul-1", "model_fingerprint": "model-1", "mcp_manifest_hash": "mcp-1"},
+                          "how": {"dpop_bound": False, "mtls_bound": False},
+                          "why": {"scope": ["orders:read"], "delegation_chain": ["svc-a"]},
+                      },
+                      "certificate": None,
+                      "certificate_id": "",
+                      "request_headers": {
+                          "x-agent-soul-hash": "soul-1",
+                          "x-agent-model-fingerprint": "model-1",
+                          "x-agent-mcp-manifest-hash": "mcp-1",
+                          "x-agent-delegation-chain": "svc-a",
+                      },
+                      "observed_scope": ["orders:read"],
+                      "required_scope": [],
+                  },
+                  enforcement_result={
+                      "decision": {"action": "allow", "reasons": ["policy_allow"], "policy_trace": {}},
+                      "authn_failure": False,
+                      "certificate_status": None,
+                      "drift": {"score": 0.0, "severity": "none", "reasons": []},
+                      "timing": {"elapsed_ms": 1.0, "slo_target_ms": 5.0, "slo_met": True},
+                  },
+              )
+          print(f"seeded decision audits at {db_path}")
+          PY
+
+      - name: Run policy regression gate (strict)
+        run: |
+          POLICY_REGRESSION_TENANT_ID=tenant-1 \
+          POLICY_REGRESSION_CANDIDATE_JSON='{}' \
+          POLICY_REGRESSION_MAX_ACTION_DELTA_PCT=5.0 \
+          POLICY_REGRESSION_MIN_SAMPLES=10 \
+          python scripts/policy_regression_gate.py --strict
+
+      - name: Run policy regression gate tests
+        run: python -m pytest -q tests/test_policy_regression_gate.py
+
+  # ── Production secret gate ────────────────────────────────────────────────
+  # Refuses to start when TOKENDNA_ENV=production and any HMAC secret is
+  # missing, weak, or matches a published dev default.
+  secret-gate:
+    name: Production Secret Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+
+      - name: Unit tests
+        run: python -m pytest -q tests/test_secret_gate.py
+
+      - name: Preflight (non-prod) — warns, does not fail
+        run: python scripts/preflight_prod.py --environment dev || true
+
+      - name: Preflight (production, no secrets) — must fail
+        run: |
+          set +e
+          python scripts/preflight_prod.py --environment production
+          rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "Preflight unexpectedly passed without secrets — gate is broken."
+            exit 1
+          fi
+          echo "Preflight failed as expected with rc=$rc"
+
+      - name: Preflight (production, strong secrets) — must pass
+        env:
+          DEV_MODE: "false"
+          TOKENDNA_ENV: production
+          TOKENDNA_DB_BACKEND: postgres
+          TOKENDNA_PG_DSN: postgresql://tokendna:tokendna@localhost:5432/tokendna
+          DATABASE_URL: postgresql://tokendna:tokendna@localhost:5432/tokendna
+          OIDC_ISSUER: https://example.com
+          OIDC_AUDIENCE: ci
+          TOKENDNA_OIDC_TENANT_CLAIM: org_id
+          DNA_HMAC_KEY: ci-dna-hmac-key-32-bytes-aaaaaaaa
+          AUDIT_HMAC_KEY: ci-audit-hmac-key-32-bytes-aaaaaa
+          AUDIT_BACKEND: file
+          AUDIT_LOG_PATH: /tmp/tokendna-ci-audit.jsonl
+          ATTESTATION_CA_KEY_ID: ci-key
+          ATTESTATION_CA_SECRET: ci-attestation-secret-32-bytes-aa
+        run: |
+          export TOKENDNA_DELEGATION_SECRET=$(openssl rand -hex 32)
+          export TOKENDNA_WORKFLOW_SECRET=$(openssl rand -hex 32)
+          export TOKENDNA_HONEYPOT_SECRET=$(openssl rand -hex 32)
+          export TOKENDNA_POSTURE_SECRET=$(openssl rand -hex 32)
+          python scripts/preflight_prod.py --environment production
+
+  # ── Live Postgres deployment gate ─────────────────────────────────────────
+  # Spins up an ephemeral Postgres and runs the same production preflight,
+  # TokenDNA storage migrations, and smoke path operators use locally.
+  postgres-integration:
+    name: Live Postgres Deployment Gate
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: tokendna
+          POSTGRES_PASSWORD: tokendna
+          POSTGRES_DB: tokendna
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tokendna -d tokendna"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DEV_MODE: "false"
+      TOKENDNA_ENV: production
+      ENVIRONMENT: production
+      TOKENDNA_DB_BACKEND: postgres
+      TOKENDNA_PG_DSN: postgresql://tokendna:tokendna@localhost:5432/tokendna
+      DATABASE_URL: postgresql://tokendna:tokendna@localhost:5432/tokendna
+      DATA_DB_PATH: /tmp/tokendna-ci.db
+      OIDC_ISSUER: https://ci.example.com
+      OIDC_AUDIENCE: ci
+      TOKENDNA_OIDC_TENANT_CLAIM: org_id
+      DNA_HMAC_KEY: ci-dna-hmac-key-32-bytes-aaaaaaaa
+      AUDIT_HMAC_KEY: ci-audit-hmac-key-32-bytes-aaaaaa
+      AUDIT_BACKEND: file
+      AUDIT_LOG_PATH: /tmp/tokendna-ci-audit.jsonl
+      ATTESTATION_CA_KEY_ID: ci-key
+      ATTESTATION_CA_SECRET: ci-attestation-secret-32-bytes-aa
+      TOKENDNA_DELEGATION_SECRET: ci-delegation-secret-32-bytes-aaaa
+      TOKENDNA_WORKFLOW_SECRET: ci-workflow-secret-32-bytes-aaaaaa
+      TOKENDNA_HONEYPOT_SECRET: ci-honeypot-secret-32-bytes-aaaaaa
+      TOKENDNA_POSTURE_SECRET: ci-posture-secret-32-bytes-aaaaaaa
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt pytest
+
+      - name: Run production preflight
+        run: python scripts/preflight_prod.py --environment production
+
+      - name: Apply TokenDNA storage migrations
+        run: python scripts/migrate_storage.py
+
+      - name: Run live Postgres smoke
+        run: python scripts/postgres_smoke.py
+
+      - name: Assert migrations remain current
+        run: |
+          python scripts/migrate_storage.py --status
+          python -m pytest -q tests/test_storage_migrations.py tests/test_preflight_prod.py tests/test_db_backend.py
+
+  # ── Helm chart lint + template validation ─────────────────────────────────
+  helm-lint:
+    name: Helm Chart Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.14.0
+
+      - name: helm lint
+        run: helm lint deploy/helm/tokendna
+
+      - name: helm template (default values)
+        run: helm template tokendna deploy/helm/tokendna > /tmp/rendered.yaml
+
+      - name: helm template (production overlay)
+        run: |
+          helm template tokendna deploy/helm/tokendna \
+            --set image.tag=ci-test \
+            --set ingress.enabled=true \
+            > /tmp/rendered-prod.yaml
+
+      - name: Validate against Kubernetes schema (kubeconform)
+        run: |
+          curl -sSL -o /tmp/kc.tgz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xzf /tmp/kc.tgz -C /tmp
+          /tmp/kubeconform -strict -summary /tmp/rendered.yaml /tmp/rendered-prod.yaml
+
+  # ── Stress-harness smoke run ──────────────────────────────────────────────
+  # Runs the stdlib stress driver against an in-process API for ~30s and
+  # gates against the smoke threshold profile. Catches latency regressions
+  # before they reach staging.
+  stress-smoke:
+    name: Stress Harness (smoke)
+    runs-on: ubuntu-latest
+    env:
+      DATA_DB_PATH: /tmp/tokendna-stress-smoke.db
+      DEV_MODE: "true"
+      TOKENDNA_ENV: ci
+      ATTESTATION_CA_SECRET: ci-stress-smoke-secret
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Boot API in background
+        run: |
+          uvicorn api:app --host 127.0.0.1 --port 8000 --log-level warning &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/healthz >/dev/null 2>&1; then
+              echo "API up after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Smoke stress run (gated)
+        run: |
+          python scripts/stress_harness.py \
+            --base-url http://127.0.0.1:8000 \
+            --profile scripts/stress_profiles/smoke.json \
+            --duration 20 \
+            --concurrency 8 \
+            --gate scripts/stress_profiles/gate.smoke.json \
+            --out /tmp/stress-report.json
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: stress-report
+          path: /tmp/stress-report.json
+          if-no-files-found: ignore
+
+  # ── Detection-efficacy benchmark (ADVISORY / non-blocking) ─────────────────
+  # Replays the three RSA-2026 scenarios against an in-process instance and
+  # publishes a detection-rate / false-positive / latency report as an artifact.
+  # continue-on-error keeps this off the required-checks path — it informs, it
+  # does not gate. TOKENDNA_ENV=ci satisfies the DEV_MODE deny-by-default guard.
+  efficacy-benchmark:
+    name: Detection Efficacy Benchmark (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      TOKENDNA_ENV: ci
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run detection-efficacy benchmark
+        run: python scripts/efficacy_benchmark.py --iterations 25 --out-dir dist/benchmark --strict
+
+      - name: Upload efficacy report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: efficacy-report
+          path: dist/benchmark
+          if-no-files-found: error

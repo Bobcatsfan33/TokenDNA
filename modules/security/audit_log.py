@@ -43,8 +43,8 @@ import requests
 logger = logging.getLogger("aegis.audit")
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-AUDIT_BACKEND: str  = os.getenv("AUDIT_BACKEND", "file")
-AUDIT_FILE:    str  = os.getenv("AUDIT_LOG_PATH", "/var/log/aegis/audit.jsonl")
+AUDIT_BACKEND: str  = os.getenv("AUDIT_BACKEND") or os.getenv("AUDIT_BACKENDS", "file")
+AUDIT_FILE:    str  = os.getenv("AUDIT_LOG_PATH") or os.getenv("AUDIT_LOG_FILE", "/var/log/aegis/audit.jsonl")
 AUDIT_HMAC_KEY: str = os.getenv("AUDIT_HMAC_KEY", "")  # REQUIRED in production
 AUDIT_WEBHOOK:  str = os.getenv("SIEM_WEBHOOK_URL", "")
 
@@ -68,6 +68,33 @@ class AuditEventType(str, Enum):
     ACCESS_DENIED       = "access.denied"
     PRIVILEGE_ESCALATION= "access.privilege_escalation"
 
+    # Policy enforcement & advisory (Phase 5)
+    POLICY_EVALUATED            = "policy.evaluated"
+    POLICY_VIOLATION_APPROVED   = "policy.violation.approved"
+    POLICY_VIOLATION_REJECTED   = "policy.violation.rejected"
+    POLICY_SUGGESTION_GENERATED = "policy.suggestion.generated"
+    POLICY_SUGGESTION_APPROVED  = "policy.suggestion.approved"
+    POLICY_SUGGESTION_REJECTED  = "policy.suggestion.rejected"
+    POLICY_AUTO_TIGHTENED       = "policy.auto_tightened"
+    PERMISSION_DRIFT_OBSERVED   = "permission.drift.observed"
+    PERMISSION_DRIFT_DETECTED   = "permission.drift.detected"
+    PERMISSION_DRIFT_APPROVED   = "permission.drift.approved"
+
+    # MCP runtime inspection (Sprint MCP)
+    MCP_CALL_INSPECTED          = "mcp.call.inspected"
+    MCP_VIOLATION_DETECTED      = "mcp.violation.detected"
+    MCP_CHAIN_PATTERN_MATCHED   = "mcp.chain.pattern_matched"
+    MCP_VIOLATION_RESOLVED      = "mcp.violation.resolved"
+
+    # Federated Agent Trust (Sprint FAT)
+    FEDERATION_HANDSHAKE_INITIATED = "federation.handshake.initiated"
+    FEDERATION_HANDSHAKE_ACCEPTED  = "federation.handshake.accepted"
+    FEDERATION_HANDSHAKE_REJECTED  = "federation.handshake.rejected"
+    FEDERATION_TRUST_ESTABLISHED   = "federation.trust.established"
+    FEDERATION_TRUST_REVOKED       = "federation.trust.revoked"
+    CROSS_ORG_ACTION_BLOCKED       = "federation.cross_org.blocked"
+    CROSS_ORG_ACTION_APPROVED      = "federation.cross_org.approved"
+
     # Threat detection (TokenDNA)
     THREAT_IMPOSSIBLE_TRAVEL = "threat.impossible_travel"
     THREAT_TOR_EXIT          = "threat.tor_exit"
@@ -84,6 +111,30 @@ class AuditEventType(str, Enum):
     FINDING_DETECTED    = "finding.detected"
     REMEDIATION_APPLIED = "remediation.applied"
     REMEDIATION_FAILED  = "remediation.failed"
+
+    # Agent lifecycle (T-4)
+    AGENT_REGISTERED       = "agent.registered"
+    AGENT_SUSPENDED        = "agent.suspended"
+    AGENT_REACTIVATED      = "agent.reactivated"
+    AGENT_DECOMMISSIONED   = "agent.decommissioned"
+
+    # Certificate lifecycle (T-4)
+    CERT_EXPIRY_SWEEP      = "cert.expiry_sweep"
+    CERT_RENEWAL_TRIGGERED = "cert.renewal_triggered"
+
+    # Real-time credential rip / revocation fan-out (Gap roadmap D2)
+    KILL_RIP_INITIATED     = "kill.rip.initiated"
+    KILL_PLANE_REVOKED     = "kill.plane.revoked"
+    KILL_PLANE_FAILED      = "kill.plane.failed"
+    KILL_RIP_REVERSED      = "kill.rip.reversed"
+    KILL_CASCADE_INITIATED = "kill.cascade.initiated"
+
+    # Governed retrieval (Gap roadmap B3)
+    RETRIEVAL_ALLOWED   = "retrieval.allowed"
+    RETRIEVAL_DENIED    = "retrieval.denied"
+
+    # Cross-session/agent/model campaign correlation (Gap roadmap A1)
+    CAMPAIGN_DETECTED   = "campaign.detected"
 
     # Tenant management
     TENANT_CREATED      = "tenant.created"
@@ -145,6 +196,17 @@ def _compute_hash(canonical_bytes: bytes) -> str:
     return hashlib.sha256(canonical_bytes).hexdigest()
 
 
+def compute_evidence_hash(canonical_bytes: bytes) -> str:
+    """Public seam over the audit log's hash primitive.
+
+    Other tamper-evident artefacts (e.g. the TraceReport's row chain) hash
+    themselves with this so they inherit the audit log's crypto posture —
+    HMAC-SHA256 when AUDIT_HMAC_KEY is configured, SHA-256 otherwise — instead of
+    inventing a second, weaker one.
+    """
+    return _compute_hash(canonical_bytes)
+
+
 # ── Core logger ───────────────────────────────────────────────────────────────
 _sequence_counter = 0
 
@@ -204,13 +266,15 @@ def log_event(
 
 def _dispatch(record: AuditRecord) -> None:
     """Write to configured backend(s). Never raises — audit failures are logged, not fatal."""
-    backend = AUDIT_BACKEND.lower()
+    backends = {b.strip().lower() for b in AUDIT_BACKEND.split(",") if b.strip()}
+    if "all" in backends:
+        backends.update({"file", "redis", "siem"})
     try:
-        if backend in ("file", "all"):
+        if "file" in backends:
             _write_file(record)
-        if backend in ("redis", "all"):
+        if "redis" in backends:
             _write_redis(record)
-        if backend in ("siem", "all") and AUDIT_WEBHOOK:
+        if "siem" in backends and AUDIT_WEBHOOK:
             _write_siem(record)
     except Exception as e:  # noqa: BLE001
         logger.error("AUDIT DISPATCH FAILED — event may be lost: %s | %s", record.event_type, e)
@@ -258,6 +322,50 @@ def _write_siem(record: AuditRecord) -> None:
         )
     except Exception as e:  # noqa: BLE001
         logger.warning("Audit SIEM forward failed: %s", e)
+
+
+# ── Reading ───────────────────────────────────────────────────────────────────
+def read_records(
+    log_path: Optional[str] = None,
+    *,
+    tenant_id: Optional[str] = None,
+    resource: Optional[str] = None,
+    event_prefix: Optional[str] = None,
+    limit: int = 500,
+) -> list[dict]:
+    """Read audit entries from the file backend, newest last.
+
+    The audit log is the tamper-evident record of what TokenDNA *did*. Anything
+    that wants to cite it as evidence (e.g. the TraceReport) needs to read it,
+    not just append to it. Filters are AND-ed; ``event_prefix`` matches the start
+    of the serialised event type.
+
+    Returns raw dicts (each carrying ``sequence`` and ``entry_hash``, which is
+    what an evidence pointer references). Never raises on a malformed line — a
+    corrupt tail must not take down a read path; use ``verify_log_integrity`` to
+    detect tampering.
+    """
+    path = Path(log_path or AUDIT_FILE)
+    if not path.exists():
+        return []
+
+    out: list[dict] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+        except Exception:  # noqa: BLE001 - skip corrupt lines, don't fail the read
+            continue
+        if tenant_id is not None and rec.get("tenant_id") != tenant_id:
+            continue
+        if resource is not None and rec.get("resource") != resource:
+            continue
+        if event_prefix is not None and not str(rec.get("event_type", "")).startswith(event_prefix):
+            continue
+        out.append(rec)
+
+    return out[-limit:] if limit and len(out) > limit else out
 
 
 # ── Integrity verification ────────────────────────────────────────────────────

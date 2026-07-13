@@ -13,6 +13,7 @@ share data even on a single Redis instance:
 
 import json
 import logging
+import os
 from typing import Any, Optional
 
 import redis
@@ -52,13 +53,71 @@ def _build_pool() -> redis.ConnectionPool:
 
 
 _pool: Optional[redis.ConnectionPool] = None
+_client: Any = None          # the resolved backend: redis.Redis or MemoryCache
+_using_fallback = False
 
 
-def get_redis() -> redis.Redis:
-    global _pool
-    if _pool is None:
-        _pool = _build_pool()
-    return redis.Redis(connection_pool=_pool)
+def _force_memory() -> bool:
+    """Explicit opt-in to the in-process cache (Tier-1 / CI), no probe attempted."""
+    return os.getenv("TOKENDNA_CACHE", "").strip().lower() in {"memory", "inprocess", "none"}
+
+
+def _memory_client() -> Any:
+    from modules.identity.memory_cache import MemoryCache
+    return MemoryCache()
+
+
+def get_redis() -> Any:
+    """Return the cache backend, falling back to an in-process cache (P2.5).
+
+    Redis was the last hard dependency in the default path: without it, token
+    revocation, rate limits and baseline caching silently degraded to no-ops. Now a
+    machine with no Redis gets a working cache instead of a broken one — at the cost
+    of being single-process, which we say out loud rather than bury.
+    """
+    global _pool, _client, _using_fallback
+    if _client is not None:
+        return _client
+
+    if _force_memory():
+        _using_fallback = True
+        _client = _memory_client()
+        logger.info("cache: in-process backend selected explicitly (TOKENDNA_CACHE)")
+        return _client
+
+    try:
+        if _pool is None:
+            _pool = _build_pool()
+        client = redis.Redis(connection_pool=_pool)
+        client.ping()
+        _client = client
+        _using_fallback = False
+    except Exception as exc:  # noqa: BLE001 — no Redis is a supported deployment
+        _using_fallback = True
+        _client = _memory_client()
+        logger.warning(
+            "Redis unavailable at %s:%s (%s) — falling back to the IN-PROCESS cache. "
+            "This is SINGLE-PROCESS: revocations, rate limits and baselines are NOT "
+            "shared between workers, so a token revoked on one worker is still "
+            "accepted by another. Fine for evaluation and CI; set REDIS_HOST for any "
+            "multi-worker deployment.",
+            REDIS_HOST, REDIS_PORT, exc,
+        )
+    return _client
+
+
+def using_fallback() -> bool:
+    """True when the in-process cache is serving (i.e. there is no Redis)."""
+    get_redis()
+    return _using_fallback
+
+
+def reset_client() -> None:
+    """Drop the resolved backend so the next call re-probes (tests + reconfigure)."""
+    global _pool, _client, _using_fallback
+    _pool = None
+    _client = None
+    _using_fallback = False
 
 
 def is_available() -> bool:

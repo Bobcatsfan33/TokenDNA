@@ -1,0 +1,2 @@
+poam_id,control_id,weakness,severity,owner,source,evidence_needed,planned_remediation,target_date,status
+POAM-001,SC-28,Customer storage encryption evidence not attached,medium,customer,ATO onboarding,Cloud or enclave encryption-at-rest evidence,Attach inherited control evidence from hosting boundary,TBD,open

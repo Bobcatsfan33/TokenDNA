@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 39,
+  "version": 1,
+  "title": "TokenDNA — Security & Trust Signals",
+  "uid": "tokendna-security",
+  "tags": ["tokendna", "security"],
+  "timezone": "browser",
+  "refresh": "1m",
+  "time": {"from": "now-6h", "to": "now"},
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "Datasource",
+        "refresh": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Secret Gate Failures (24h)",
+      "description": "Hard pager: any non-zero increase means an HMAC secret rotation went wrong or someone deployed with a dev default. Investigate immediately.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "green", "value": null},
+            {"color": "red", "value": 1}
+          ]}
+        }
+      },
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+      "targets": [
+        {"expr": "sum(increase(tokendna_secret_gate_failures_total[24h]))"}
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "401 / 403 Rate (1h)",
+      "description": "Sustained spike → credential stuffing or a customer integration that lost its key.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}},
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(rate(tokendna_http_requests_total{status_class=\"4xx\"}[1h]))"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Policy BLOCK Decisions (1h)",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"unit": "ops"}},
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(rate(tokendna_policy_decisions_total{decision=~\"block|BLOCK\"}[1h]))"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "UIS DENY Rate (1h)",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"unit": "ops"}},
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(rate(tokendna_uis_events_total{decision=~\"deny|DENY|block|BLOCK\"}[1h]))"
+        }
+      ]
+    },
+
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Policy Decisions by Module + Decision",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"unit": "ops"}},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 5},
+      "targets": [
+        {
+          "expr": "sum by (module, decision) (rate(tokendna_policy_decisions_total[5m]))",
+          "legendFormat": "{{module}} / {{decision}}"
+        }
+      ]
+    },
+
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "UIS Events by Protocol",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"unit": "ops"}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 13},
+      "targets": [
+        {
+          "expr": "sum by (protocol) (rate(tokendna_uis_events_total[5m]))",
+          "legendFormat": "{{protocol}}"
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Auth Failures (4xx) by Route",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 13},
+      "targets": [
+        {
+          "expr": "topk(10, sum by (route) (rate(tokendna_http_requests_total{status_class=\"4xx\"}[5m])))",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    }
+  ]
+}

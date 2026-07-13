@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TokenDNA — AI Asset Management Console</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Fully offline: dependency-free SVG DAG renderer served locally, no CDN. -->
+<script src="/static/trustgraph-engine.js?v=__ASSET_VER__"></script>
+<style>
+  :root{
+    --bg:#0b0d10;--panel:#14181d;--line:#1f262e;--text:#e6e8eb;--muted:#8a939c;
+    --accent:#3aa9ff;--low:#34d399;--medium:#f59e0b;--high:#fb923c;--critical:#ef4444;
+  }
+  *,*::before,*::after{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+  header{border-bottom:1px solid var(--line);padding:12px 18px;display:flex;align-items:center;gap:18px}
+  header .logo{font-weight:700;letter-spacing:.5px}
+  header .logo .dot{color:var(--accent)}
+  .stat-strip{display:flex;gap:22px;flex-wrap:wrap;margin-left:auto;font-size:13px}
+  .stat{display:flex;flex-direction:column;align-items:center}
+  .stat .n{font-size:20px;font-weight:700}
+  .stat .l{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+  .meta{color:var(--muted);font-size:12px;margin-left:18px}
+  main{display:flex;height:calc(100vh - 58px)}
+  #cy{flex:1;background:var(--bg)}
+  aside{width:360px;border-left:1px solid var(--line);padding:18px;overflow:auto;background:var(--panel)}
+  aside h2{font-size:15px;margin:0 0 4px}
+  aside .sub{color:var(--muted);font-size:12px;margin-bottom:14px}
+  .card{background:#0f1318;border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:12px}
+  .row{display:flex;justify-content:space-between;padding:3px 0;font-size:13px}
+  .row span:first-child{color:var(--muted)}
+  .pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+  .pill.low{background:rgba(52,211,153,.15);color:var(--low)}
+  .pill.medium{background:rgba(245,158,11,.15);color:var(--medium)}
+  .pill.high{background:rgba(251,146,60,.15);color:var(--high)}
+  .pill.critical{background:rgba(239,68,68,.15);color:var(--critical)}
+  .btn{display:block;width:100%;padding:10px;border:none;border-radius:8px;font-weight:600;
+    cursor:pointer;margin-top:8px;font-size:13px}
+  .btn-danger{background:var(--critical);color:#fff}
+  .btn-danger:hover{filter:brightness(1.1)}
+  .btn-warn{background:transparent;color:var(--high);border:1px solid var(--high)}
+  .btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--line)}
+  .plane{display:flex;justify-content:space-between;align-items:center;padding:6px 0;
+    border-bottom:1px solid var(--line);font-size:12px}
+  .chip{padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+  .chip.killed{background:rgba(52,211,153,.15);color:var(--low)}
+  .chip.failed,.chip.timeout{background:rgba(239,68,68,.15);color:var(--critical)}
+  .chip.not_connected{background:rgba(138,147,156,.15);color:var(--muted)}
+  .chip.killing{background:rgba(58,169,255,.15);color:var(--accent)}
+  .legend{position:absolute;bottom:14px;left:14px;background:rgba(20,24,29,.9);
+    border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11px}
+  .legend .item{display:flex;align-items:center;gap:6px;margin:2px 0}
+  .legend .dot{width:10px;height:10px;border-radius:50%}
+  .empty{color:var(--muted);text-align:center;margin-top:40px}
+</style>
+</head>
+<body>
+<header>
+  <span class="logo">Token<span class="dot">DNA</span> · AI Asset Management</span>
+  <span class="meta" id="scan-meta">No scan loaded</span>
+  <div class="stat-strip">
+    <div class="stat"><span class="n" id="stat-agents">0</span><span class="l">Agents</span></div>
+    <div class="stat"><span class="n" id="stat-tools">0</span><span class="l">Tools</span></div>
+    <div class="stat"><span class="n" id="stat-mcp">0</span><span class="l">MCP Servers</span></div>
+    <div class="stat"><span class="n" id="stat-vulns">0</span><span class="l">Vulnerabilities</span></div>
+  </div>
+  <span style="margin-left:18px;font-size:13px"><a href="/demo" style="color:#3aa9ff;text-decoration:none">▸ Demo</a>
+    &nbsp; <a href="/trust-graph" style="color:#3aa9ff;text-decoration:none">▸ Trust Graph</a></span>
+</header>
+<main>
+  <div id="cy"></div>
+  <div class="legend" id="legend"></div>
+  <aside id="panel">
+    <div class="empty">Click a node to inspect it.<br>Rogue agents can be ripped here.</div>
+  </aside>
+</main>
+
+<script>
+"use strict";
+// ── Config ────────────────────────────────────────────────────────────────
+const API = window.TOKENDNA_API || "";          // same-origin by default
+const TOKEN = localStorage.getItem("tokendna_token") || "";
+function headers(extra){ return Object.assign({"Content-Type":"application/json",
+  ...(TOKEN ? {"Authorization":"Bearer "+TOKEN} : {})}, extra||{}); }
+
+const gcol = window.TrustGraphEngine.gcol;
+const RISK = {};   // label -> risk tier (engine colours by type; risk shown in panel)
+
+// ── Dependency-free DAG engine ──────────────────────────────────────────────
+const eng = new window.TrustGraphEngine(document.getElementById("cy"), {
+  onSelectNode: (d) => { if (d.ntype === "agent") showAgent(d.name, d); else showInfo(d); },
+  onSelectEdge: () => {},
+  onBackground: () => {},
+  onToggleGroup: (id) => { expanded[id] = !expanded[id]; eng.update({ graphData: GRAPH, anomalies: [], hidden: {}, expanded }); },
+});
+let GRAPH = { nodes: [], edges: [] };
+let expanded = {};
+
+// ── Legend ────────────────────────────────────────────────────────────────
+document.getElementById("legend").innerHTML =
+  Object.entries({agent:"Agent",tool:"Tool",mcp_server:"MCP Server",guardrail:"Guardrail",vulnerability:"Vulnerability"})
+  .map(([k,v])=>`<div class="item"><span class="dot" style="background:${gcol(k)}"></span>${v}</div>`).join("");
+
+// ── Render a scan inventory as a hierarchical DAG ───────────────────────────
+function renderScan(scan){
+  const inv = scan.items || {};
+  const counts = scan.scan || scan.counts || {};
+  document.getElementById("stat-agents").textContent = counts.agents ?? (inv.agent||[]).length;
+  document.getElementById("stat-tools").textContent = counts.tools ?? (inv.tool||[]).length;
+  document.getElementById("stat-mcp").textContent = counts.mcp_servers ?? (inv.mcp_server||[]).length;
+  document.getElementById("stat-vulns").textContent = counts.vulnerabilities ?? (inv.vulnerability||[]).length;
+  const meta = scan.scan || {};
+  document.getElementById("scan-meta").textContent =
+    `Scan ${(meta.scan_id||"").slice(0,8)} · ${meta.framework||"?"} · ${meta.source||""} · ${(meta.scanned_at||"").slice(0,19)}`;
+
+  const nodes = [{node_id:"__start",label:"start",node_type:"start"}];
+  const edges = [];
+  const vulnByTarget = {};
+  (inv.vulnerability||[]).forEach(v=>{ (vulnByTarget[v.target]=vulnByTarget[v.target]||[]).push(v); });
+
+  (inv.agent||[]).forEach(a=>{
+    RISK[a.name] = vulnByTarget[a.name] ? "high" : "low";
+    nodes.push({node_id:"a:"+a.name,label:a.name,node_type:"agent"});
+    edges.push({src_node:"__start",dst_node:"a:"+a.name,edge_type:"runs",src_label:"start",dst_label:a.name});
+  });
+  (inv.tool||[]).forEach(t=>{
+    RISK[t.name] = vulnByTarget[t.name] ? "medium" : "low";
+    nodes.push({node_id:"t:"+t.name,label:t.name,node_type:"tool"});
+    (inv.agent||[]).forEach(a=> edges.push({src_node:"a:"+a.name,dst_node:"t:"+t.name,edge_type:"invokes",src_label:a.name,dst_label:t.name,src_type:"agent",dst_type:"tool"}));
+  });
+  (inv.mcp_server||[]).forEach(m=>{
+    RISK[m.name] = vulnByTarget[m.name] ? "critical" : "medium";
+    nodes.push({node_id:"m:"+m.name,label:m.name,node_type:"mcp_server"});
+    (inv.agent||[]).forEach(a=> edges.push({src_node:"a:"+a.name,dst_node:"m:"+m.name,edge_type:"invokes",src_label:a.name,dst_label:m.name,src_type:"agent",dst_type:"mcp_server"}));
+  });
+
+  GRAPH = { nodes, edges };
+  expanded = {};
+  eng.update({ graphData: GRAPH, anomalies: [], hidden: {}, expanded });
+  eng.fit();
+}
+
+function showInfo(n){
+  const risk = RISK[n.name] || "low";
+  document.getElementById("panel").innerHTML =
+    `<h2>${n.name}</h2><div class="sub">${n.ntype}</div>
+     <div class="card"><div class="row"><span>Type</span><span>${n.ntype}</span></div>
+     <div class="row"><span>Risk</span><span class="pill ${risk}">${risk}</span></div></div>`;
+}
+
+function showAgent(agentId, n){
+  const risk = RISK[agentId] || "low";
+  const panel = document.getElementById("panel");
+  panel.innerHTML =
+    `<h2>${agentId}</h2><div class="sub">agent · risk
+       <span class="pill ${risk}">${risk}</span></div>
+     <div class="card" id="preview"><div class="sub">Loading kill preview…</div></div>
+     <button class="btn btn-danger" id="rip">⚡ Rip Credentials</button>
+     <button class="btn btn-warn" id="cascade">⚡ Cascade Rip (blast radius)</button>
+     <button class="btn btn-ghost" id="reverse">Restore reversible planes</button>
+     <div class="card" id="receipt" style="display:none"></div>`;
+  // pre-flight preview
+  fetch(`${API}/api/kill/${encodeURIComponent(agentId)}/preview`,{headers:headers()})
+    .then(r=>r.json()).then(p=>{
+      document.getElementById("preview").innerHTML =
+        `<div class="sub">Kill will cover ${p.planes.filter(x=>x.status==="killed").length} of ${p.planes.length} planes</div>`+
+        p.planes.map(pl=>`<div class="plane"><span>${pl.plane}</span>
+          <span class="chip ${pl.status}">${pl.status==="killed"?"connected":"not configured"}</span></div>`).join("");
+    }).catch(()=>{document.getElementById("preview").innerHTML='<div class="sub">preview unavailable</div>';});
+
+  document.getElementById("rip").onclick = ()=>rip(agentId,false);
+  document.getElementById("cascade").onclick = ()=>rip(agentId,true);
+  document.getElementById("reverse").onclick = ()=>reverse(agentId);
+}
+
+function rip(agentId, cascade){
+  const reason = prompt(`Reason for ${cascade?"CASCADE ":""}credential rip of ${agentId}:`);
+  if(!reason) return;
+  const url = cascade ? `${API}/api/kill/${encodeURIComponent(agentId)}/cascade`
+                      : `${API}/api/kill/${encodeURIComponent(agentId)}`;
+  const body = cascade ? {reason,confirm:true} : {reason};
+  const box = document.getElementById("receipt");
+  box.style.display="block"; box.innerHTML='<div class="sub">killing…</div>';
+  fetch(url,{method:"POST",headers:headers(),body:JSON.stringify(body)})
+    .then(r=>r.json()).then(res=>{
+      const root = res.root || res;
+      box.innerHTML = `<div class="sub">${cascade?("cascade · "+(res.reachable_count||0)+" downstream · "):""}${root.overall}</div>`+
+        (root.planes||[]).map(pl=>`<div class="plane"><span>${pl.plane}</span>
+          <span class="chip ${pl.status}">${pl.status}</span></div>`).join("");
+    }).catch(e=>{box.innerHTML='<div class="sub">kill failed: '+e+'</div>';});
+}
+
+function reverse(agentId){
+  const reason = prompt(`Reason to restore ${agentId}:`); if(!reason) return;
+  fetch(`${API}/api/kill/${encodeURIComponent(agentId)}/reverse`,
+    {method:"POST",headers:headers(),body:JSON.stringify({reason})})
+    .then(r=>r.json()).then(res=>{
+      const box=document.getElementById("receipt"); box.style.display="block";
+      box.innerHTML=`<div class="sub">restore · ${res.overall}</div>`+
+        (res.planes||[]).map(pl=>`<div class="plane"><span>${pl.plane}</span>
+          <span class="chip ${pl.status}">${pl.status}</span></div>`).join("");
+    });
+}
+
+// ── Bootstrap: load the latest scan, else a built-in sample ─────────────────
+const SAMPLE = {scan:{framework:"sample",source:"airline-agent-demo",scanned_at:new Date().toISOString(),
+  agents:2,tools:3,mcp_servers:1,vulnerabilities:1},
+  items:{agent:[{name:"triage-agent",tool_count:2},{name:"booking-agent",tool_count:1}],
+    tool:[{name:"search_flights"},{name:"charge_card"},{name:"send_email"}],
+    mcp_server:[{name:"crm-mcp"}],
+    vulnerability:[{name:"unauthenticated_mcp_server",severity:"high",target:"crm-mcp"}]}};
+
+(function boot(){
+  fetch(`${API}/api/assets/scans`,{headers:headers()}).then(r=>r.ok?r.json():null).then(d=>{
+    if(d && d.scans && d.scans.length){
+      return fetch(`${API}/api/assets/scans/${d.scans[0].scan_id}`,{headers:headers()})
+        .then(r=>r.json()).then(renderScan);
+    }
+    renderScan(SAMPLE);
+  }).catch(()=>renderScan(SAMPLE));
+})();
+</script>
+</body>
+</html>

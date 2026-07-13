@@ -3,864 +3,2291 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Aegis Security Platform</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js"></script>
+<title>TokenDNA — Runtime Risk Engine</title>
+<!-- Fully offline: React + the trust-graph engine are served locally from
+     127.0.0.1, no third-party CDN. The graph renderer is dependency-free
+     (plain SVG, no cytoscape/dagre/d3). -->
+<script src="/static/vendor/react.production.min.js?v=__ASSET_VER__"></script>
+<script src="/static/vendor/react-dom.production.min.js?v=__ASSET_VER__"></script>
+<script src="/static/trustgraph-engine.js?v=__ASSET_VER__"></script>
+<script src="/static/trustgraph-fixture.js?v=__ASSET_VER__"></script>
+<script src="/static/workflow-fixtures.js?v=__ASSET_VER__"></script>
 <style>
   :root {
-    --bg:       #0a0d14;
-    --surface:  #111827;
-    --surface2: #1a2233;
-    --border:   #1e293b;
+    --bg:       #060a10;
+    --surface:  #0d1117;
+    --surface2: #161b22;
+    --surface3: #1c2333;
+    --border:   #21262d;
     --accent:   #3b82f6;
     --accent2:  #6366f1;
     --green:    #10b981;
     --yellow:   #f59e0b;
     --orange:   #f97316;
     --red:      #ef4444;
-    --text:     #e2e8f0;
-    --muted:    #64748b;
+    --critical: #dc2626;
+    --text:     #e6edf3;
+    --muted:    #7d8590;
     --font:     'Inter', system-ui, -apple-system, sans-serif;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; }
-  a { color: var(--accent); text-decoration: none; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; line-height: 1.5; }
 
   /* Layout */
   .shell { display: flex; min-height: 100vh; }
-  .sidebar { width: 220px; min-width: 220px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 0; position: fixed; top: 0; left: 0; bottom: 0; z-index: 100; }
-  .main { margin-left: 220px; flex: 1; display: flex; flex-direction: column; }
-  .topbar { height: 56px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 24px; gap: 16px; position: sticky; top: 0; z-index: 50; }
-  .content { padding: 24px; flex: 1; }
+  .sidebar { width: 236px; min-width: 236px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: fixed; top: 0; left: 0; bottom: 0; z-index: 100; }
+  .main { margin-left: 236px; flex: 1; display: flex; flex-direction: column; }
+  .topbar { height: 58px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 28px; gap: 16px; position: sticky; top: 0; z-index: 50; }
+  .content { padding: 28px; flex: 1; max-width: 1400px; }
 
   /* Sidebar */
-  .logo { padding: 20px 16px 16px; border-bottom: 1px solid var(--border); }
-  .logo-text { font-size: 18px; font-weight: 700; letter-spacing: -0.5px; }
-  .logo-sub  { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-top: 2px; }
-  .nav-section { padding: 12px 0 4px; }
-  .nav-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; padding: 0 16px 8px; }
-  .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 16px; cursor: pointer; color: var(--muted); font-size: 13px; border-left: 3px solid transparent; transition: all .15s; }
+  .logo { padding: 22px 18px 18px; border-bottom: 1px solid var(--border); }
+  .logo-brand { font-size: 20px; font-weight: 800; letter-spacing: -0.5px; color: var(--text); }
+  .logo-brand span { color: var(--accent); }
+  .logo-tag { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1.2px; margin-top: 3px; }
+  .nav-group { padding: 14px 0 4px; }
+  .nav-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; padding: 0 18px 8px; font-weight: 600; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 18px; cursor: pointer; color: var(--muted); font-size: 13px; border-left: 3px solid transparent; transition: all .12s; white-space: nowrap; }
   .nav-item:hover { color: var(--text); background: var(--surface2); }
-  .nav-item.active { color: var(--accent); border-left-color: var(--accent); background: rgba(59,130,246,.07); }
-  .nav-icon { width: 16px; text-align: center; font-size: 15px; }
+  .nav-item.active { color: var(--accent); border-left-color: var(--accent); background: rgba(59,130,246,.08); font-weight: 500; }
+  .nav-icon { width: 18px; text-align: center; font-size: 15px; flex-shrink: 0; }
+
+  /* Topbar */
+  .topbar-title { font-size: 15px; font-weight: 600; }
+  .status-badge { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s infinite; }
+  .dot.red { background: var(--red); box-shadow: 0 0 6px var(--red); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
+  .avatar { width: 30px; height: 30px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--accent2)); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; color: white; }
+
+  /* Sections */
+  .section-head { margin-bottom: 24px; }
+  .section-title { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; }
+  .section-sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+
+  /* KPI grid */
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-bottom: 28px; }
+  .kpi-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; }
+  .kpi-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; font-weight: 600; margin-bottom: 8px; }
+  .kpi-value { font-size: 28px; font-weight: 800; letter-spacing: -1px; line-height: 1; }
+  .kpi-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .kpi-value.green { color: var(--green); }
+  .kpi-value.red { color: var(--red); }
+  .kpi-value.yellow { color: var(--yellow); }
+  .kpi-value.blue { color: var(--accent); }
 
   /* Cards */
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
-  .card-header { padding: 16px 20px 0; display: flex; align-items: center; justify-content: space-between; }
-  .card-title { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
-  .card-body { padding: 16px 20px 20px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 20px; }
+  .card-head { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .card-title { font-size: 14px; font-weight: 600; }
+  .card-body { padding: 20px; }
+  .card-hint { font-size: 11px; color: var(--muted); }
 
-  /* Grid */
-  .grid-4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; }
-  .grid-2 { display: grid; grid-template-columns: repeat(2,1fr); gap: 16px; }
-  .grid-3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; }
-  @media (max-width: 1100px) { .grid-4 { grid-template-columns: repeat(2,1fr); } }
-  @media (max-width: 700px)  { .grid-4, .grid-2, .grid-3 { grid-template-columns: 1fr; } }
-
-  /* Stat cards */
-  .stat-card { padding: 20px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); }
-  .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 8px; }
-  .stat-value { font-size: 32px; font-weight: 700; line-height: 1; }
-  .stat-delta { font-size: 11px; margin-top: 6px; color: var(--muted); }
-  .stat-delta.up   { color: var(--red); }
-  .stat-delta.down { color: var(--green); }
-
-  /* Risk tier badges */
-  .badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 99px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
-  .badge-allow  { background: rgba(16,185,129,.15); color: var(--green); }
-  .badge-stepup { background: rgba(245,158,11,.15); color: var(--yellow); }
-  .badge-block  { background: rgba(249,115,22,.15); color: var(--orange); }
-  .badge-revoke { background: rgba(239,68,68,.15); color: var(--red); }
-  .badge-ok     { background: rgba(16,185,129,.15); color: var(--green); }
-  .badge-warn   { background: rgba(245,158,11,.15); color: var(--yellow); }
-  .badge-crit   { background: rgba(239,68,68,.15); color: var(--red); }
-
-  /* Table */
+  /* Tables */
   .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; }
-  th { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
-  td { padding: 11px 12px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  th { padding: 10px 14px; text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .7px; color: var(--muted); border-bottom: 1px solid var(--border); background: var(--surface2); }
+  td { padding: 11px 14px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: middle; }
   tr:last-child td { border-bottom: none; }
   tr:hover td { background: rgba(255,255,255,.02); }
 
-  /* Progress / score bar */
-  .score-bar { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
-  .score-fill { height: 100%; border-radius: 3px; transition: width .4s; }
+  /* Severity badges */
+  .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+  .badge.critical { background: rgba(220,38,38,.2); color: #fca5a5; border: 1px solid rgba(220,38,38,.3); }
+  .badge.high { background: rgba(239,68,68,.15); color: #fca5a5; border: 1px solid rgba(239,68,68,.25); }
+  .badge.medium { background: rgba(245,158,11,.15); color: #fcd34d; border: 1px solid rgba(245,158,11,.25); }
+  .badge.low { background: rgba(16,185,129,.12); color: #6ee7b7; border: 1px solid rgba(16,185,129,.2); }
+  .badge.info { background: rgba(59,130,246,.12); color: #93c5fd; border: 1px solid rgba(59,130,246,.2); }
 
-  /* Feed */
-  .feed-item { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
-  .feed-item:last-child { border-bottom: none; }
-  .feed-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
-  .feed-meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
+  /* Blast radius viz */
+  .blast-container { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .blast-viz { background: var(--surface2); border-radius: 8px; padding: 20px; min-height: 280px; display: flex; flex-direction: column; }
+  .score-ring { width: 140px; height: 140px; margin: 0 auto 16px; position: relative; }
+  .score-ring svg { transform: rotate(-90deg); }
+  .score-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; }
+  .score-num { font-size: 32px; font-weight: 900; letter-spacing: -2px; line-height: 1; }
+  .score-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; margin-top: 2px; }
+  .node-list { display: flex; flex-direction: column; gap: 6px; flex: 1; overflow-y: auto; max-height: 200px; }
+  .node-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; background: var(--surface3); border-radius: 6px; }
+  .node-type { font-size: 10px; font-weight: 600; text-transform: uppercase; padding: 1px 6px; border-radius: 3px; min-width: 60px; text-align: center; }
+  .nt-agent { background: rgba(99,102,241,.2); color: #a5b4fc; }
+  .nt-issuer { background: rgba(245,158,11,.15); color: #fcd34d; }
+  .nt-verifier { background: rgba(239,68,68,.15); color: #fca5a5; }
+  .nt-tool { background: rgba(16,185,129,.12); color: #6ee7b7; }
+  .nt-workload { background: rgba(59,130,246,.12); color: #93c5fd; }
+  .hop-pip { width: 20px; height: 20px; border-radius: 50%; background: var(--surface); display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: var(--muted); flex-shrink: 0; }
+  .node-label { font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .node-pts { font-size: 11px; color: var(--muted); }
 
-  /* Status indicator */
-  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-  .status-dot.green  { background: var(--green); box-shadow: 0 0 6px var(--green); }
-  .status-dot.red    { background: var(--red);   box-shadow: 0 0 6px var(--red); }
-  .status-dot.yellow { background: var(--yellow); }
+  /* Intent feed */
+  .intent-row { border-left: 3px solid; padding: 12px 16px; margin-bottom: 8px; border-radius: 0 6px 6px 0; background: var(--surface2); }
+  .intent-row.critical { border-color: var(--critical); }
+  .intent-row.high { border-color: var(--red); }
+  .intent-row.medium { border-color: var(--yellow); }
+  .intent-row.low { border-color: var(--green); }
+  .intent-name { font-weight: 600; font-size: 13px; margin-bottom: 3px; }
+  .intent-meta { font-size: 11px; color: var(--muted); display: flex; gap: 12px; flex-wrap: wrap; }
+  .conf-bar { display: flex; align-items: center; gap: 6px; }
+  .conf-track { width: 80px; height: 4px; background: var(--surface3); border-radius: 2px; overflow: hidden; }
+  .conf-fill { height: 100%; border-radius: 2px; background: var(--accent); }
 
-  /* Buttons */
-  .btn { padding: 7px 16px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; transition: opacity .15s; }
-  .btn-primary { background: var(--accent); color: #fff; }
-  .btn-ghost   { background: transparent; color: var(--muted); border: 1px solid var(--border); }
-  .btn:hover   { opacity: .85; }
+  /* Graph viz */
+  .graph-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+  .gstat { background: var(--surface2); border-radius: 8px; padding: 14px 16px; }
+  .gstat-num { font-size: 24px; font-weight: 800; letter-spacing: -1px; }
+  .gstat-label { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .type-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 12px; }
+  .type-fill { height: 6px; border-radius: 3px; min-width: 4px; transition: width .3s; }
+  .type-val { color: var(--muted); font-size: 11px; min-width: 24px; }
 
-  /* Inputs */
-  input, select { background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 7px 12px; font-size: 13px; outline: none; width: 100%; }
-  input:focus, select:focus { border-color: var(--accent); }
-  label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 5px; }
-  .form-group { margin-bottom: 14px; }
+  /* Anomaly stream */
+  .anomaly-card { padding: 10px 14px; background: var(--surface2); border-radius: 6px; margin-bottom: 6px; display: flex; align-items: flex-start; gap: 10px; }
+  .anomaly-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+  .anomaly-body { flex: 1; min-width: 0; }
+  .anomaly-type { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--yellow); margin-bottom: 2px; }
+  .anomaly-detail { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .anomaly-subject { font-size: 11px; color: var(--accent); }
 
-  /* Code box */
-  .code-box { background: #0d1117; border: 1px solid var(--border); border-radius: 6px; padding: 12px 16px; font-family: 'Fira Mono', monospace; font-size: 12px; color: #7dd3fc; overflow-x: auto; }
-
-  /* Onboarding steps */
-  .step { display: flex; gap: 16px; margin-bottom: 24px; }
-  .step-num { width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; flex-shrink: 0; }
-  .step-num.done { background: var(--green); }
-  .step-content h4 { margin-bottom: 6px; font-size: 14px; }
-  .step-content p  { color: var(--muted); line-height: 1.5; font-size: 13px; }
+  /* Empty state */
+  .empty { text-align: center; padding: 48px 24px; color: var(--muted); }
+  .empty-icon { font-size: 36px; margin-bottom: 12px; }
+  .empty-msg { font-size: 14px; margin-bottom: 6px; }
+  .empty-hint { font-size: 12px; opacity: .7; }
 
   /* Misc */
-  .section-title { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
-  .section-sub   { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
-  .mt16 { margin-top: 16px; }
-  .mt24 { margin-top: 24px; }
-  .flex { display: flex; }
-  .items-center { align-items: center; }
-  .gap8 { gap: 8px; }
-  .gap16 { gap: 16px; }
-  .ml-auto { margin-left: auto; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  .mono { font-family: 'SF Mono', 'Cascadia Code', monospace; font-size: 12px; }
   .text-muted { color: var(--muted); }
-  .text-green  { color: var(--green); }
-  .text-red    { color: var(--red); }
+  .text-green { color: var(--green); }
+  .text-red { color: var(--red); }
   .text-yellow { color: var(--yellow); }
-  .font-mono { font-family: 'Fira Mono', monospace; font-size: 12px; }
-  .truncate { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
-  .spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .pulse { animation: pulse 2s ease-in-out infinite; }
-  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.5; } }
+  .flex-row { display: flex; align-items: center; gap: 8px; }
+  .ml-auto { margin-left: auto; }
+  .chip { font-size: 10px; padding: 1px 6px; border-radius: 3px; font-weight: 600; background: var(--surface3); color: var(--muted); }
+  .playbook-row { padding: 10px 14px; background: var(--surface2); border-radius: 6px; margin-bottom: 6px; }
+  .pb-name { font-size: 13px; font-weight: 500; margin-bottom: 2px; }
+  .pb-meta { font-size: 11px; color: var(--muted); display: flex; gap: 10px; }
+  .loading { color: var(--muted); font-size: 13px; padding: 32px; text-align: center; }
+
+  /* ── UIS Event Inspector Modal ── */
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.75); z-index: 1000; display: flex; align-items: flex-start; justify-content: center; padding: 24px; overflow-y: auto; }
+  .modal-box { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; width: 100%; max-width: 900px; min-height: 60vh; display: flex; flex-direction: column; margin: auto; }
+  .modal-head { padding: 20px 24px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; gap: 16px; }
+  .modal-title { font-size: 16px; font-weight: 700; letter-spacing: -0.3px; flex: 1; }
+  .modal-close { background: var(--surface2); border: 1px solid var(--border); color: var(--muted); border-radius: 6px; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 16px; flex-shrink: 0; transition: all .12s; }
+  .modal-close:hover { color: var(--text); border-color: var(--muted); }
+  .modal-tabs { display: flex; gap: 0; padding: 0 24px; border-bottom: 1px solid var(--border); overflow-x: auto; }
+  .modal-tab { padding: 10px 14px; font-size: 12px; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; color: var(--muted); white-space: nowrap; transition: all .12s; }
+  .modal-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .modal-tab:hover:not(.active) { color: var(--text); }
+  .modal-body { padding: 20px 24px; flex: 1; overflow-y: auto; }
+  .schema-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .schema-row { display: flex; align-items: flex-start; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--border); }
+  .schema-row:last-child { border-bottom: none; }
+  .schema-key { font-size: 12px; font-family: 'SF Mono','Cascadia Code',monospace; font-weight: 600; min-width: 180px; flex-shrink: 0; }
+  .schema-val { font-size: 12px; color: var(--text); word-break: break-all; }
+  .schema-null { color: var(--muted); font-style: italic; }
+  .binding-highlight { background: rgba(99,102,241,.12); border-radius: 4px; padding: 2px 6px; border: 1px solid rgba(99,102,241,.25); }
+  .risk-gauge { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .gauge-track { flex: 1; height: 10px; background: var(--surface3); border-radius: 5px; overflow: hidden; }
+  .gauge-fill { height: 100%; border-radius: 5px; transition: width .4s; }
+  .indicator-chip { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; background: rgba(239,68,68,.15); color: #fca5a5; border: 1px solid rgba(239,68,68,.2); margin: 2px; }
+  .travel-warn { background: rgba(239,68,68,.12); border: 1px solid rgba(239,68,68,.3); border-radius: 6px; padding: 10px 14px; color: #fca5a5; font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+
+  /* ── Identity Card Page ── */
+  .icard-grid { display: grid; grid-template-columns: 360px 1fr; gap: 20px; margin-bottom: 20px; }
+  .icard-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; }
+  .icard-name { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+  .icard-meta { font-size: 12px; color: var(--muted); margin-bottom: 16px; }
+  .icard-section { margin-bottom: 14px; }
+  .icard-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin-bottom: 6px; }
+  .timeline-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--surface2); border-radius: 6px; margin-bottom: 4px; }
+  .timeline-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--accent); }
+  .sparkline-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; }
+
+  /* ── ZTIX Exchange Page ── */
+  .ztix-timeline { display: flex; flex-direction: column; gap: 0; }
+  .ztix-step { display: flex; gap: 16px; opacity: 0; transition: opacity .4s; }
+  .ztix-step.visible { opacity: 1; }
+  .ztix-step-line { display: flex; flex-direction: column; align-items: center; }
+  .ztix-step-num { width: 34px; height: 34px; border-radius: 50%; background: var(--surface3); border: 2px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; color: var(--muted); flex-shrink: 0; transition: all .3s; }
+  .ztix-step-num.active { background: var(--accent); border-color: var(--accent); color: white; box-shadow: 0 0 12px rgba(59,130,246,.4); }
+  .ztix-step-connector { width: 2px; flex: 1; min-height: 24px; background: var(--border); margin: 4px 0; }
+  .ztix-step-body { flex: 1; padding-bottom: 24px; }
+  .ztix-step-title { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+  .ztix-step-desc { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+  .ztix-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .ztix-check { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 12px; }
+  .ztix-check-pass { color: var(--green); }
+  .ztix-check-fail { color: var(--red); }
+  .ztix-token-card { background: linear-gradient(135deg, rgba(59,130,246,.12) 0%, rgba(99,102,241,.08) 100%); border: 1px solid rgba(59,130,246,.25); border-radius: 8px; padding: 16px; }
+  .ztix-mode-btn { padding: 7px 18px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); background: var(--surface2); color: var(--muted); transition: all .12s; }
+  .ztix-mode-btn.active { background: var(--accent); border-color: var(--accent); color: white; }
+  .ztix-demo-banner { display: flex; align-items: center; gap: 12px; padding: 12px 16px; margin: 0 0 16px 0; border-radius: 8px; background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.35); color: var(--text); font-size: 13px; line-height: 1.55; }
+  .ztix-demo-badge { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: .12em; background: var(--yellow); color: #1a1206; }
+
+  /* Upsell modal — fires on tier-403 from any apiFetch() call */
+  .upsell-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.65); display: flex; align-items: center; justify-content: center; z-index: 1000; backdrop-filter: blur(4px); }
+  .upsell-modal { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; width: min(520px, 92vw); padding: 28px; box-shadow: 0 24px 64px rgba(0,0,0,.55); }
+  .upsell-eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+  .upsell-title { font-size: 22px; font-weight: 700; margin-top: 6px; }
+  .upsell-message { color: var(--muted); margin-top: 10px; line-height: 1.55; }
+  .upsell-tiers { display: flex; gap: 10px; margin-top: 18px; }
+  .upsell-tier-pill { flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface2); }
+  .upsell-tier-pill.required { border-color: rgba(59,130,246,.5); background: rgba(59,130,246,.08); }
+  .upsell-tier-label { font-size: 11px; color: var(--muted); }
+  .upsell-tier-value { font-size: 14px; font-weight: 600; margin-top: 2px; text-transform: capitalize; }
+  .upsell-actions { display: flex; gap: 10px; margin-top: 22px; }
+  .upsell-btn { flex: 1; padding: 10px 14px; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); background: var(--surface2); color: var(--text); }
+  .upsell-btn.primary { background: var(--accent); border-color: var(--accent); color: white; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+  .upsell-btn.primary:hover { background: var(--accent2); }
+
+  /* Generic page scaffold for the expansion-feature surfaces */
+  .page { padding: 24px 28px; max-width: 1280px; }
+  .page-title { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+  .page-sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  .page-section { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-top: 28px; margin-bottom: 12px; }
+  .data-table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .data-table thead { background: var(--surface2); }
+  .data-table th { text-align: left; padding: 10px 14px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); border-bottom: 1px solid var(--border); }
+  .data-table td { padding: 10px 14px; font-size: 13px; border-bottom: 1px solid var(--border); }
+  .data-table tr:last-child td { border-bottom: none; }
+  .data-table tr:hover { background: var(--surface2); }
+
+  /* ── Trust Graph (Cytoscape) ── */
+  .tg-wrap { position: relative; }
+  .tg-canvas { width: 100%; height: 520px; background: var(--surface2); border-radius: 8px; }
+  .tg-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .tg-btn { background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+  .tg-btn:hover { border-color: var(--muted); }
+  .tg-legend { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tg-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--surface2); border: 1px solid var(--border); border-radius: 14px; padding: 4px 10px; font-size: 11px; cursor: pointer; user-select: none; transition: opacity .12s; }
+  .tg-chip.off { opacity: .4; text-decoration: line-through; }
+  .tg-chip .dot { width: 9px; height: 9px; border-radius: 50%; }
+  .tg-hint { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(15,20,30,.92); border: 1px solid var(--accent); border-radius: 8px; padding: 6px 12px; font-size: 11px; color: var(--text); pointer-events: none; }
+  .clickable { cursor: pointer; transition: border-color .12s, transform .08s; }
+  .clickable:hover { border-color: var(--accent); }
+  .kpi-card.clickable:hover, .gstat.clickable:hover { border-color: var(--accent); }
+  .gstat.clickable:hover { background: var(--surface3); }
+
+  /* ── Slide-over context panel ── */
+  .slideover { position: fixed; top: 0; right: 0; height: 100vh; width: 380px; background: var(--surface); border-left: 1px solid var(--border); z-index: 1100; box-shadow: -8px 0 30px rgba(0,0,0,.4); display: flex; flex-direction: column; }
+  .slideover-head { padding: 18px 20px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; gap: 12px; }
+  .slideover-body { padding: 18px 20px; overflow-y: auto; flex: 1; }
+  .so-kv { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .so-kv .k { color: var(--muted); }
+  .so-kv .v { text-align: right; word-break: break-all; }
+  .so-section { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin: 16px 0 8px; }
+  .so-neighbor { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: var(--surface2); border-radius: 6px; margin-bottom: 4px; font-size: 12px; cursor: pointer; }
+  .so-neighbor:hover { background: var(--surface3); }
+  .so-action { display: block; width: 100%; text-align: center; padding: 9px; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; margin-top: 8px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); }
+  .so-action:hover { border-color: var(--muted); }
+  .so-action.danger { background: var(--red); border-color: var(--red); color: #fff; }
+  .so-action.danger:hover { filter: brightness(1.1); }
+  .so-action.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .anomaly-card.clickable:hover { background: var(--surface3); }
+  .intent-row.clickable:hover { filter: brightness(1.15); }
 </style>
 </head>
 <body>
 <div id="root"></div>
 <script>
-const { useState, useEffect, useRef, useCallback } = React;
-const { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } = Recharts;
-
-// ── Mock data (replace with real API calls) ──────────────────────────────────
-
-// ── API layer ─────────────────────────────────────────────────────────────────
+const { createElement: h, useState, useEffect, useRef } = React;
 const API_BASE = "";
 
+// ── Data fetching ─────────────────────────────────────────────────────────────
+// apiFetch wraps fetch and dispatches a window event when the server returns
+// a 403 with {error: "feature_not_entitled", ...}; the UpsellModal listens
+// for that event and renders the upgrade CTA.
 async function apiFetch(path, opts = {}) {
-  const apiKey = sessionStorage.getItem("tdna_api_key") || "";
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...opts,
-    headers: {
-      ...(apiKey ? { "X-API-Key": apiKey } : {}),
-      "Content-Type": "application/json",
-      ...(opts.headers || {}),
-    },
-  });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return res.json();
+  const headers = { "X-API-Key": "demo-key", ...(opts.headers || {}) };
+  const r = await fetch(`${API_BASE}${path}`, { ...opts, headers });
+  if (r.status === 403) {
+    try {
+      const cloned = r.clone();
+      const body = await cloned.json();
+      const detail = body && body.detail;
+      if (detail && detail.error === "feature_not_entitled") {
+        window.dispatchEvent(new CustomEvent("tokendna:upsell", { detail }));
+      }
+    } catch(e) { /* non-JSON 403 — caller handles it */ }
+  }
+  return r;
 }
 
-function useApi(path, defaultVal, refreshMs = 30000) {
-  const [data, setData] = React.useState(defaultVal);
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState(null);
-  const load = React.useCallback(async () => {
-    try { const d = await apiFetch(path); setData(d); setError(null); }
-    catch (e) { setError(e.message); }
+function useApi(path, fallback, interval = 0) {
+  const [data, setData] = useState(fallback);
+  const [loading, setLoading] = useState(true);
+  const fetch_ = async () => {
+    try {
+      const r = await apiFetch(path);
+      if (r.ok) setData(await r.json());
+    } catch(e) {}
     finally { setLoading(false); }
+  };
+  useEffect(() => {
+    fetch_();
+    if (interval > 0) { const t = setInterval(fetch_, interval); return () => clearInterval(t); }
   }, [path]);
-  React.useEffect(() => {
-    load();
-    if (refreshMs > 0) { const t = setInterval(load, refreshMs); return () => clearInterval(t); }
-  }, [load, refreshMs]);
-  return { data, loading, error, reload: load };
+  return [data, loading];
 }
 
-function Spinner() {
-  return React.createElement("span", { className: "spinner", style: { marginLeft: 8 } });
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const SEV_COLOR = { critical: "#dc2626", high: "#ef4444", medium: "#f59e0b", low: "#10b981" };
+const SEV_RANK = { critical: 4, high: 3, medium: 2, low: 1 };
+// Cross-page navigation (KPI cards on Overview jump to the relevant page).
+function gotoPage(p){ window.dispatchEvent(new CustomEvent("tokendna:nav", { detail: p })); }
+// Navigate to the Trust Graph and focus a node (or seed the path finder FROM).
+function gotoGraphNode(label, findPaths){
+  window.__tgFocus = { label, findPaths: !!findPaths };
+  gotoPage("graph");
+  window.dispatchEvent(new CustomEvent("tokendna:focus", { detail: { label, findPaths: !!findPaths } }));
 }
-function ErrBox({ msg }) {
-  return React.createElement("div", { style: { padding: 16, color: "var(--red)", fontSize: 12, fontFamily: "monospace" } },
-    "⚠ ", msg, " — is the API running? Check System Health to set your API key."
+
+function Badge({ sev }) {
+  return h("span", { className: `badge ${sev}` }, sev);
+}
+
+function ConfBar({ v }) {
+  const pct = Math.round(v * 100);
+  const color = v >= .7 ? "#ef4444" : v >= .5 ? "#f59e0b" : "#3b82f6";
+  return h("div", { className: "conf-bar" },
+    h("div", { className: "conf-track" }, h("div", { className: "conf-fill", style: { width: pct+"%", background: color } })),
+    h("span", { className: "text-muted", style: { fontSize:11 } }, pct+"%"),
   );
 }
-// ── Utilities ─────────────────────────────────────────────────────────────────
-const { useState, useEffect, useRef, useCallback } = React;
-const { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } = Recharts;
 
-function tierBadge(tier) {
-  const map = { ALLOW: "allow", STEP_UP: "stepup", BLOCK: "block", REVOKE: "revoke" };
-  return React.createElement("span", { className: `badge badge-${map[tier] || "allow"}` }, tier);
+function ts(iso) {
+  if (!iso) return "—";
+  try { return new Date(iso).toLocaleTimeString(); } catch { return iso.slice(11,19); }
 }
-function severityBadge(s) {
-  const map = { CRITICAL: "revoke", HIGH: "block", MEDIUM: "stepup", LOW: "allow" };
-  return React.createElement("span", { className: `badge badge-${map[s] || "allow"}` }, s);
+
+function ago(iso) {
+  if (!iso) return "—";
+  try {
+    const diff = Date.now() - new Date(iso).getTime();
+    if (diff < 60000) return "just now";
+    if (diff < 3600000) return `${Math.round(diff/60000)}m ago`;
+    return `${Math.round(diff/3600000)}h ago`;
+  } catch { return iso.slice(11,19); }
 }
-function scoreColor(score) {
-  if (score >= 70) return "#10b981";
-  if (score >= 50) return "#f59e0b";
-  if (score >= 30) return "#f97316";
-  return "#ef4444";
+
+// ── UIS Event Inspector Modal ──────────────────────────────────────────────────
+const UIS_SECTIONS = {
+  identity: { color: "#3b82f6", fields: ["entity_type","subject","tenant_id","tenant_name","display_name","machine_classification","agent_id"] },
+  auth:     { color: "#10b981", fields: ["method","mfa_asserted","protocol","credential_strength"] },
+  token:    { color: "#f59e0b", fields: ["type","issuer","audience","claims_hash","dpop_bound","expires_at","issued_at","jti"] },
+  session:  { color: "#8b5cf6", fields: ["id","request_id","ip","country","asn","device_fingerprint","user_agent","impossible_travel","graph_position"] },
+  behavior: { color: "#06b6d4", fields: ["dna_fingerprint","pattern_deviation_score","velocity_anomaly"] },
+  threat:   { color: "#ef4444", fields: ["risk_score","risk_tier","indicators","lateral_movement"] },
+  binding:  { color: "#64748b", fields: ["dpop_jkt","mtls_subject","spiffe_id","attestation_id","supply_chain_hash"] },
+};
+const BINDING_FIELDS = new Set(["dpop_jkt","mtls_subject","spiffe_id","attestation_id","supply_chain_hash"]);
+
+function EventInspectorModal({ eventId, onClose }) {
+  const [ev, setEv] = useState(null);
+  const [tab, setTab] = useState("identity");
+
+  useEffect(() => {
+    if (!eventId) return;
+    fetch(`${API_BASE}/api/uis/events/${eventId}`, { headers: { "X-API-Key": "demo-key" } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => d && setEv(d.event))
+      .catch(() => {});
+  }, [eventId]);
+
+  const handleBackdrop = e => { if (e.target === e.currentTarget) onClose(); };
+
+  const section = UIS_SECTIONS[tab] || {};
+  const sectionData = ev ? (ev[tab] || {}) : {};
+
+  return h("div", { className: "modal-backdrop", onClick: handleBackdrop },
+    h("div", { className: "modal-box" },
+      // Head
+      h("div", { className: "modal-head" },
+        h("div", { style: { flex: 1, minWidth: 0 } },
+          h("div", { className: "modal-title" }, "🔍 UIS Event Inspector"),
+          ev && h("div", { style: { fontSize: 11, color: "var(--muted)", marginTop: 3, fontFamily: "monospace" } },
+            ev.event_id, " · ", ev.uis_version || "1.0", " · ", ts(ev.event_timestamp)),
+        ),
+        h("div", { className: "modal-close", onClick: onClose }, "×"),
+      ),
+      // Tabs
+      h("div", { className: "modal-tabs" },
+        Object.keys(UIS_SECTIONS).map(s =>
+          h("div", { key: s, className: `modal-tab${tab === s ? " active" : ""}`, onClick: () => setTab(s),
+            style: tab === s ? { color: UIS_SECTIONS[s].color, borderBottomColor: UIS_SECTIONS[s].color } : {} },
+            s.charAt(0).toUpperCase() + s.slice(1),
+          )
+        ),
+      ),
+      // Body
+      h("div", { className: "modal-body" },
+        !ev
+          ? h("div", { className: "loading" }, "Loading event…")
+          : h("div", null,
+              // Impossible travel warning
+              tab === "session" && sectionData.impossible_travel &&
+                h("div", { className: "travel-warn" }, "⚠️ Impossible travel detected — this session originated from a geographically inconsistent location"),
+              // Threat section: gauge + chips
+              tab === "threat" && h("div", { style: { marginBottom: 14 } },
+                h("div", { className: "risk-gauge" },
+                  h("div", { style: { fontSize: 12, color: "var(--muted)", minWidth: 80 } }, "Risk Score"),
+                  h("div", { className: "gauge-track" },
+                    h("div", { className: "gauge-fill", style: {
+                      width: (sectionData.risk_score || 0) + "%",
+                      background: (sectionData.risk_score || 0) >= 70 ? "var(--red)" : (sectionData.risk_score || 0) >= 40 ? "var(--yellow)" : "var(--green)",
+                    } }),
+                  ),
+                  h("div", { style: { fontSize: 13, fontWeight: 700, minWidth: 30 } }, sectionData.risk_score ?? "—"),
+                  h(Badge, { sev: sectionData.risk_tier || "low" }),
+                ),
+                (sectionData.indicators || []).length > 0 && h("div", { style: { marginBottom: 10 } },
+                  h("div", { style: { fontSize: 11, color: "var(--muted)", marginBottom: 6, fontWeight: 600 } }, "INDICATORS"),
+                  h("div", null, (sectionData.indicators || []).map((ind, i) =>
+                    h("span", { key: i, className: "indicator-chip" }, ind)
+                  )),
+                ),
+              ),
+              // Schema fields
+              h("div", { className: "schema-card" },
+                (section.fields || Object.keys(sectionData)).map(key =>
+                  h("div", { key, className: "schema-row" },
+                    h("div", { className: "schema-key",
+                      style: { color: BINDING_FIELDS.has(key) && sectionData[key] != null ? "#a5b4fc" : section.color || "var(--muted)" } },
+                      BINDING_FIELDS.has(key) && sectionData[key] != null
+                        ? h("span", { className: "binding-highlight" }, key)
+                        : key,
+                    ),
+                    h("div", { className: "schema-val" },
+                      sectionData[key] == null
+                        ? h("span", { className: "schema-null" }, "null")
+                        : typeof sectionData[key] === "boolean"
+                        ? h("span", { style: { color: sectionData[key] ? "var(--green)" : "var(--muted)" } }, sectionData[key].toString())
+                        : Array.isArray(sectionData[key])
+                        ? (sectionData[key].length === 0
+                          ? h("span", { className: "schema-null" }, "[]")
+                          : h("span", { className: "mono" }, JSON.stringify(sectionData[key])))
+                        : h("span", { className: "mono" }, String(sectionData[key])),
+                    ),
+                  )
+                ),
+              ),
+            ),
+      ),
+    ),
+  );
 }
-function fmtNum(n) { return (n || 0).toLocaleString(); }
 
 // ── Overview ──────────────────────────────────────────────────────────────────
 function OverviewPage() {
-  const stats   = useApi("/api/stats",          { total_events:0, blocked:0, revoked:0, step_up:0, allow_rate:0, tenant_count:0 });
-  const hourly  = useApi("/api/events/hourly",  [], 60000);
-  const threats = useApi("/api/threats",         []);
-  const events  = useApi("/api/events?limit=25", []);
+  const [stats]   = useApi("/api/stats",          { total_events:0, blocked:0, revoked:0, step_up:0, allow_rate:0 }, 10000);
+  const [gstats]  = useApi("/api/graph/stats",    { node_count:0, edge_count:0, anomaly_count:0, node_types:{}, edge_types:{} }, 10000);
+  const [matches] = useApi("/api/intent/matches?limit=3", { matches:[], count:0 }, 10000);
+  const [anom]    = useApi("/api/graph/anomalies?limit=5", { anomalies:[] }, 10000);
+  const [events]  = useApi("/api/uis/events?limit=8", { events:[] }, 8000);
+  const [inspectId, setInspectId] = useState(null);
+  const [anomDetail, setAnomDetail] = useState(null);
+  const [matchDetail, setMatchDetail] = useState(null);
 
-  return React.createElement("div", null,
-    React.createElement("div", { className: "section-title" }, "Platform Overview"),
-    React.createElement("div", { className: "section-sub" }, "Real-time security posture across all tenants"),
+  const anoms = anom.anomalies || [];
+  const mtchs = matches.matches || [];
+  const evts  = events.events  || [];
+
+  return h("div", null,
+    h("div", { className: "section-head" },
+      h("div", { className: "section-title" }, "Platform Overview"),
+      h("div", { className: "section-sub" }, "Real-time identity threat detection and agent risk posture"),
+    ),
 
     // KPI row
-    React.createElement("div", { className: "grid-4", style: { marginBottom: 16 } },
-      ...[
-        { label: "Events (24h)",       value: fmtNum(stats.data.total_events),             delta: "Across all tenants",        dir: "" },
-        { label: "Blocked / Revoked",  value: fmtNum((stats.data.blocked||0)+(stats.data.revoked||0)), delta: "High-risk sessions stopped", dir: "up" },
-        { label: "Allow Rate",         value: `${(stats.data.allow_rate||0).toFixed(1)}%`, delta: "Clean requests passing",     dir: "down" },
-        { label: "Step-Up Auth",       value: fmtNum(stats.data.step_up),                 delta: "MFA challenges issued",     dir: "" },
-      ].map(s =>
-        React.createElement("div", { className: "stat-card", key: s.label },
-          React.createElement("div", { className: "stat-label" }, s.label),
-          stats.loading
-            ? React.createElement("div", { style: { height: 32, background: "var(--surface2)", borderRadius: 4, marginBottom: 6 } })
-            : React.createElement("div", { className: "stat-value" }, s.value),
-          React.createElement("div", { className: `stat-delta ${s.dir}` }, s.delta),
-        )
-      )
+    h("div", { className: "kpi-grid" },
+      h("div", { className: "kpi-card" },
+        h("div", { className: "kpi-label" }, "Events Processed"),
+        h("div", { className: `kpi-value blue` }, stats.total_events?.toLocaleString() || "0"),
+        h("div", { className: "kpi-sub" }, "UIS v1.1 normalized"),
+      ),
+      h("div", { className: "kpi-card clickable", onClick:()=>gotoPage("graph"), title:"Open Trust Graph" },
+        h("div", { className: "kpi-label" }, "Graph Nodes ▸"),
+        h("div", { className: "kpi-value blue" }, gstats.node_count || "0"),
+        h("div", { className: "kpi-sub" }, `${gstats.edge_count || 0} edges`),
+      ),
+      h("div", { className: "kpi-card clickable", onClick:()=>gotoPage("graph"), title:"Open Trust Graph" },
+        h("div", { className: "kpi-label" }, "Anomalies Detected ▸"),
+        h("div", { className: `kpi-value ${anoms.length ? "red" : "green"}` }, gstats.anomaly_count || "0"),
+        h("div", { className: "kpi-sub" }, "Trust graph signals"),
+      ),
+      h("div", { className: "kpi-card clickable", onClick:()=>gotoPage("intent"), title:"Open Intent Detection" },
+        h("div", { className: "kpi-label" }, "Intent Matches ▸"),
+        h("div", { className: `kpi-value ${mtchs.length ? "red" : "green"}` }, matches.count || "0"),
+        h("div", { className: "kpi-sub" }, "Attack sequences"),
+      ),
+      h("div", { className: "kpi-card" },
+        h("div", { className: "kpi-label" }, "Blocks"),
+        h("div", { className: "kpi-value red" }, stats.blocked || "0"),
+        h("div", { className: "kpi-sub" }, `${stats.revoked||0} revoked`),
+      ),
     ),
 
-    // Chart + threat breakdown
-    React.createElement("div", { className: "grid-2 mt16" },
-      React.createElement("div", { className: "card" },
-        React.createElement("div", { className: "card-header" },
-          React.createElement("span", { className: "card-title" }, "Event Volume — Last 24h"),
-          hourly.loading && React.createElement("span", { className: "spinner" }),
+    h("div", { className: "two-col" },
+      // Recent anomalies
+      h("div", { className: "card" },
+        h("div", { className: "card-head" },
+          h("div", { className: "card-title" }, "🔴 Live Anomaly Stream"),
+          h("span", { className: "chip" }, `${anoms.length} alerts`),
         ),
-        React.createElement("div", { className: "card-body" },
-          hourly.error
-            ? React.createElement(ErrBox, { msg: hourly.error })
-            : React.createElement(ResponsiveContainer, { width: "100%", height: 200 },
-                React.createElement(AreaChart, { data: hourly.data.length ? hourly.data : [] },
-                  React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "#1e293b" }),
-                  React.createElement(XAxis, { dataKey: "hour", tick: { fill: "#64748b", fontSize: 10 }, interval: 3 }),
-                  React.createElement(YAxis, { tick: { fill: "#64748b", fontSize: 10 } }),
-                  React.createElement(Tooltip, { contentStyle: { background: "#111827", border: "1px solid #1e293b", borderRadius: 6 } }),
-                  React.createElement(Area, { type: "monotone", dataKey: "allow",  stackId: "1", stroke: "#10b981", fill: "rgba(16,185,129,.2)", strokeWidth: 2 }),
-                  React.createElement(Area, { type: "monotone", dataKey: "block",  stackId: "1", stroke: "#f97316", fill: "rgba(249,115,22,.3)",  strokeWidth: 2 }),
-                  React.createElement(Area, { type: "monotone", dataKey: "revoke", stackId: "1", stroke: "#ef4444", fill: "rgba(239,68,68,.3)",   strokeWidth: 2 }),
-                )
-              )
-        )
-      ),
-
-      React.createElement("div", { className: "card" },
-        React.createElement("div", { className: "card-header" },
-          React.createElement("span", { className: "card-title" }, "Threat Signal Breakdown"),
-          threats.loading && React.createElement("span", { className: "spinner" }),
-        ),
-        React.createElement("div", { className: "card-body" },
-          threats.error
-            ? React.createElement(ErrBox, { msg: threats.error })
-            : (threats.data.length === 0
-                ? React.createElement("div", { className: "text-muted", style: { padding: 16, textAlign: "center" } }, "No threat signals in this window")
-                : threats.data.map(t => {
-                    const max = Math.max(...threats.data.map(x => x.value), 1);
-                    return React.createElement("div", { key: t.name, style: { marginBottom: 10 } },
-                      React.createElement("div", { className: "flex items-center gap8", style: { marginBottom: 4 } },
-                        React.createElement("span", { style: { fontSize: 12 } }, t.name),
-                        React.createElement("span", { className: "ml-auto text-muted", style: { fontSize: 11 } }, fmtNum(t.value) + " events"),
-                      ),
-                      React.createElement("div", { className: "score-bar" },
-                        React.createElement("div", { className: "score-fill", style: { width: `${(t.value/max)*100}%`, background: t.color || "var(--accent)" } }),
-                      )
-                    );
-                  })
-              )
-        )
-      )
-    ),
-
-    // Live event feed
-    React.createElement("div", { className: "card mt16" },
-      React.createElement("div", { className: "card-header" },
-        React.createElement("span", { className: "card-title" }, "Live Event Feed"),
-        React.createElement("span", { className: "flex items-center gap8 text-muted", style: { fontSize: 12 } },
-          React.createElement("span", { className: "status-dot green pulse" }),
-          "Live · refreshes every 30s"
-        )
-      ),
-      React.createElement("div", { className: "card-body" },
-        events.loading ? React.createElement(Spinner) :
-        events.error   ? React.createElement(ErrBox, { msg: events.error }) :
-        React.createElement("div", { className: "table-wrap" },
-          React.createElement("table", null,
-            React.createElement("thead", null,
-              React.createElement("tr", null,
-                ...["User", "Decision", "Score", "Country", "Signals", "IP", "Time"].map(h =>
-                  React.createElement("th", { key: h }, h)
-                )
-              )
-            ),
-            React.createElement("tbody", null,
-              (events.data.events || events.data || []).map((e, i) =>
-                React.createElement("tr", { key: e.id || i },
-                  React.createElement("td", { className: "font-mono" }, e.user_id),
-                  React.createElement("td", null, tierBadge(e.tier || e.decision)),
-                  React.createElement("td", null,
-                    React.createElement("div", { className: "flex items-center gap8" },
-                      React.createElement("span", { style: { color: scoreColor(e.risk_score || e.score || 50), fontWeight: 600 } }, e.risk_score || e.score || "—"),
-                      React.createElement("div", { className: "score-bar", style: { width: 60 } },
-                        React.createElement("div", { className: "score-fill", style: { width: `${e.risk_score || e.score || 0}%`, background: scoreColor(e.risk_score || e.score || 50) } })
-                      )
-                    )
-                  ),
-                  React.createElement("td", null, e.country || "—"),
-                  React.createElement("td", null,
-                    React.createElement("div", { className: "flex gap8" },
-                      e.is_tor && React.createElement("span", { className: "badge badge-revoke" }, "TOR"),
-                      e.impossible_travel && React.createElement("span", { className: "badge badge-block" }, "TRAVEL"),
-                      e.datacenter_asn && React.createElement("span", { className: "badge badge-stepup" }, "DC"),
-                    )
-                  ),
-                  React.createElement("td", { className: "font-mono text-muted" }, (e.ip || "").replace(/\.\d+$/, ".xx")),
-                  React.createElement("td", { className: "text-muted" }, e.ts || e.timestamp || "—"),
-                )
-              )
-            )
-          )
-        )
-      )
-    )
-  );
-}
-
-// ── Sessions ──────────────────────────────────────────────────────────────────
-function SessionsPage() {
-  const sessions = useApi("/api/sessions", []);
-
-  return React.createElement("div", null,
-    React.createElement("div", { className: "section-title" }, "Session Intelligence"),
-    React.createElement("div", { className: "section-sub" }, "TokenDNA behavioral fingerprinting — per-user risk profiles"),
-    React.createElement("div", { className: "card" },
-      React.createElement("div", { className: "card-header" },
-        React.createElement("span", { className: "card-title" }, "User Risk Profiles"),
-        sessions.loading && React.createElement("span", { className: "spinner" }),
-        React.createElement("button", { className: "btn btn-primary ml-auto", style: { fontSize: 12, padding: "5px 12px" }, onClick: sessions.reload }, "↻ Refresh"),
-      ),
-      React.createElement("div", { className: "card-body" },
-        sessions.error ? React.createElement(ErrBox, { msg: sessions.error }) :
-        sessions.loading ? React.createElement(Spinner) :
-        React.createElement("div", { className: "table-wrap" },
-          React.createElement("table", null,
-            React.createElement("thead", null,
-              React.createElement("tr", null,
-                ...["User ID", "Risk Score", "Tier", "Requests", "Countries", "Tor Hits", "Last Seen"].map(h =>
-                  React.createElement("th", { key: h }, h)
-                )
-              )
-            ),
-            React.createElement("tbody", null,
-              (sessions.data.profiles || sessions.data || []).length === 0
-                ? React.createElement("tr", null,
-                    React.createElement("td", { colSpan: 7, style: { textAlign: "center", color: "var(--muted)", padding: 24 } },
-                      "No sessions recorded yet. Send requests to /secure to start building profiles."
-                    )
-                  )
-                : (sessions.data.profiles || sessions.data || []).map(u =>
-                    React.createElement("tr", { key: u.user_id },
-                      React.createElement("td", { className: "font-mono" }, u.user_id),
-                      React.createElement("td", null,
-                        React.createElement("div", { className: "flex items-center gap8" },
-                          React.createElement("span", { style: { color: scoreColor(u.avg_score || 50), fontWeight: 600, minWidth: 24 } }, u.avg_score || "—"),
-                          React.createElement("div", { className: "score-bar", style: { width: 80 } },
-                            React.createElement("div", { className: "score-fill", style: { width: `${u.avg_score || 0}%`, background: scoreColor(u.avg_score || 50) } })
-                          )
-                        )
-                      ),
-                      React.createElement("td", null, tierBadge(u.last_tier || "ALLOW")),
-                      React.createElement("td", null, fmtNum(u.requests)),
-                      React.createElement("td", { className: "font-mono" }, (u.countries || []).join(", ") || "—"),
-                      React.createElement("td", null,
-                        (u.tor_hits || 0) > 0
-                          ? React.createElement("span", { className: "badge badge-revoke" }, u.tor_hits)
-                          : React.createElement("span", { className: "text-muted" }, "0")
-                      ),
-                      React.createElement("td", { className: "text-muted" }, u.last_seen || "—"),
-                    )
-                  )
-            )
-          )
-        )
-      )
-    )
-  );
-}
-
-// ── Cloud Posture (Scan) ───────────────────────────────────────────────────────
-function ScanPage() {
-  const findings = useApi("/api/cloud-findings", { findings: [], summary: {} }, 120000);
-
-  const data    = findings.data;
-  const summary = data.summary || {};
-  const rows    = data.findings || [];
-
-  return React.createElement("div", null,
-    React.createElement("div", { className: "section-title" }, "Cloud Posture Scan"),
-    React.createElement("div", { className: "section-sub" }, "Aegis — continuous AWS/GCP/Azure posture management"),
-
-    React.createElement("div", { className: "grid-4", style: { marginBottom: 16 } },
-      ...[
-        { label: "Critical", value: summary.critical || 0, color: "var(--red)" },
-        { label: "High",     value: summary.high     || 0, color: "var(--orange)" },
-        { label: "Medium",   value: summary.medium   || 0, color: "var(--yellow)" },
-        { label: "Low",      value: summary.low      || 0, color: "var(--green)" },
-      ].map(s =>
-        React.createElement("div", { className: "stat-card", key: s.label, style: { borderTop: `3px solid ${s.color}` } },
-          React.createElement("div", { className: "stat-label" }, s.label),
-          findings.loading
-            ? React.createElement("div", { style: { height: 32, background: "var(--surface2)", borderRadius: 4 } })
-            : React.createElement("div", { className: "stat-value", style: { color: s.color } }, s.value),
-        )
-      )
-    ),
-
-    React.createElement("div", { className: "card" },
-      React.createElement("div", { className: "card-header" },
-        React.createElement("span", { className: "card-title" }, "Latest Findings"),
-        findings.loading && React.createElement("span", { className: "spinner" }),
-        React.createElement("button", { className: "btn btn-primary ml-auto", style: { fontSize: 12, padding: "5px 12px" }, onClick: findings.reload }, "▶ Run Scan"),
-      ),
-      React.createElement("div", { className: "card-body" },
-        findings.error ? React.createElement(ErrBox, { msg: findings.error }) :
-        findings.loading ? React.createElement(Spinner) :
-        rows.length === 0
-          ? React.createElement("div", { style: { textAlign: "center", color: "var(--muted)", padding: 32 } },
-              "No findings yet. Connect an AWS account in the Connect AWS tab, then run a scan."
-            )
-          : React.createElement("div", { className: "table-wrap" },
-              React.createElement("table", null,
-                React.createElement("thead", null,
-                  React.createElement("tr", null,
-                    ...["Severity", "Category", "Finding", "Resource", "Account", "Found"].map(h =>
-                      React.createElement("th", { key: h }, h)
-                    )
-                  )
+        h("div", { className: "card-body" },
+          anoms.length === 0
+            ? h("div", { className: "empty" }, h("div", { className: "empty-icon" }, "🔍"), h("div", { className: "empty-msg" }, "No anomalies detected"), h("div", { className: "empty-hint" }, "Run demo_seed.py to populate"))
+            : anoms.map((a, i) => h("div", { key: i, className: "anomaly-card clickable", title:"Click for full detail + actions", onClick:()=>setAnomDetail(a) },
+                h("div", { className: "anomaly-icon" }, a.severity === "critical" || a.severity === "high" ? "⚠️" : "ℹ️"),
+                h("div", { className: "anomaly-body" },
+                  h("div", { className: "anomaly-type" }, a.anomaly_type?.replace(/_/g," ")),
+                  h("div", { className: "anomaly-subject" }, a.subject_node),
+                  h("div", { className: "anomaly-detail" }, a.detail),
                 ),
-                React.createElement("tbody", null,
-                  rows.map((f, i) =>
-                    React.createElement("tr", { key: f.id || i },
-                      React.createElement("td", null, severityBadge(f.severity)),
-                      React.createElement("td", null, f.category),
-                      React.createElement("td", null, f.title),
-                      React.createElement("td", { className: "font-mono truncate" }, f.resource),
-                      React.createElement("td", { className: "font-mono" }, f.account || f.account_id),
-                      React.createElement("td", { className: "text-muted" }, f.ts || f.timestamp),
-                    )
-                  )
-                )
-              )
-            )
-      )
-    )
+                h(Badge, { sev: a.severity }),
+              ))
+        ),
+      ),
+      // Recent intent matches
+      h("div", { className: "card" },
+        h("div", { className: "card-head" },
+          h("div", { className: "card-title" }, "🎯 Intent Correlation Feed"),
+          h("span", { className: "chip" }, `${matches.count || 0} total`),
+        ),
+        h("div", { className: "card-body" },
+          mtchs.length === 0
+            ? h("div", { className: "empty" }, h("div", { className: "empty-icon" }, "🎯"), h("div", { className: "empty-msg" }, "No attack sequences detected"), h("div", { className: "empty-hint" }, "Matches appear when multi-step playbooks fire"))
+            : mtchs.map((m, i) => h("div", { key: i, className: `intent-row clickable ${m.severity}`, title:"Click for full detail", onClick:()=>setMatchDetail(m) },
+                h("div", { className: "flex-row" },
+                  h("div", { className: "intent-name" }, m.playbook_name),
+                  h("div", { className: "ml-auto" }, h(Badge, { sev: m.severity })),
+                ),
+                h("div", { className: "intent-meta" },
+                  h("span", null, "🕐 " + ago(m.detected_at)),
+                  h("span", null, "👤 " + (m.subject || "unknown")),
+                  h(ConfBar, { v: m.confidence || 0 }),
+                ),
+              ))
+        ),
+      ),
+    ),
+
+    // Recent events
+    h("div", { className: "card" },
+      h("div", { className: "card-head" },
+        h("div", { className: "card-title" }, "UIS Event Stream (v1.1)"),
+        h("span", { className: "chip" }, "live"),
+      ),
+      h("div", { className: "card-body", style: { padding: 0 } },
+        h("div", { className: "table-wrap" },
+          h("table", null,
+            h("thead", null, h("tr", null,
+              h("th", null, "Timestamp"), h("th", null, "Subject"), h("th", null, "Protocol"),
+              h("th", null, "Category"), h("th", null, "Risk"), h("th", null, "Score"),
+            )),
+            h("tbody", null, evts.length === 0
+              ? h("tr", null, h("td", { colSpan: 6, style: { textAlign:"center", padding:"32px", color:"var(--muted)" } }, "No events yet — run demo_seed.py"))
+              : evts.map((ev, i) => {
+                  const n  = ev.uis_narrative || ev.narrative || {};
+                  const t  = ev.threat || {};
+                  const id = ev.identity || {};
+                  // derive category from available signals
+                  const cat = n.category ||
+                    (t.lateral_movement ? "lateral_movement" :
+                     (t.indicators||[]).some(x=>x.includes("scope")) ? "privilege_escalation" :
+                     n.pivot === "impossible_travel" ? "auth_anomaly" :
+                     t.risk_tier === "critical" || t.risk_tier === "high" ? "auth_anomaly" : "normal");
+                  const mitre = n.mitre_technique || (n.mitre||{}).technique_id || "—";
+                  const conf  = typeof n.confidence === "number" ? n.confidence
+                               : n.confidence === "HIGH" ? 0.85
+                               : n.confidence === "MEDIUM" ? 0.6
+                               : n.confidence === "LOW" ? 0.35 : null;
+                  const proto = (ev.auth||{}).protocol || "—";
+                  return h("tr", { key: i,
+                    style: { cursor: "pointer" },
+                    title: "Click to inspect",
+                    onClick: () => setInspectId(ev.event_id),
+                  },
+                    h("td", { className: "mono text-muted", style:{whiteSpace:"nowrap"} }, ts(ev.event_timestamp)),
+                    h("td", { style:{maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"} }, id.subject || "—"),
+                    h("td", { className:"mono", style:{fontSize:11} }, proto),
+                    h("td", null, cat),
+                    h("td", null, h(Badge, { sev: t.risk_tier || "low" })),
+                    h("td", { className:"mono", style:{fontSize:11} }, t.risk_score != null ? t.risk_score : "—"),
+                  );
+                })
+            ),
+          ),
+        ),
+      ),
+    ),
+    inspectId && h(EventInspectorModal, { eventId: inspectId, onClose: () => setInspectId(null) }),
+    anomDetail && h(AnomalyDetailModal, { anomaly: anomDetail, graphData: { nodes:[], edges:[] },
+      onClose: () => setAnomDetail(null),
+      onView: (label) => { setAnomDetail(null); gotoGraphNode(label); },
+      onFindPaths: (label) => { setAnomDetail(null); gotoGraphNode(label, true); },
+      onAck: () => { console.log("acknowledge anomaly", anomDetail.id); setAnomDetail(null); },
+      onKilled: () => setAnomDetail(null) }),
+    matchDetail && h(IntentMatchModal, { match: matchDetail, onClose: () => setMatchDetail(null),
+      onView: (label) => { setMatchDetail(null); gotoGraphNode(label); },
+      onInvestigate: () => { setMatchDetail(null); gotoPage("intent"); } }),
   );
 }
 
-// ── AWS Onboarding ────────────────────────────────────────────────────────────
-function OnboardingPage() {
-  const [step, setStep] = useState(1);
-  const [roleArn, setRoleArn] = useState("");
-  const [accountId, setAccountId] = useState("");
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState(null);
-  const [extId, setExtId] = useState("generating…");
+// ── Blast Radius ──────────────────────────────────────────────────────────────
+function BlastRadiusPage() {
+  const [agentLabel, setAgentLabel] = useState("agt-orchestrator");
+  const [maxHops, setMaxHops] = useState(6);
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [history] = useApi("/api/simulate/blast_radius/history?limit=10", { simulations: [] }, 15000);
 
-  // Fetch real external ID from the server on mount
-  useEffect(() => {
-    apiFetch("/onboarding/aws/external-id", { method: "POST" })
-      .then(d => { setExtId(d.external_id); setStep(s => Math.max(s, 1)); })
-      .catch(() => setExtId("aegis-" + Math.random().toString(36).slice(2, 18)));
+  const simulate = async () => {
+    setLoading(true);
+    setResult(null);
+    try {
+      const r = await fetch(`${API_BASE}/api/simulate/blast_radius`, {
+        method: "POST",
+        headers: { "Content-Type":"application/json", "X-API-Key":"demo-key" },
+        body: JSON.stringify({ agent_label: agentLabel, max_hops: maxHops }),
+      });
+      setResult(await r.json());
+    } catch(e) {}
+    setLoading(false);
+  };
+
+  const score = result?.impact_score || 0;
+  const tier  = result?.risk_tier || "low";
+  const tierColor = SEV_COLOR[tier] || "#10b981";
+  const circumference = 2 * Math.PI * 54;
+  const dashOffset = circumference - (score / 100) * circumference;
+  const nodes = result?.reachable_nodes || [];
+
+  return h("div", null,
+    h("div", { className: "section-head" },
+      h("div", { className: "section-title" }, "💥 Agent Permission Blast Radius"),
+      h("div", { className: "section-sub" }, "Pre-execution compromise impact assessment — if this agent is breached, what nodes does it reach?"),
+    ),
+
+    // Simulation input
+    h("div", { className: "card", style: { marginBottom: 20 } },
+      h("div", { className: "card-head" }, h("div", { className: "card-title" }, "Run Simulation")),
+      h("div", { className: "card-body", style: { display:"flex", gap:16, alignItems:"flex-end", flexWrap:"wrap" } },
+        h("div", null,
+          h("div", { style: { fontSize:11, color:"var(--muted)", marginBottom:6, fontWeight:600, textTransform:"uppercase", letterSpacing:".7px" } }, "Agent Label"),
+          h("input", {
+            value: agentLabel, onChange: e => setAgentLabel(e.target.value),
+            style: { background:"var(--surface2)", border:"1px solid var(--border)", color:"var(--text)", padding:"8px 12px", borderRadius:6, fontSize:13, width:260, outline:"none" },
+            placeholder: "e.g. agt-orchestrator",
+          }),
+        ),
+        h("div", null,
+          h("div", { style: { fontSize:11, color:"var(--muted)", marginBottom:6, fontWeight:600, textTransform:"uppercase", letterSpacing:".7px" } }, "Max Hops"),
+          h("select", {
+            value: maxHops, onChange: e => setMaxHops(Number(e.target.value)),
+            style: { background:"var(--surface2)", border:"1px solid var(--border)", color:"var(--text)", padding:"8px 12px", borderRadius:6, fontSize:13, outline:"none" },
+          }, [2,3,4,6,8,10].map(v => h("option", { key:v, value:v }, v))),
+        ),
+        h("button", {
+          onClick: simulate, disabled: loading || !agentLabel,
+          style: { background:"var(--accent)", color:"white", border:"none", padding:"9px 22px", borderRadius:6, fontSize:13, fontWeight:600, cursor: loading?"not-allowed":"pointer", opacity: loading ? .7:1 },
+        }, loading ? "Simulating…" : "▶ Simulate"),
+      ),
+    ),
+
+    result && h("div", { className: "blast-container" },
+      // Score ring + stats
+      h("div", { className: "blast-viz" },
+        h("div", { className: "score-ring" },
+          h("svg", { width:140, height:140, viewBox:"0 0 120 120" },
+            h("circle", { cx:60, cy:60, r:54, fill:"none", stroke:"var(--surface3)", strokeWidth:10 }),
+            h("circle", { cx:60, cy:60, r:54, fill:"none", stroke:tierColor, strokeWidth:10, strokeDasharray:circumference, strokeDashoffset:dashOffset, strokeLinecap:"round", style:{transition:"stroke-dashoffset .6s ease"} }),
+          ),
+          h("div", { className: "score-center" },
+            h("div", { className: "score-num", style:{color:tierColor} }, score),
+            h("div", { className: "score-label" }, "impact"),
+          ),
+        ),
+        h("div", { style:{textAlign:"center", marginBottom:20} },
+          h(Badge, { sev: tier }),
+          h("div", { style:{fontSize:12,color:"var(--muted)",marginTop:6} }, `${result.total_nodes_reached} nodes reachable in ≤${maxHops} hops`),
+          result.policies_containing_blast?.length > 0 && h("div", { style:{fontSize:11,color:"var(--yellow)",marginTop:4} }, `⚠ ${result.policies_containing_blast.length} policy bundle(s) in blast radius`),
+        ),
+        h("div", { style:{fontSize:11,color:"var(--muted)",marginBottom:8,fontWeight:600,textTransform:"uppercase",letterSpacing:".7px"} }, "Impact Breakdown"),
+        h("div", { style:{display:"flex",flexWrap:"wrap",gap:6} },
+          Object.entries(
+            nodes.reduce((acc, n) => { acc[n.node_type] = (acc[n.node_type]||0) + 1; return acc; }, {})
+          ).map(([type, count]) => h("div", { key:type, style:{background:"var(--surface3)",padding:"3px 8px",borderRadius:4,fontSize:11} },
+            h("span", { className: `node-type nt-${type}`, style:{marginRight:4} }, type),
+            h("span", { style:{color:"var(--muted)"} }, `×${count}`),
+          ))
+        ),
+      ),
+      // Reachable nodes — grouped by hop
+      h("div", { className: "blast-viz" },
+        h("div", { style:{fontSize:11,color:"var(--muted)",marginBottom:12,fontWeight:600,textTransform:"uppercase",letterSpacing:".7px"} }, `Propagation Chain (${nodes.length} nodes)`),
+        nodes.length === 0
+          ? h("div", { className:"empty", style:{padding:"24px"} }, h("div",{className:"empty-icon"},"🏝"), h("div",{className:"empty-msg"},"Isolated agent"), h("div",{className:"empty-hint"},"No outbound trust relationships"))
+          : h("div", null,
+              // Group by hop
+              Object.entries(
+                nodes.reduce((acc, n) => {
+                  const k = n.hop_distance;
+                  if (!acc[k]) acc[k] = [];
+                  acc[k].push(n);
+                  return acc;
+                }, {})
+              ).sort(([a],[b]) => Number(a)-Number(b)).map(([hop, hopNodes]) => {
+                const typeColors = { agent:"#6366f1", issuer:"#f59e0b", verifier:"#ef4444", tool:"#10b981", workload:"#3b82f6", tenant:"#8b5cf6" };
+                const hopPts = hopNodes.reduce((s,n) => s + n.impact_contribution, 0);
+                return h("div", { key:hop, style:{marginBottom:14} },
+                  // Hop header
+                  h("div", { style:{display:"flex",alignItems:"center",gap:8,marginBottom:6} },
+                    h("div", { style:{background:"var(--accent)",color:"white",borderRadius:"50%",width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0} }, hop),
+                    h("div", { style:{fontSize:11,fontWeight:600,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".5px"} }, `Hop ${hop} — ${hopNodes.length} node${hopNodes.length>1?"s":""}`),
+                    h("div", { style:{marginLeft:"auto",fontSize:11,color:"var(--yellow)",fontWeight:600} }, `+${hopPts} pts`),
+                  ),
+                  // Nodes in this hop
+                  h("div", { style:{display:"flex",flexDirection:"column",gap:4,paddingLeft:30,borderLeft:"2px solid var(--border)"} },
+                    hopNodes.map((n, i) => {
+                      const col = typeColors[n.node_type] || "var(--accent)";
+                      const via = n.path_edge_types?.length > 0 ? n.path_edge_types[n.path_edge_types.length-1] : "";
+                      return h("div", { key:i,
+                        style:{display:"flex",alignItems:"center",gap:8,background:"var(--surface2)",borderRadius:6,padding:"6px 10px",border:"1px solid var(--border)"}
+                      },
+                        h("div", { style:{width:8,height:8,borderRadius:"50%",background:col,flexShrink:0} }),
+                        h("div", { style:{flex:1,minWidth:0} },
+                          h("div", { style:{fontSize:12,fontFamily:"monospace",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"} }, n.label),
+                          h("div", { style:{fontSize:10,color:"var(--muted)",marginTop:1} },
+                            h("span", { style:{color:col,fontWeight:600,textTransform:"uppercase",letterSpacing:".3px"} }, n.node_type),
+                            via && h("span", null, " · via ", h("span",{style:{fontStyle:"italic"}}, via.replace(/_/g," "))),
+                          ),
+                        ),
+                        h("div", { style:{fontSize:11,color:"var(--yellow)",fontWeight:700,flexShrink:0} }, `+${n.impact_contribution}`),
+                      );
+                    })
+                  ),
+                );
+              }),
+            ),
+        result.error && h("div", { style:{color:"var(--red)",fontSize:12,padding:"8px 0"} }, "⚠ " + result.error),
+      ),
+    ),
+
+    // Simulation history
+    h("div", { className: "card", style:{marginTop:20} },
+      h("div", { className: "card-head" }, h("div", { className: "card-title" }, "Simulation History")),
+      h("div", { className: "card-body", style:{padding:0} },
+        h("div", { className: "table-wrap" },
+          h("table", null,
+            h("thead", null, h("tr", null,
+              h("th", null, "Agent"), h("th", null, "Simulated"), h("th", null, "Impact"),
+              h("th", null, "Tier"), h("th", null, "Nodes"),
+            )),
+            h("tbody", null, (history.simulations||[]).length === 0
+              ? h("tr", null, h("td",{colSpan:5,style:{textAlign:"center",padding:"24px",color:"var(--muted)"}},"No simulations yet"))
+              : (history.simulations||[]).map((s,i) => h("tr",{key:i},
+                  h("td",{className:"mono"},s.agent_label),
+                  h("td",{className:"text-muted"},ago(s.simulated_at)),
+                  h("td",null,h("span",{style:{fontWeight:700,color:SEV_COLOR[s.risk_tier]||"var(--text)"}},s.impact_score,"/100")),
+                  h("td",null,h(Badge,{sev:s.risk_tier})),
+                  h("td",{className:"text-muted"},s.nodes_reached),
+                ))
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+// ── Intent Correlation ────────────────────────────────────────────────────────
+function IntentPage() {
+  const [matches] = useApi("/api/intent/matches?limit=50", { matches:[], count:0 }, 8000);
+  const [playbooks] = useApi("/api/intent/playbooks", { playbooks:[], count:0 }, 30000);
+  const [tab, setTab] = useState("feed");
+  const [selMatch, setSelMatch] = useState(null);
+  const [selPlaybook, setSelPlaybook] = useState(null);
+
+  const mtchs = matches.matches || [];
+  const pbs   = playbooks.playbooks || [];
+  const builtins = pbs.filter(p => p.builtin);
+  const custom   = pbs.filter(p => !p.builtin);
+
+  return h("div", null,
+    h("div", { className: "section-head" },
+      h("div", { className: "section-title" }, "🎯 Exploit Intent Correlation"),
+      h("div", { className: "section-sub" }, "Real-time attack sequence detection across 15 built-in playbooks + custom rules"),
+    ),
+
+    // Stats row
+    h("div", { className: "kpi-grid", style:{gridTemplateColumns:"repeat(4,1fr)"} },
+      h("div",{className:"kpi-card"}, h("div",{className:"kpi-label"},"Total Matches"), h("div",{className:`kpi-value ${matches.count ? "red":"green"}`},matches.count||"0"), h("div",{className:"kpi-sub"},"All time")),
+      h("div",{className:"kpi-card"}, h("div",{className:"kpi-label"},"Critical"), h("div",{className:"kpi-value red"},mtchs.filter(m=>m.severity==="critical").length||"0")),
+      h("div",{className:"kpi-card"}, h("div",{className:"kpi-label"},"Built-in Playbooks"), h("div",{className:"kpi-value blue"},builtins.length||"0"), h("div",{className:"kpi-sub"},"Always active")),
+      h("div",{className:"kpi-card"}, h("div",{className:"kpi-label"},"Custom Playbooks"), h("div",{className:"kpi-value blue"},custom.length||"0"), h("div",{className:"kpi-sub"},"Tenant-specific")),
+    ),
+
+    // Tabs
+    h("div", { style:{display:"flex",gap:4,marginBottom:20,borderBottom:"1px solid var(--border)",paddingBottom:0} },
+      ["feed","playbooks"].map(t => h("div",{
+        key:t, onClick:()=>setTab(t),
+        style:{padding:"8px 16px",cursor:"pointer",fontSize:13,fontWeight:500,
+               borderBottom: tab===t ? "2px solid var(--accent)":"2px solid transparent",
+               color: tab===t ? "var(--accent)":"var(--muted)",marginBottom:-1},
+      }, t === "feed" ? `Attack Feed (${matches.count||0})` : `Playbooks (${pbs.length})`)),
+    ),
+
+    tab === "feed" && h("div", null,
+      mtchs.length === 0
+        ? h("div",{className:"empty"}, h("div",{className:"empty-icon"},"🎯"), h("div",{className:"empty-msg"},"No attack sequences detected yet"), h("div",{className:"empty-hint"},"Run demo_seed.py to simulate a multi-stage attack"))
+        : mtchs.map((m,i) => h("div",{key:i,className:`intent-row clickable ${m.severity}`,onClick:()=>setSelMatch(m)},
+            h("div",{className:"flex-row",style:{marginBottom:6}},
+              h("div",{className:"intent-name"},m.playbook_name),
+              h("div",{className:"ml-auto",style:{display:"flex",gap:8,alignItems:"center"}},
+                h(ConfBar,{v:m.confidence||0}),
+                h(Badge,{sev:m.severity}),
+              ),
+            ),
+            h("div",{className:"intent-meta"},
+              h("span",null,"🕐 " + ago(m.detected_at)),
+              h("span",null,"👤 " + (m.subject||"—")),
+              h("span",null,`📦 ${m.matched_events?.length||0} events`),
+            ),
+            h("div",{style:{fontSize:11,color:"var(--muted)",marginTop:4}},m.detail),
+          ))
+    ),
+
+    tab === "playbooks" && h("div", null,
+      h("div",{style:{fontSize:12,color:"var(--muted)",marginBottom:12}},`${pbs.length} active playbooks (${builtins.length} built-in + ${custom.length} custom)`),
+      pbs.map((pb,i) => h("div",{key:i,className:"playbook-row clickable",title:"Click for the full attack sequence",onClick:()=>setSelPlaybook(pb)},
+        h("div",{className:"flex-row",style:{marginBottom:3}},
+          h("div",{className:"pb-name"},pb.name),
+          h("div",{className:"ml-auto",style:{display:"flex",gap:6,alignItems:"center"}},
+            pb.builtin && h("span",{className:"chip"},"built-in"),
+            h(Badge,{sev:pb.severity}),
+          ),
+        ),
+        h("div",{className:"pb-meta"},
+          h("span",null,`${pb.steps?.length||0} steps`),
+          h("span",null,`${Math.round((pb.window_seconds||3600)/60)}m window`),
+          h("span",{style:{color:"var(--muted)"}},pb.description),
+        ),
+      ))
+    ),
+
+    selMatch && h(IntentMatchModal,{ match:selMatch, onClose:()=>setSelMatch(null) }),
+    selPlaybook && h(PlaybookModal,{ pb:selPlaybook, onClose:()=>setSelPlaybook(null) }),
+  );
+}
+
+
+// ── Trust Graph (Cytoscape + dagre) ─────────────────────────────────────────
+const GTYPE = {
+  agent:{c:"#6366f1",g:"A",p:"Agents"}, issuer:{c:"#f59e0b",g:"I",p:"Issuers"},
+  verifier:{c:"#ef4444",g:"V",p:"Verifiers"}, tool:{c:"#10b981",g:"T",p:"Tools"},
+  workload:{c:"#3b82f6",g:"W",p:"Workloads"}, mcp_server:{c:"#ec4899",g:"M",p:"MCP Servers"},
+  lifecycle_state:{c:"#94a3b8",g:"L",p:"Lifecycle"}, tenant:{c:"#8b5cf6",g:"O",p:"Tenants"},
+};
+const gcol = t => (GTYPE[t]||{}).c || "#6366f1";
+const gglyph = t => (GTYPE[t]||{}).g || "?";
+
+// subject_node may be a node_id hash OR a label — index by both.
+function indexAnomalies(anoms, nodes){
+  const byKey = {};
+  (anoms||[]).forEach(a => { (byKey[a.subject_node] = byKey[a.subject_node] || []).push(a); });
+  return { byKey, forNode(n){ return (byKey[n.node_id]||[]).concat(byKey[n.label]||[]); } };
+}
+function resolveAgentLabel(subjectNode, nodes){
+  const n = (nodes||[]).find(x => x.node_id === subjectNode || x.label === subjectNode);
+  return n ? { label:n.label, type:n.node_type } : { label:subjectNode, type:null };
+}
+async function killSwitch(agentId, reason){
+  const r = await apiFetch(`/api/enforcement/killswitch/${encodeURIComponent(agentId)}`, {
+    method:"POST", headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({ activated_by:"dashboard-operator", reason: reason || "operator action from trust graph" }),
+  });
+  return { ok:r.ok, status:r.status, body: await r.json().catch(()=>({})) };
+}
+
+// Dependency-free renderer (plain SVG, no cytoscape/dagre). The engine is
+// loaded locally from /static/trustgraph-engine.js. This React wrapper keeps
+// the same ctrl/handlers interface the panels and path-finder already use.
+function CytoGraph({ graphData, anomalies, hidden, expanded, ctrl, handlers }){
+  const elRef = useRef(null), engRef = useRef(null), hRef = useRef(handlers);
+  const [fallback, setFallback] = useState(false);
+  hRef.current = handlers;
+
+  useEffect(()=>{
+    if(typeof window.TrustGraphEngine !== "function"){ setFallback(true); return; }
+    const eng = new window.TrustGraphEngine(elRef.current, {
+      onSelectNode:(d)=>{ hRef.current.onSelectNode && hRef.current.onSelectNode(d); },
+      onSelectEdge:(d)=>{ hRef.current.onSelectEdge && hRef.current.onSelectEdge(d); },
+      onBackground:()=>{ hRef.current.onBackground && hRef.current.onBackground(); },
+      onToggleGroup:(id)=>{ hRef.current.onToggleGroup && hRef.current.onToggleGroup(id); },
+    });
+    engRef.current = eng;
+    ctrl.current = {
+      eng,
+      fit:()=>eng.fit(),
+      resetView:()=>{ eng.clearHighlight(); eng.fit(); },
+      showPath:(ids)=>eng.showPath(ids),
+      focusLabel:(label)=>eng.focusLabel(label),
+      focusEdgeNodes:(srcLabel)=>{ if(srcLabel) eng.focusLabel(srcLabel); },
+    };
+    return ()=>{ try{ eng.destroy(); }catch(e){} engRef.current=null; };
   }, []);
 
-  const cfUrl = `https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?templateURL=https://raw.githubusercontent.com/Bobcatsfan33/Aegis-/master/onboarding/cloudformation_aegis_role.yml&stackName=AegisSecurityRoles&param_ExternalId=${extId}`;
+  useEffect(()=>{
+    const eng=engRef.current; if(!eng) return;
+    eng.update({ graphData, anomalies, hidden, expanded });
+  }, [graphData, anomalies, hidden, expanded]);
 
-  const testConn = async () => {
-    setTesting(true); setTestResult(null);
-    try {
-      const result = await apiFetch("/onboarding/aws/test", {
-        method: "POST",
-        body: JSON.stringify({ role_arn: roleArn, external_id: extId, account_id: accountId }),
-      });
-      setTestResult(result);
-      if (result.success) setStep(5);
-    } catch (e) {
-      setTestResult({ success: false, error: e.message });
-    } finally {
-      setTesting(false);
+  if(fallback) return h("div",{className:"empty"},
+    h("div",{className:"empty-icon"},"🕸"),
+    h("div",{className:"empty-msg"},"Graph engine failed to initialize"),
+    h("div",{className:"empty-hint"},"This should not happen offline — the renderer is bundled locally."));
+  return h("div",{ref:elRef,className:"tg-canvas"});
+}
+
+// ── Context slide-over (node or edge) ───────────────────────────────────────
+function ContextPanel({ sel, graphData, anomalies, ctrl, onClose, onJump, onFindPaths, onKilled }){
+  if(!sel) return null;
+  const nodes = graphData.nodes||[], edges = graphData.edges||[];
+  if(sel.kind==="edge"){
+    const e=sel.data;
+    return h("div",{className:"slideover"},
+      h("div",{className:"slideover-head"},
+        h("div",{style:{flex:1}},
+          h("div",{className:"modal-title"},(e.etype||"edge").replace(/_/g," ")),
+          h("div",{style:{fontSize:11,color:"var(--muted)",marginTop:2}},"Trust relationship")),
+        h("div",{className:"modal-close",onClick:onClose},"✕")),
+      h("div",{className:"slideover-body"},
+        h("div",{className:"so-section"},"Direction"),
+        h("div",{className:"so-neighbor",onClick:()=>onJump(e.srcLabel)},
+          h("span",{className:"dot",style:{background:"var(--accent)",width:8,height:8,borderRadius:"50%"}}),
+          h("span",null,e.srcLabel||e.source)),
+        h("div",{style:{textAlign:"center",color:"var(--muted)",margin:"4px 0"}},"↓ "+(e.etype||"").replace(/_/g," ")),
+        h("div",{className:"so-neighbor",onClick:()=>onJump(e.dstLabel)},
+          h("span",{className:"dot",style:{background:"var(--green)",width:8,height:8,borderRadius:"50%"}}),
+          h("span",null,e.dstLabel||e.target)),
+      ));
+  }
+  const d=sel.data;
+  const myEdges = edges.filter(e=>e.src_label===d.name||e.dst_label===d.name||e.src_node===d.id||e.dst_node===d.id);
+  const inDeg = myEdges.filter(e=>e.dst_label===d.name||e.dst_node===d.id).length;
+  const outDeg = myEdges.length-inDeg;
+  const neighbors = []; const seen={};
+  myEdges.forEach(e=>{ const other = (e.src_label===d.name||e.src_node===d.id) ? {l:e.dst_label,t:e.dst_type,et:e.edge_type} : {l:e.src_label,t:e.src_type,et:e.edge_type};
+    if(other.l && !seen[other.l]){ seen[other.l]=1; neighbors.push(other); } });
+  const idx = indexAnomalies(anomalies, nodes);
+  const myAnoms = (idx.byKey[d.id]||[]).concat(idx.byKey[d.name]||[]);
+  const isAgent = d.ntype==="agent";
+  const doKill = async ()=>{
+    if(!window.confirm(`Quarantine / kill agent "${d.name}"? This activates the enforcement kill switch.`)) return;
+    const reason = window.prompt("Reason for kill switch:", "rogue agent — trust graph investigation");
+    if(reason===null) return;
+    const res = await killSwitch(d.name, reason);
+    console.log("killSwitch", d.name, res);
+    alert(res.ok ? `Kill switch ACTIVE for ${d.name}` : `Kill failed (HTTP ${res.status})`);
+    onKilled && onKilled(d.name, res);
+  };
+  return h("div",{className:"slideover"},
+    h("div",{className:"slideover-head"},
+      h("div",{style:{flex:1}},
+        h("div",{className:"modal-title"},d.name),
+        h("div",{style:{fontSize:11,marginTop:2}},
+          h("span",{style:{color:gcol(d.ntype),fontWeight:700,textTransform:"uppercase"}},d.ntype))),
+      h("div",{className:"modal-close",onClick:onClose},"✕")),
+    h("div",{className:"slideover-body"},
+      h("div",{className:"so-kv"},h("span",{className:"k"},"Node ID"),h("span",{className:"v mono"},(d.id||"").slice(0,18))),
+      h("div",{className:"so-kv"},h("span",{className:"k"},"Degree"),h("span",{className:"v"},`${myEdges.length} (${inDeg} in / ${outDeg} out)`)),
+      h("div",{className:"so-kv"},h("span",{className:"k"},"Anomalies"),h("span",{className:"v",style:{color:myAnoms.length?"var(--red)":"var(--green)"}},myAnoms.length)),
+      myAnoms.length>0 && h("div",null, h("div",{className:"so-section"},"Anomalies on this node"),
+        myAnoms.map((a,i)=>h("div",{key:i,style:{background:"rgba(239,68,68,.08)",borderLeft:"3px solid var(--red)",borderRadius:6,padding:"8px 10px",marginBottom:6,fontSize:11}},
+          h("div",{style:{fontWeight:700,color:"#fca5a5"}},a.anomaly_type?.replace(/_/g," ")),
+          h("div",{style:{color:"var(--muted)",marginTop:2}},a.detail)))),
+      h("div",{className:"so-section"},`Neighbors (${neighbors.length})`),
+      neighbors.length===0 ? h("div",{style:{fontSize:12,color:"var(--muted)"}},"None")
+        : neighbors.slice(0,30).map((nb,i)=>h("div",{key:i,className:"so-neighbor",onClick:()=>onJump(nb.l)},
+            h("span",{className:"dot",style:{background:gcol(nb.t),width:9,height:9,borderRadius:"50%"}}),
+            h("span",{style:{flex:1}},nb.l),
+            h("span",{style:{fontSize:10,color:"var(--muted)"}},(nb.et||"").replace(/_/g," ")))),
+      h("div",{className:"so-section"},"Actions"),
+      h("button",{className:"so-action",onClick:()=>ctrl.current.focusLabel && ctrl.current.focusLabel(d.name)},"🎯 Center on node"),
+      h("button",{className:"so-action primary",onClick:()=>onFindPaths(d.name)},"🔍 Find paths from here"),
+      isAgent && h("button",{className:"so-action danger",onClick:doKill},"⛔ Investigate / Kill agent"),
+    ));
+}
+
+// ── Generic modal wrapper ───────────────────────────────────────────────────
+function GModal({ title, sub, onClose, children, wide }){
+  return h("div",{className:"modal-backdrop",onClick:onClose},
+    h("div",{className:"modal-box",style:wide?null:{maxWidth:680,minHeight:"auto"},onClick:e=>e.stopPropagation()},
+      h("div",{className:"modal-head"},
+        h("div",{style:{flex:1}}, h("div",{className:"modal-title"},title), sub&&h("div",{style:{fontSize:12,color:"var(--muted)",marginTop:3}},sub)),
+        h("div",{className:"modal-close",onClick:onClose},"✕")),
+      h("div",{className:"modal-body"}, children)));
+}
+
+// ── Drill-in: nodes / edges tables ──────────────────────────────────────────
+function NodesModal({ graphData, anomalies, onClose, onPick }){
+  const [q,setQ]=useState(""); const [sort,setSort]=useState("degree");
+  const nodes=graphData.nodes||[], edges=graphData.edges||[];
+  const deg={}; edges.forEach(e=>{ deg[e.src_node]=(deg[e.src_node]||0)+1; deg[e.dst_node]=(deg[e.dst_node]||0)+1; });
+  const idx=indexAnomalies(anomalies,nodes);
+  let rows=nodes.map(n=>({n,degree:deg[n.node_id]||0,anom:idx.forNode(n).length}));
+  if(q) rows=rows.filter(r=>(r.n.label||"").toLowerCase().includes(q.toLowerCase())||r.n.node_type.includes(q.toLowerCase()));
+  rows.sort((a,b)=> sort==="label"? (a.n.label||"").localeCompare(b.n.label||"") : sort==="type"? a.n.node_type.localeCompare(b.n.node_type) : sort==="anom"? b.anom-a.anom : b.degree-a.degree);
+  return h(GModal,{title:`Nodes (${nodes.length})`,sub:"Click a row to center it in the graph",onClose,wide:true},
+    h("input",{value:q,onChange:e=>setQ(e.target.value),placeholder:"Search label or type…",
+      style:{width:"100%",background:"var(--surface2)",border:"1px solid var(--border)",color:"var(--text)",padding:"8px 12px",borderRadius:6,marginBottom:12,fontSize:13}}),
+    h("table",{className:"data-table"},
+      h("thead",null,h("tr",null,
+        ["label","type","degree","anom"].map(c=>h("th",{key:c,style:{cursor:"pointer"},onClick:()=>setSort(c)},
+          (c==="anom"?"anomaly":c)+(sort===c?" ▾":""))))),
+      h("tbody",null, rows.slice(0,400).map((r,i)=>h("tr",{key:i,style:{cursor:"pointer"},onClick:()=>onPick(r.n.label)},
+        h("td",{className:"mono"},r.n.label),
+        h("td",null,h("span",{style:{color:gcol(r.n.node_type)}},r.n.node_type)),
+        h("td",null,r.degree),
+        h("td",null,r.anom?h("span",{style:{color:"var(--red)"}},"⚠ "+r.anom):h("span",{style:{color:"var(--muted)"}},"—")))))));
+}
+function EdgesModal({ graphData, onClose, onPick }){
+  const [q,setQ]=useState("");
+  let rows=graphData.edges||[];
+  if(q) rows=rows.filter(e=>(e.src_label+e.dst_label+e.edge_type).toLowerCase().includes(q.toLowerCase()));
+  return h(GModal,{title:`Edges (${(graphData.edges||[]).length})`,sub:"Click a row to focus the source node",onClose,wide:true},
+    h("input",{value:q,onChange:e=>setQ(e.target.value),placeholder:"Search source / type / destination…",
+      style:{width:"100%",background:"var(--surface2)",border:"1px solid var(--border)",color:"var(--text)",padding:"8px 12px",borderRadius:6,marginBottom:12,fontSize:13}}),
+    h("table",{className:"data-table"},
+      h("thead",null,h("tr",null,h("th",null,"source"),h("th",null,"type"),h("th",null,"destination"))),
+      h("tbody",null, rows.slice(0,400).map((e,i)=>h("tr",{key:i,style:{cursor:"pointer"},onClick:()=>onPick(e.src_label)},
+        h("td",{className:"mono"},e.src_label),
+        h("td",null,h("span",{className:"chip"},(e.edge_type||"").replace(/_/g," "))),
+        h("td",{className:"mono"},e.dst_label))))));
+}
+
+// ── Anomaly detail modal (single) ───────────────────────────────────────────
+function AnomalyDetailModal({ anomaly, graphData, onClose, onView, onFindPaths, onAck, onKilled }){
+  const a=anomaly; const subj=resolveAgentLabel(a.subject_node, graphData.nodes||[]);
+  const isAgent = subj.type==="agent";
+  const doKill = async ()=>{
+    if(!isAgent){ alert("Kill switch applies to agents only. Subject is "+(subj.type||"unknown")+"."); return; }
+    if(!window.confirm(`Quarantine / kill agent "${subj.label}"?`)) return;
+    const reason = window.prompt("Reason:", a.anomaly_type+" — "+(a.detail||"").slice(0,60));
+    if(reason===null) return;
+    const res=await killSwitch(subj.label, reason); console.log("killSwitch", subj.label, res);
+    alert(res.ok?`Kill switch ACTIVE for ${subj.label}`:`Kill failed (HTTP ${res.status})`); onKilled&&onKilled();
+  };
+  return h(GModal,{title:(a.anomaly_type||"Anomaly").replace(/_/g," "),sub:"Trust graph anomaly",onClose},
+    h("div",{className:"risk-gauge"}, h(Badge,{sev:a.severity}),
+      h("span",{style:{fontSize:12,color:"var(--muted)",marginLeft:8}},ago(a.detected_at))),
+    h("div",{className:"so-kv"},h("span",{className:"k"},"Subject"),
+      h("span",{className:"v mono",style:{color:"var(--accent)",cursor:"pointer"},onClick:()=>onView(subj.label)},subj.label)),
+    h("div",{className:"so-kv"},h("span",{className:"k"},"Subject type"),h("span",{className:"v"},subj.type||"unknown")),
+    h("div",{style:{margin:"14px 0",fontSize:13,lineHeight:1.6,background:"var(--surface2)",padding:"12px 14px",borderRadius:8}},a.detail),
+    a.context && Object.keys(a.context).length>0 && h("div",null,
+      h("div",{className:"so-section"},"Context"),
+      Object.entries(a.context).map(([k,v])=>h("div",{key:k,className:"so-kv"},h("span",{className:"k"},k),h("span",{className:"v mono"},String(v))))),
+    h("div",{className:"so-section"},"Actions"),
+    h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}},
+      h("button",{className:"so-action",onClick:()=>onView(subj.label)},"🎯 View in graph"),
+      h("button",{className:"so-action",onClick:()=>onFindPaths(subj.label)},"🔍 Find trust paths"),
+      h("button",{className:"so-action",onClick:onAck},"✓ Acknowledge"),
+      h("button",{className:"so-action danger",onClick:doKill},"⛔ Quarantine / Kill")));
+}
+
+// ── Intent match detail modal ───────────────────────────────────────────────
+function IntentMatchModal({ match, onClose, onView, onInvestigate }){
+  const m=match;
+  const mitre=(m.mitre||m.mitre_techniques||[]);
+  return h(GModal,{title:m.playbook_name||"Intent Match",sub:"Correlated attack sequence",onClose},
+    h("div",{className:"risk-gauge"}, h(Badge,{sev:m.severity}),
+      h(ConfBar,{v:m.confidence||0}),
+      h("span",{style:{fontSize:12,color:"var(--muted)",marginLeft:8}},ago(m.detected_at))),
+    h("div",{className:"so-kv"},h("span",{className:"k"},"Subject"),
+      h("span",{className:"v mono",style:onView?{color:"var(--accent)",cursor:"pointer"}:null,onClick:onView?()=>onView(m.subject):null},m.subject||"—")),
+    h("div",{className:"so-kv"},h("span",{className:"k"},"Severity"),h("span",{className:"v"},m.severity)),
+    h("div",{className:"so-kv"},h("span",{className:"k"},"Confidence"),h("span",{className:"v"},Math.round((m.confidence||0)*100)+"%")),
+    h("div",{className:"so-kv"},h("span",{className:"k"},"Matched events"),h("span",{className:"v"},(m.matched_events||[]).length)),
+    h("div",{className:"so-kv"},h("span",{className:"k"},"First seen"),h("span",{className:"v"},m.first_event_at||"—")),
+    h("div",{className:"so-kv"},h("span",{className:"k"},"Last seen"),h("span",{className:"v"},m.last_event_at||"—")),
+    mitre.length>0 && h("div",{className:"so-kv"},h("span",{className:"k"},"MITRE ATT&CK"),
+      h("span",{className:"v"},mitre.map((t,i)=>h("span",{key:i,className:"chip",style:{marginLeft:i?4:0}},t)))),
+    h("div",{style:{margin:"14px 0",fontSize:13,lineHeight:1.6,background:"var(--surface2)",padding:"12px 14px",borderRadius:8}},m.detail),
+    (m.matched_events||[]).length>0 && h("div",null, h("div",{className:"so-section"},"Matched event IDs"),
+      h("div",{className:"mono",style:{fontSize:11,color:"var(--muted)",wordBreak:"break-all"}},(m.matched_events||[]).join(", "))),
+    (onView||onInvestigate) && h("div",null, h("div",{className:"so-section"},"Actions"),
+      h("div",{style:{display:"flex",gap:8}},
+        onView && h("button",{className:"so-action",onClick:()=>onView(m.subject)},"🎯 View in graph"),
+        onInvestigate && h("button",{className:"so-action primary",onClick:onInvestigate},"🔍 Investigate"))));
+}
+
+// Intent playbook detail — full attack sequence + window + severity.
+function PlaybookModal({ pb, onClose }){
+  const stepName = s => typeof s==="string" ? s : (s.event_type||s.name||s.type||s.action||s.category||JSON.stringify(s));
+  const stepDetail = s => (s && typeof s==="object") ? (s.description||s.detail||(s.condition&&typeof s.condition!=="object"?String(s.condition):s.mitre_technique||"")) : "";
+  const steps = pb.steps||[];
+  const mitre = pb.mitre || pb.mitre_techniques || [];
+  return h(GModal,{title:pb.name||"Playbook",sub:(pb.builtin?"Built-in":"Custom")+" detection playbook",onClose},
+    h("div",{className:"risk-gauge"}, h(Badge,{sev:pb.severity}),
+      h("span",{style:{fontSize:12,color:"var(--muted)",marginLeft:8}},`${Math.round((pb.window_seconds||3600)/60)}m correlation window`)),
+    h("div",{style:{margin:"12px 0",fontSize:13,lineHeight:1.6,background:"var(--surface2)",padding:"12px 14px",borderRadius:8}},pb.description||"No description provided."),
+    h("div",{className:"so-kv"},h("span",{className:"k"},"Severity"),h("span",{className:"v"},pb.severity)),
+    h("div",{className:"so-kv"},h("span",{className:"k"},"Type"),h("span",{className:"v"},pb.builtin?"built-in":"custom")),
+    h("div",{className:"so-kv"},h("span",{className:"k"},"Detection window"),h("span",{className:"v"},`${Math.round((pb.window_seconds||3600)/60)} min`)),
+    h("div",{className:"so-kv"},h("span",{className:"k"},"Steps"),h("span",{className:"v"},steps.length)),
+    mitre.length>0 && h("div",{className:"so-kv"},h("span",{className:"k"},"MITRE ATT&CK"),
+      h("span",{className:"v"},mitre.map((t,i)=>h("span",{key:i,className:"chip",style:{marginLeft:i?4:0}},t)))),
+    steps.length>0 && h("div",null, h("div",{className:"so-section"},"Attack sequence"),
+      steps.map((s,i)=>h("div",{key:i,style:{display:"flex",gap:10,alignItems:"flex-start",padding:"7px 0",borderBottom:i<steps.length-1?"1px solid var(--border)":"none"}},
+        h("div",{style:{minWidth:20,height:20,borderRadius:"50%",background:"var(--surface3)",color:"var(--accent)",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",flex:"none"}},i+1),
+        h("div",{style:{flex:1,fontSize:12}},
+          h("div",{style:{fontWeight:600}},(stepName(s)||"").replace(/_/g," ")),
+          stepDetail(s) && h("div",{style:{color:"var(--muted)",fontSize:11,marginTop:1}},stepDetail(s)))))));
+}
+
+// Generic record detail — key/value list for any object (honeypot hits/decoys).
+function DetailModal({ title, sub, record, onClose, fields }){
+  const fmt = v => v==null ? "—" : (typeof v==="object" ? JSON.stringify(v) : String(v));
+  const entries = fields
+    ? fields.filter(f=>record[f.k]!==undefined).map(f=>[f.label||f.k, record[f.k]])
+    : Object.entries(record||{});
+  return h(GModal,{title,sub,onClose},
+    entries.map(([k,v],i)=>h("div",{key:i,className:"so-kv"},
+      h("span",{className:"k"},String(k).replace(/_/g," ")),
+      h("span",{className:"v mono",style:{wordBreak:"break-all",maxWidth:"60%",textAlign:"right"}},fmt(v)))));
+}
+
+// Directed reachability from a node (matches the backend BFS: src_node→dst_node),
+// so the path-finder "To" list only offers nodes that will actually return a path.
+function reachableLabelsFrom(graphData, fromLabel){
+  if(!fromLabel) return null;
+  const nodes = graphData.nodes||[], edges = graphData.edges||[];
+  const idByLabel={}, labelById={};
+  nodes.forEach(n=>{ idByLabel[n.label]=n.node_id; labelById[n.node_id]=n.label; });
+  const start = idByLabel[fromLabel];
+  const labels = new Set();
+  if(start===undefined) return labels;
+  const out = {};
+  edges.forEach(e=>{ (out[e.src_node]=out[e.src_node]||[]).push(e.dst_node); });
+  const seen = new Set([start]); const q=[start];
+  while(q.length){ const cur=q.shift(); (out[cur]||[]).forEach(nx=>{
+    if(!seen.has(nx)){ seen.add(nx); q.push(nx); if(labelById[nx]!==undefined) labels.add(labelById[nx]); } }); }
+  labels.delete(fromLabel);
+  return labels;
+}
+
+// Client-side directed shortest path (offline fixture + fallback when the API is
+// unreachable). Returns the same shape as /api/graph/path.
+function clientShortestPath(graphData, fromLabel, toLabel){
+  const nodes=graphData.nodes||[], edges=graphData.edges||[];
+  const byLabel={}, byId={};
+  nodes.forEach(n=>{ byLabel[n.label]=n; byId[n.node_id]=n; });
+  const from=byLabel[fromLabel], to=byLabel[toLabel];
+  if(!from||!to) return { found:false, length:0, path:[], error:"one_or_both_nodes_not_found" };
+  if(from.node_id===to.node_id) return { found:true, length:0, path:[{node_id:from.node_id,label:from.label,node_type:from.node_type}] };
+  const out={}; edges.forEach(e=>{ (out[e.src_node]=out[e.src_node]||[]).push(e.dst_node); });
+  const prev={}; const seen=new Set([from.node_id]); const q=[from.node_id]; let hit=false;
+  while(q.length && !hit){ const cur=q.shift();
+    for(const nx of (out[cur]||[])){ if(!seen.has(nx)){ seen.add(nx); prev[nx]=cur; if(nx===to.node_id){ hit=true; break; } q.push(nx); } } }
+  if(!seen.has(to.node_id)) return { found:false, length:0, path:[], error:"no_path_found" };
+  const ids=[]; let c=to.node_id; while(c!==undefined){ ids.unshift(c); c=prev[c]; }
+  const path=ids.map(id=>({ node_id:byId[id].node_id, label:byId[id].label, node_type:byId[id].node_type }));
+  return { found:true, length:path.length-1, path };
+}
+
+function TrustGraphPage() {
+  const [statsLive] = useApi("/api/graph/stats",            { node_count:0, edge_count:0, anomaly_count:0, node_types:{} }, 10000);
+  const [anomLive]  = useApi("/api/graph/anomalies?limit=200", { anomalies:[] }, 10000);
+  const [graphLive] = useApi("/api/graph/data",             { nodes:[], edges:[] }, 10000);
+  // Offline-proof: fall back to the bundled demo fixture if the API is empty
+  // or unreachable, so the graph is never blank. Live data takes precedence.
+  const FX = window.TRUSTGRAPH_FIXTURE || { stats:{ node_count:0, edge_count:0, anomaly_count:0, node_types:{} }, graphData:{ nodes:[], edges:[] }, anomalies:[] };
+  const usingFixture = !((graphLive.nodes||[]).length);
+  const stats     = usingFixture ? FX.stats : statsLive;
+  const graphData = usingFixture ? FX.graphData : graphLive;
+  const anomData  = usingFixture ? { anomalies: FX.anomalies } : anomLive;
+  const [sel, setSel] = useState(null);              // {kind:'node'|'edge', data}
+  const [drill, setDrill] = useState(null);          // 'nodes'|'edges'|'anomalies'
+  const [anomDetail, setAnomDetail] = useState(null);
+  const [expanded, setExpanded] = useState({});
+  const [hidden, setHidden] = useState({});
+  const [acked, setAcked] = useState({});
+  const [fromLabel, setFromLabel] = useState("");
+  const [toLabel, setToLabel] = useState("");
+  const [pathResult, setPathResult] = useState(null);
+  const [pathLoading, setPathLoading] = useState(false);
+  const ctrl = useRef({});
+
+  const anoms = (anomData.anomalies||[]).filter(a=>!acked[a.id]);
+  const present = Object.keys(stats.node_types||{});
+
+  // Cross-page focus: Overview cards / feed modals can request centering a node
+  // here (or seeding the path finder FROM) after navigating to the graph.
+  const applyFocus = (req)=>{ if(!req) return; window.__tgFocus=null;
+    if(req.findPaths){ setFromLabel(req.label); window.scrollTo({top:document.body.scrollHeight,behavior:"smooth"}); }
+    else setTimeout(()=>{ if(ctrl.current.focusLabel) ctrl.current.focusLabel(req.label); },150); };
+  useEffect(()=>{ const onFocus=(e)=>applyFocus(e.detail);
+    window.addEventListener("tokendna:focus", onFocus);
+    return ()=>window.removeEventListener("tokendna:focus", onFocus); }, []);
+  useEffect(()=>{ if(window.__tgFocus && (graphData.nodes||[]).length) applyFocus(window.__tgFocus); }, [graphData]);
+
+  // Path Finder: constrain "To" to nodes reachable from the chosen "From".
+  const reachable = reachableLabelsFrom(graphData, fromLabel);
+  useEffect(()=>{ if(fromLabel && toLabel && reachable && !reachable.has(toLabel)) setToLabel(""); }, [fromLabel, graphData]);
+  const selStyle = {background:"var(--surface2)",border:"1px solid var(--border)",color:"var(--text)",padding:"7px 10px",borderRadius:6,fontSize:12,width:"100%"};
+
+  const findPath = async () => {
+    if(!fromLabel||!toLabel) return;
+    setPathLoading(true); setPathResult(null);
+    let res = null;
+    if(!usingFixture){
+      try { const r=await apiFetch(`/api/graph/path/${encodeURIComponent(fromLabel)}?to=${encodeURIComponent(toLabel)}`); res=await r.json(); } catch(e){}
     }
+    if(!res) res = clientShortestPath(graphData, fromLabel, toLabel);  // offline / API-unreachable fallback
+    setPathResult(res);
+    // Drive the Live Trust Graph: isolate this path (fade the rest), frame it.
+    if(res && res.found && ctrl.current.showPath){
+      ctrl.current.showPath((res.path||[]).map(n=>n.node_id));
+      window.scrollTo({ top:0, behavior:"smooth" });
+    }
+    setPathLoading(false);
+  };
+  const jumpTo = (label)=>{ if(!label) return; setDrill(null); setAnomDetail(null);
+    if(ctrl.current.focusLabel) ctrl.current.focusLabel(label); };
+  const findPathsFrom = (label)=>{ setFromLabel(label); setSel(null); setAnomDetail(null); setDrill(null);
+    window.scrollTo({top:document.body.scrollHeight,behavior:"smooth"}); };
+  const toggleGroup = (id)=> setExpanded(p=>({ ...p, [id]: !p[id] }));
+  const toggleType = (t)=> setHidden(p=>({ ...p, [t]: !p[t] }));
+
+  const handlers = {
+    onSelectNode:(d)=>{ setSel({kind:"node",data:d}); },
+    onSelectEdge:(d)=>{ setSel({kind:"edge",data:d}); },
+    onBackground:()=> setSel(null),
+    onToggleGroup: toggleGroup,
   };
 
-  return React.createElement("div", null,
-    React.createElement("div", { className: "section-title" }, "Connect AWS Account"),
-    React.createElement("div", { className: "section-sub" }, "Takes about 5 minutes. Read-only access only — no changes to your environment."),
+  return h("div", null,
+    h("div",{className:"section-head"},
+      h("div",{className:"section-title"},"🕸 UIS Trust Graph"),
+      h("div",{className:"section-sub"},"Full population of agents and their attestations (issuers, verifiers, tools). Click any node, edge, anomaly or counter to drill in. For a single staged agent pipeline, see Workflows.")),
 
-    React.createElement("div", { className: "card" },
-      React.createElement("div", { className: "card-body" },
+    // clickable stat strip
+    h("div",{className:"three-col",style:{marginBottom:16}},
+      h("div",{className:"gstat clickable",onClick:()=>setDrill("nodes")}, h("div",{className:"gstat-num",style:{color:"var(--accent)"}},stats.node_count||0), h("div",{className:"gstat-label"},"Nodes ▸")),
+      h("div",{className:"gstat clickable",onClick:()=>setDrill("edges")}, h("div",{className:"gstat-num",style:{color:"var(--green)"}},stats.edge_count||0), h("div",{className:"gstat-label"},"Edges ▸")),
+      h("div",{className:"gstat clickable",onClick:()=>setDrill("anomalies")}, h("div",{className:"gstat-num",style:{color:(stats.anomaly_count?"var(--red)":"var(--green)")}},stats.anomaly_count||0), h("div",{className:"gstat-label"},"Anomalies ▸"))),
 
-        React.createElement("div", { className: "step" },
-          React.createElement("div", { className: `step-num${step > 1 ? " done" : ""}` }, step > 1 ? "✓" : "1"),
-          React.createElement("div", { className: "step-content" },
-            React.createElement("h4", null, "Note your External ID"),
-            React.createElement("p", null, "This unique token proves to AWS that the request comes from Aegis. Pre-filled in the CloudFormation template."),
-            React.createElement("div", { className: "code-box mt16" }, extId),
-            React.createElement("button", { className: "btn btn-primary mt16", style:{fontSize:12}, onClick: () => setStep(s => Math.max(s,2)) }, "Got it →"),
-          )
-        ),
+    // graph card
+    h("div",{className:"card",style:{marginBottom:20}},
+      h("div",{className:"card-head"},
+        h("div",{className:"card-title"},"Live Trust Graph"),
+        h("span",{className:"chip",style:{fontSize:10}},`${stats.node_count||0} nodes · ${stats.edge_count||0} edges · verifier mass clustered`)),
+      h("div",{style:{padding:"12px 16px 16px"}},
+        h("div",{className:"tg-toolbar"},
+          h("button",{className:"tg-btn",onClick:()=>(ctrl.current.resetView||ctrl.current.fit)&&(ctrl.current.resetView||ctrl.current.fit)()},"⤢ Fit / Reset view"),
+          h("button",{className:"tg-btn",onClick:()=>setExpanded({})},"⊟ Collapse all"),
+          h("div",{className:"tg-legend",style:{marginLeft:"auto"}},
+            present.map(t=>h("div",{key:t,className:`tg-chip${hidden[t]?" off":""}`,onClick:()=>toggleType(t)},
+              h("span",{className:"dot",style:{background:gcol(t)}}), t, h("span",{style:{color:"var(--muted)"}},stats.node_types[t]))))),
+        h("div",{className:"tg-wrap"},
+          h(CytoGraph,{ graphData, anomalies:anoms, hidden, expanded, ctrl, handlers }),
+          h("div",{className:"tg-hint"},"Hover a node for its label · click to inspect · click a group (▢) to expand"))),
+    ),
 
-        React.createElement("div", { className: "step" },
-          React.createElement("div", { className: `step-num${step > 2 ? " done" : ""}` }, step > 2 ? "✓" : "2"),
-          React.createElement("div", { className: "step-content", style: { flex: 1 } },
-            React.createElement("h4", null, "Deploy IAM Role via CloudFormation"),
-            React.createElement("p", null, "Click below to launch the AWS console with the Aegis template pre-loaded. Review and click Create Stack — takes ~60 seconds."),
-            React.createElement("a", { href: cfUrl, target: "_blank", rel: "noreferrer" },
-              React.createElement("button", { className: "btn btn-primary mt16", onClick: () => setStep(s => Math.max(s, 3)) },
-                "🚀 Launch CloudFormation Template →"
-              )
-            )
-          )
-        ),
+    // anomaly stream + path finder
+    h("div",{className:"two-col"},
+      h("div",{className:"card"},
+        h("div",{className:"card-head"}, h("div",{className:"card-title"},"Live Anomaly Stream"),
+          h("span",{className:"chip"},`${anoms.length} detected`)),
+        h("div",{className:"card-body"},
+          anoms.length===0
+            ? h("div",{className:"empty",style:{padding:24}}, h("div",{className:"empty-icon"},"✅"), h("div",{className:"empty-msg"},"No anomalies"))
+            : anoms.slice().sort((a,b)=>(SEV_RANK[b.severity]||0)-(SEV_RANK[a.severity]||0)).map((a,i)=>
+                h("div",{key:a.id||i,className:"anomaly-card clickable",onClick:()=>setAnomDetail(a)},
+                  h("div",{className:"anomaly-icon"}, (a.severity==="high"||a.severity==="critical")?"⚠️":"ℹ️"),
+                  h("div",{className:"anomaly-body"},
+                    h("div",{className:"anomaly-type"},a.anomaly_type?.replace(/_/g," ")),
+                    h("div",{className:"anomaly-subject"},resolveAgentLabel(a.subject_node,graphData.nodes||[]).label),
+                    h("div",{className:"anomaly-detail"},a.detail)),
+                  h(Badge,{sev:a.severity}))))),
 
-        React.createElement("div", { className: "step" },
-          React.createElement("div", { className: `step-num${step > 3 ? " done" : ""}` }, step > 3 ? "✓" : "3"),
-          React.createElement("div", { className: "step-content", style: { flex: 1 } },
-            React.createElement("h4", null, "Paste the Role ARN"),
-            React.createElement("p", null, "After CloudFormation completes, copy the ScanRoleArn from the Outputs tab."),
-            React.createElement("div", { className: "form-group mt16" },
-              React.createElement("label", null, "AWS Account ID"),
-              React.createElement("input", { placeholder: "123456789012", value: accountId,
-                onChange: e => { setAccountId(e.target.value); if (e.target.value.length >= 12) setStep(s => Math.max(s,3)); } }),
-            ),
-            React.createElement("div", { className: "form-group" },
-              React.createElement("label", null, "AegisScanRole ARN"),
-              React.createElement("input", { placeholder: "arn:aws:iam::123456789012:role/AegisScanRole", value: roleArn,
-                onChange: e => { setRoleArn(e.target.value); if (e.target.value.startsWith("arn:")) setStep(s => Math.max(s,4)); } }),
-            ),
-          )
-        ),
+      h("div",{className:"card"},
+        h("div",{className:"card-head"}, h("div",{className:"card-title"},"🔍 Trust Path Finder")),
+        h("div",{className:"card-body"},
+          h("div",{style:{marginBottom:10,fontSize:11,color:"var(--muted)"}},"Pick endpoints (or use “Find paths from here” on a node). “To” lists only nodes reachable from “From”."),
+          h("div",{style:{display:"flex",flexDirection:"column",gap:8,marginBottom:12}},
+            h("div",null,
+              h("div",{style:{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:600,textTransform:"uppercase"}},"From"),
+              h("select",{value:fromLabel,onChange:e=>setFromLabel(e.target.value),style:selStyle},
+                h("option",{value:""},"— select —"),
+                (graphData.nodes||[]).map(n=>h("option",{key:n.node_id,value:n.label},n.label)))),
+            h("div",null,
+              h("div",{style:{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:600,textTransform:"uppercase"}},
+                "To", fromLabel && h("span",{style:{textTransform:"none",fontWeight:400,marginLeft:6,color:"var(--accent)"}},`${reachable?reachable.size:0} reachable`)),
+              h("select",{value:toLabel,onChange:e=>setToLabel(e.target.value),disabled:!fromLabel,
+                style:{...selStyle, opacity:!fromLabel?.5:1, cursor:!fromLabel?"not-allowed":"pointer"}},
+                h("option",{value:""}, !fromLabel ? "— select “From” first —" : (reachable && reachable.size ? "— select —" : "— no reachable nodes —")),
+                (graphData.nodes||[]).filter(n=> reachable && reachable.has(n.label))
+                  .map(n=>h("option",{key:n.node_id,value:n.label},n.label))))),
+          h("button",{onClick:findPath,disabled:pathLoading||!fromLabel||!toLabel,
+            style:{background:"var(--accent)",color:"#fff",border:"none",padding:"8px 20px",borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",width:"100%",opacity:(!fromLabel||!toLabel)?.5:1}},
+            pathLoading?"Finding…":"Find Path"),
+          pathResult && h("div",{style:{marginTop:14}},
+            pathResult.found
+              ? h("div",null, h("div",{style:{fontSize:12,color:"var(--green)",marginBottom:4}},`✓ Path found — ${pathResult.length} hop(s)`),
+                  h("div",{style:{fontSize:11,color:"var(--muted)",marginBottom:10}},"Highlighted in the graph above — “Fit / Reset view” to clear."),
+                  h("div",{style:{display:"flex",alignItems:"center",flexWrap:"wrap",gap:6}},
+                    (pathResult.path||[]).map((node,i)=>h("div",{key:i,style:{display:"flex",alignItems:"center",gap:6}},
+                      h("div",{style:{background:"var(--surface3)",border:"1px solid var(--border)",borderRadius:6,padding:"5px 9px",fontSize:11}},
+                        h("div",{style:{color:gcol(node.node_type),fontSize:9,fontWeight:700,textTransform:"uppercase"}},node.node_type),
+                        h("div",{className:"mono",style:{fontSize:11}},(node.label||"").slice(0,20))),
+                      i<pathResult.path.length-1 && h("div",{style:{color:"var(--muted)"}},"→")))))
+              : h("div",{style:{fontSize:12,color:"var(--muted)",marginTop:8}},
+                  pathResult.error==="no_path_found"?"No path between these nodes.":pathResult.error==="one_or_both_nodes_not_found"?"⚠ Node not found.":"No path."))))),
 
-        React.createElement("div", { className: "step" },
-          React.createElement("div", { className: `step-num${step > 4 ? " done" : ""}` }, step > 4 ? "✓" : "4"),
-          React.createElement("div", { className: "step-content", style: { flex: 1 } },
-            React.createElement("h4", null, "Test Connection & Run First Scan"),
-            testResult && testResult.success
-              ? React.createElement("div", null,
-                  React.createElement("div", { className: "flex gap8 mt16" },
-                    ...(testResult.permissions || [{ service:"IAM",ok:true},{ service:"EC2",ok:true},{ service:"S3",ok:true},{ service:"GuardDuty",ok:true}]).map(s =>
-                      React.createElement("span", { key: s.service, className: `badge ${s.ok ? "badge-ok" : "badge-warn"}` },
-                        s.ok ? "✓" : "✗", " ", s.service
-                      )
-                    )
-                  ),
-                  React.createElement("p", { className: "text-green mt16", style:{color:"var(--green)"} },
-                    "✓ Connected! First scan running in background. Results appear in Cloud Posture in ~60 seconds."),
-                )
-              : React.createElement("div", null,
-                  testResult && !testResult.success &&
-                    React.createElement("div", { style: { color: "var(--red)", fontSize: 12, marginBottom: 12 } },
-                      "⚠ " + (testResult.error || "Connection failed — check the role ARN and try again.")
-                    ),
-                  React.createElement("p", null, "Aegis will assume the role and verify all permissions before saving."),
-                  React.createElement("button", {
-                    className: "btn btn-primary mt16",
-                    onClick: testConn,
-                    disabled: testing || !roleArn
-                  },
-                    testing
-                      ? React.createElement("span", { className: "flex items-center gap8" }, React.createElement("span", { className: "spinner" }), "Testing…")
-                      : "Test Connection"
-                  )
-                )
-          )
-        )
-      )
-    )
+    // slide-over + modals
+    sel && h(ContextPanel,{ sel, graphData, anomalies:anoms, ctrl, onClose:()=>setSel(null), onJump:jumpTo, onFindPaths:findPathsFrom, onKilled:()=>{} }),
+    drill==="nodes" && h(NodesModal,{ graphData, anomalies:anoms, onClose:()=>setDrill(null), onPick:jumpTo }),
+    drill==="edges" && h(EdgesModal,{ graphData, onClose:()=>setDrill(null), onPick:jumpTo }),
+    drill==="anomalies" && h(GModal,{title:`Anomalies (${anoms.length})`,sub:"Click one for full detail + actions",onClose:()=>setDrill(null),wide:true},
+      anoms.slice().sort((a,b)=>(SEV_RANK[b.severity]||0)-(SEV_RANK[a.severity]||0)).map((a,i)=>
+        h("div",{key:a.id||i,className:"anomaly-card clickable",onClick:()=>{ setDrill(null); setAnomDetail(a); }},
+          h("div",{className:"anomaly-icon"},(a.severity==="high"||a.severity==="critical")?"⚠️":"ℹ️"),
+          h("div",{className:"anomaly-body"},
+            h("div",{className:"anomaly-type"},a.anomaly_type?.replace(/_/g," ")),
+            h("div",{className:"anomaly-subject"},resolveAgentLabel(a.subject_node,graphData.nodes||[]).label),
+            h("div",{className:"anomaly-detail"},a.detail)),
+          h(Badge,{sev:a.severity})))),
+    anomDetail && h(AnomalyDetailModal,{ anomaly:anomDetail, graphData,
+      onClose:()=>setAnomDetail(null), onView:jumpTo, onFindPaths:findPathsFrom,
+      onAck:()=>{ setAcked(p=>({...p,[anomDetail.id]:true})); console.log("acknowledge anomaly", anomDetail.id); setAnomDetail(null); },
+      onKilled:()=>setAnomDetail(null) }),
   );
 }
 
-// ── Tenants ───────────────────────────────────────────────────────────────────
-function TenantsPage() {
-  const tenants = useApi("/admin/tenants", []);
-  const [showCreate, setShowCreate] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [newEmail, setNewEmail] = useState("");
-  const [createdKey, setCreatedKey] = useState(null);
-  const [creating, setCreating] = useState(false);
-
-  const handleCreate = async () => {
-    setCreating(true);
-    try {
-      const result = await apiFetch("/admin/tenants", {
-        method: "POST",
-        body: JSON.stringify({ name: newName, owner_email: newEmail }),
-      });
-      // result contains { tenant, api_key }
-      setCreatedKey(result.api_key || result.raw_key || "key returned — check server logs");
-      setShowCreate(false);
-      setNewName(""); setNewEmail("");
-      tenants.reload();
-    } catch (e) {
-      alert("Failed to create tenant: " + e.message);
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  return React.createElement("div", null,
-    React.createElement("div", { className: "flex items-center gap16", style: { marginBottom: 20 } },
-      React.createElement("div", null,
-        React.createElement("div", { className: "section-title" }, "Tenant Management"),
-        React.createElement("div", { className: "section-sub", style: { marginBottom: 0 } }, "Each tenant is an isolated workspace with its own API keys and data"),
-      ),
-      React.createElement("button", { className: "btn btn-primary ml-auto", onClick: () => setShowCreate(!showCreate) }, "+ New Tenant"),
-    ),
-
-    showCreate && React.createElement("div", { className: "card", style: { marginBottom: 16 } },
-      React.createElement("div", { className: "card-header" }, React.createElement("span", { className: "card-title" }, "Create Tenant")),
-      React.createElement("div", { className: "card-body", style: { display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 12, alignItems: "end" } },
-        React.createElement("div", { className: "form-group", style: { marginBottom: 0 } },
-          React.createElement("label", null, "Company / Team Name"),
-          React.createElement("input", { placeholder: "Acme Corp", value: newName, onChange: e => setNewName(e.target.value) }),
-        ),
-        React.createElement("div", { className: "form-group", style: { marginBottom: 0 } },
-          React.createElement("label", null, "Owner Email"),
-          React.createElement("input", { placeholder: "admin@acme.com", value: newEmail, onChange: e => setNewEmail(e.target.value) }),
-        ),
-        React.createElement("button", { className: "btn btn-primary", onClick: handleCreate, disabled: creating || !newName },
-          creating ? React.createElement("span", { className: "spinner" }) : "Create"
-        ),
-      )
-    ),
-
-    createdKey && React.createElement("div", { className: "card", style: { marginBottom: 16, borderColor: "var(--green)" } },
-      React.createElement("div", { className: "card-body" },
-        React.createElement("div", { style: { color: "var(--green)", fontWeight: 600, marginBottom: 8 } }, "✓ Tenant created! Save this API key — it won't be shown again."),
-        React.createElement("div", { className: "code-box" }, createdKey),
-        React.createElement("div", { className: "text-muted mt16", style: { fontSize: 12 } }, "Pass as X-API-Key header with every request"),
-      )
-    ),
-
-    React.createElement("div", { className: "card" },
-      React.createElement("div", { className: "card-body" },
-        tenants.loading ? React.createElement(Spinner) :
-        tenants.error   ? React.createElement(ErrBox, { msg: tenants.error }) :
-        React.createElement("div", { className: "table-wrap" },
-          React.createElement("table", null,
-            React.createElement("thead", null,
-              React.createElement("tr", null,
-                ...["Tenant", "Plan", "Events Today", "Risk Events", "Created", "Status"].map(h =>
-                  React.createElement("th", { key: h }, h)
-                )
-              )
-            ),
-            React.createElement("tbody", null,
-              (tenants.data.tenants || tenants.data || []).length === 0
-                ? React.createElement("tr", null,
-                    React.createElement("td", { colSpan: 6, style: { textAlign: "center", color: "var(--muted)", padding: 24 } }, "No tenants yet.")
-                  )
-                : (tenants.data.tenants || tenants.data || []).map(t =>
-                    React.createElement("tr", { key: t.id },
-                      React.createElement("td", null,
-                        React.createElement("div", { style: { fontWeight: 600 } }, t.name),
-                        React.createElement("div", { className: "font-mono text-muted" }, t.id),
-                      ),
-                      React.createElement("td", null,
-                        React.createElement("span", { className: "badge badge-stepup", style: { textTransform: "capitalize" } }, t.plan)
-                      ),
-                      React.createElement("td", null, fmtNum(t.events_today)),
-                      React.createElement("td", null,
-                        React.createElement("span", { style: { color: (t.risk_events||0) > 0 ? "var(--orange)" : "var(--green)", fontWeight: 600 } },
-                          t.risk_events || 0
-                        )
-                      ),
-                      React.createElement("td", { className: "text-muted" }, (t.created_at||"").split("T")[0]),
-                      React.createElement("td", null, React.createElement("span", { className: "badge badge-ok" }, "Active")),
-                    )
-                  )
-            )
-          )
-        )
-      )
-    )
-  );
-}
-
-// ── System Health ─────────────────────────────────────────────────────────────
 function SystemPage() {
-  const health = useApi("/api/health", {}, 15000);  // refresh every 15s
+  const [health] = useApi("/api/health", {}, 15000);
+  const [op]     = useApi("/api/operator/status", {}, 30000);
 
-  const h = health.data;
-  const items = [
-    { label: "Redis",           key: "redis",        detail: h.redis_version    ? `v${h.redis_version} · ${h.redis_latency_ms||"?"}ms` : "Checking…" },
-    { label: "ClickHouse",      key: "clickhouse",   detail: h.clickhouse_version ? `v${h.clickhouse_version} · ${h.clickhouse_events||0} events` : "Checking…" },
-    { label: "Tor Exit List",   key: "tor_list",     detail: h.tor_nodes          ? `${h.tor_nodes} nodes · refreshed ${h.tor_age||"?"}` : "Checking…" },
-    { label: "Cloudflare Edge", key: "edge_worker",  detail: "Workers edge · DPoP validation" },
+  const deps       = (op.dependencies)||{};
+  const slo        = (op.slo)||{};
+  const migrations = (op.migrations)||{};
+  const pending    = migrations.pending || [];
+
+  return h("div",null,
+    h("div",{className:"section-head"},
+      h("div",{className:"section-title"},"⚙ System Health"),
+      h("div",{className:"section-sub"},"Runtime dependencies, SLO contracts, and environment posture"),
+    ),
+    h("div",{className:"two-col"},
+      h("div",{className:"card"},
+        h("div",{className:"card-head"}, h("div",{className:"card-title"},"Dependencies")),
+        h("div",{className:"card-body"},
+          Object.entries(deps).map(([name,info]) => {
+            const isStorage = name === "storage_backend";
+            const ok = isStorage ? !!info?.backend : !!info?.ok;
+            const label = isStorage ? (info?.backend || "unknown") : (ok ? "online" : "offline");
+            return h("div",{key:name,style:{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid var(--border)"}},
+              h("span",{style:{fontSize:13}},name),
+              h("span",{className:ok ? "text-green":"text-red",style:{fontSize:12,fontWeight:600}},ok ? "● "+label:"● "+label),
+            );
+          })
+        ),
+      ),
+      h("div",{className:"card"},
+        h("div",{className:"card-head"}, h("div",{className:"card-title"},"Posture")),
+        h("div",{className:"card-body"},
+          h("div",{style:{display:"flex",flexDirection:"column",gap:10}},
+            h("div",{className:"flex-row"},
+              h("span",{style:{color:"var(--muted)",fontSize:12,width:140}},"Environment"),
+              h("span",{className:"chip"},(op.posture||{}).environment||"—"),
+            ),
+            h("div",{className:"flex-row"},
+              h("span",{style:{color:"var(--muted)",fontSize:12,width:140}},"FIPS 140-2"),
+              h("span",{className:(op.posture||{}).fips_active ? "text-green":"text-yellow",style:{fontSize:12}},(op.posture||{}).fips_active ? "Active":"Inactive"),
+            ),
+            h("div",{className:"flex-row"},
+              h("span",{style:{color:"var(--muted)",fontSize:12,width:140}},"Dev Mode"),
+              h("span",{className:(op.posture||{}).dev_mode ? "text-yellow":"text-green",style:{fontSize:12}},(op.posture||{}).dev_mode ? "ON (no auth)":"OFF"),
+            ),
+            h("div",{className:"flex-row"},
+              h("span",{style:{color:"var(--muted)",fontSize:12,width:140}},"Edge Decision SLO"),
+              h("span",{style:{fontSize:12}},(slo.edge_decision_ms||{}).target || "—"," ms"),
+            ),
+            h("div",{className:"flex-row"},
+              h("span",{style:{color:"var(--muted)",fontSize:12,width:140}},"Version"),
+              h("span",{className:"mono",style:{fontSize:12}},op.version||health.version||"—"),
+            ),
+          ),
+        ),
+      ),
+      h("div",{className:"card"},
+        h("div",{className:"card-head"}, h("div",{className:"card-title"},"Storage Migrations")),
+        h("div",{className:"card-body"},
+          h("div",{style:{display:"flex",flexDirection:"column",gap:10}},
+            h("div",{className:"flex-row"},
+              h("span",{style:{color:"var(--muted)",fontSize:12,width:140}},"Status"),
+              h("span",{className:migrations.up_to_date ? "text-green":"text-red",style:{fontSize:12,fontWeight:700}},migrations.up_to_date ? "Current":"Action Required"),
+            ),
+            h("div",{className:"flex-row"},
+              h("span",{style:{color:"var(--muted)",fontSize:12,width:140}},"Head"),
+              h("span",{className:"mono",style:{fontSize:12}},migrations.head||"—"),
+            ),
+            h("div",{className:"flex-row"},
+              h("span",{style:{color:"var(--muted)",fontSize:12,width:140}},"Current"),
+              h("span",{className:"mono",style:{fontSize:12}},migrations.current||"—"),
+            ),
+            h("div",{className:"flex-row"},
+              h("span",{style:{color:"var(--muted)",fontSize:12,width:140}},"Pending"),
+              h("span",{className:pending.length ? "text-red":"text-green",style:{fontSize:12}},String(pending.length)),
+            ),
+            migrations.error ? h("div",{className:"text-red",style:{fontSize:12,lineHeight:1.5}},migrations.error) : null,
+            pending.length ? h("div",{className:"mono",style:{fontSize:11,lineHeight:1.6,color:"var(--muted)"}},
+              pending.map(item => item.revision).join(", ")
+            ) : null,
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+// ── Agent Identity Card Page ─────────────────────────────────────────────────
+function RiskSparkline({ events }) {
+  const W = 600, H = 60;
+  if (!events || events.length < 2) return null;
+  const scores = events.map(e => (e.threat || {}).risk_score ?? 0);
+  const xScale = i => (i / (scores.length - 1)) * W;
+  const yScale = s => H - (s / 100) * H;
+  const pts = scores.map((s, i) => `${xScale(i)},${yScale(s)}`).join(" ");
+  const polyPts = `0,${H} ` + pts + ` ${W},${H}`;
+  const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+  const lineColor = avg >= 70 ? "#ef4444" : avg >= 40 ? "#f59e0b" : "#10b981";
+  const fillColor = avg >= 70 ? "rgba(239,68,68,.2)" : avg >= 40 ? "rgba(245,158,11,.15)" : "rgba(16,185,129,.12)";
+  return h("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", height: H, preserveAspectRatio: "none",
+    style: { display: "block", borderRadius: 4 } },
+    h("polygon", { points: polyPts, fill: fillColor }),
+    h("polyline", { points: pts, fill: "none", stroke: lineColor, strokeWidth: 2, strokeLinejoin: "round" }),
+  );
+}
+
+function IdentityCardPage() {
+  const [graphData] = useApi("/api/graph/data", { nodes: [], edges: [] }, 15000);
+  const [selectedAgent, setSelectedAgent] = useState("");
+  const [agentEvents, setAgentEvents] = useState([]);
+  const [loadingEvents, setLoadingEvents] = useState(false);
+
+  const agentNodes = (graphData.nodes || []).filter(n => n.node_type === "agent");
+
+  useEffect(() => {
+    if (!selectedAgent && agentNodes.length > 0) setSelectedAgent(agentNodes[0].label);
+  }, [agentNodes.length]);
+
+  useEffect(() => {
+    if (!selectedAgent) return;
+    setLoadingEvents(true);
+    const subject = selectedAgent.startsWith("agt-")
+      ? "agent-" + selectedAgent.slice(4) + "@acme.svc"
+      : selectedAgent + "@acme.svc";
+    fetch(`${API_BASE}/api/uis/events?limit=10&subject=${encodeURIComponent(subject)}`,
+      { headers: { "X-API-Key": "demo-key" } })
+      .then(r => r.ok ? r.json() : { events: [] })
+      .then(d => { setAgentEvents(d.events || []); setLoadingEvents(false); })
+      .catch(() => setLoadingEvents(false));
+  }, [selectedAgent]);
+
+  const selectedNode = agentNodes.find(n => n.label === selectedAgent);
+  const edges = graphData.edges || [];
+  const outEdges = edges.filter(e => e.src_label === selectedAgent);
+  const issuers   = [...new Set(outEdges.filter(e => e.edge_type === "authenticated_by" || e.edge_type === "trusts_issuer").map(e => e.dst_label))];
+  const verifiers = [...new Set(outEdges.filter(e => e.edge_type === "attested_by" || e.edge_type === "verified_by").map(e => e.dst_label))];
+  const recentEvent = agentEvents[0] || null;
+  const riskTier  = (recentEvent?.threat || {}).risk_tier  || "low";
+  const riskScore = (recentEvent?.threat || {}).risk_score ?? "\u2014";
+
+  return h("div", null,
+    h("div", { className: "section-head" },
+      h("div", { className: "section-title" }, "\ud83e\udeb9 Agent Identity Card"),
+      h("div", { className: "section-sub" }, "Inspect any agent\u2019s identity posture, trust relationships, and event history"),
+    ),
+    h("div", { className: "card", style: { marginBottom: 20 } },
+      h("div", { className: "card-body", style: { display: "flex", alignItems: "center", gap: 16 } },
+        h("div", { style: { fontSize: 11, color: "var(--muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".7px" } }, "Select Agent"),
+        h("select", {
+          value: selectedAgent,
+          onChange: e => setSelectedAgent(e.target.value),
+          style: { background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)", padding: "8px 12px", borderRadius: 6, fontSize: 13, outline: "none", minWidth: 240 },
+        },
+          agentNodes.length === 0
+            ? h("option", null, "No agents \u2014 run demo_seed.py")
+            : agentNodes.map(n => h("option", { key: n.node_id, value: n.label }, n.label))
+        ),
+        selectedNode && h("div", { style: { fontSize: 12, color: "var(--muted)" } },
+          h("span", { className: "chip", style: { marginRight: 8 } }, selectedNode.node_type),
+          `${selectedNode.observation_count || 0} observations`,
+        ),
+      ),
+    ),
+    selectedAgent && h("div", null,
+      h("div", { className: "icard-grid" },
+        h("div", { className: "icard-panel" },
+          h("div", { className: "icard-name" }, selectedAgent),
+          h("div", { className: "icard-meta" }, (selectedNode?.node_type || "agent"), " \u00b7 ", selectedNode?.observation_count || 0, " observations"),
+          h("div", { className: "icard-section" },
+            h("div", { className: "icard-label" }, "Machine Classification"),
+            h("div", { style: { fontSize: 13 } }, (recentEvent?.identity || {}).machine_classification || "agent"),
+          ),
+          h("div", { className: "icard-section" },
+            h("div", { className: "icard-label" }, "Trusted Issuers"),
+            issuers.length === 0
+              ? h("div", { style: { fontSize: 12, color: "var(--muted)" } }, "None recorded")
+              : issuers.map((iss, i) => h("div", { key: i, style: { fontSize: 12, fontFamily: "monospace", color: "var(--yellow)", marginBottom: 2 } }, iss)),
+          ),
+          h("div", { className: "icard-section" },
+            h("div", { className: "icard-label" }, "Verifiers / Attestations"),
+            verifiers.length === 0
+              ? h("div", { style: { fontSize: 12, color: "var(--muted)" } }, "None recorded")
+              : verifiers.map((v, i) => h("div", { key: i, style: { fontSize: 12, fontFamily: "monospace", color: "#fca5a5", marginBottom: 2 } }, v)),
+          ),
+          h("div", { className: "icard-section" },
+            h("div", { className: "icard-label" }, "Risk Posture"),
+            h("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
+              h(Badge, { sev: riskTier }),
+              h("span", { style: { fontSize: 13, fontWeight: 700,
+                color: typeof riskScore === "number" && riskScore >= 70 ? "var(--red)" : typeof riskScore === "number" && riskScore >= 40 ? "var(--yellow)" : "var(--green)" } },
+                typeof riskScore === "number" ? `Score: ${riskScore}` : "No events"),
+            ),
+          ),
+        ),
+        h("div", { className: "icard-panel" },
+          h("div", { style: { fontSize: 13, fontWeight: 600, marginBottom: 14 } }, "Recent Events"),
+          loadingEvents
+            ? h("div", { className: "loading" }, "Loading\u2026")
+            : agentEvents.length === 0
+            ? h("div", { className: "empty" }, h("div", { className: "empty-icon" }, "\ud83d\udcad"), h("div", { className: "empty-msg" }, "No events for this agent"))
+            : agentEvents.map((ev, i) => {
+                const t = ev.threat || {};
+                const sColor = t.risk_score >= 70 ? "var(--red)" : t.risk_score >= 40 ? "var(--yellow)" : "var(--green)";
+                return h("div", { key: i, className: "timeline-row" },
+                  h("div", { className: "timeline-dot", style: { background: sColor } }),
+                  h("div", { style: { flex: 1, minWidth: 0 } },
+                    h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+                      h("span", { className: "mono text-muted", style: { fontSize: 11 } }, ts(ev.event_timestamp)),
+                      h("span", { className: "mono", style: { fontSize: 11 } }, (ev.auth || {}).protocol || "\u2014"),
+                    ),
+                  ),
+                  h(Badge, { sev: t.risk_tier || "low" }),
+                  h("span", { style: { fontSize: 12, fontWeight: 700, color: sColor, minWidth: 28, textAlign: "right" } }, t.risk_score ?? "\u2014"),
+                );
+              }),
+        ),
+      ),
+      h("div", { className: "sparkline-wrap" },
+        h("div", { style: { fontSize: 12, fontWeight: 600, marginBottom: 10, color: "var(--muted)" } }, "Risk Score Timeline"),
+        agentEvents.length < 2
+          ? h("div", { style: { fontSize: 12, color: "var(--muted)", padding: "12px 0" } }, "Need \u22652 events to render chart")
+          : h(RiskSparkline, { events: agentEvents }),
+      ),
+    ),
+  );
+}
+
+// ── ZTIX Exchange Flow Page ───────────────────────────────────────────────────
+function ZTIXExchangePage() {
+  const [mode, setMode] = useState("walkthrough");
+  const [visibleStep, setVisibleStep] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const playRef = useRef(null);
+  const [graphData] = useApi("/api/graph/data", { nodes: [], edges: [] }, 30000);
+  const agentNodes = (graphData.nodes || []).filter(n => n.node_type === "agent");
+  const [agentA, setAgentA] = useState("");
+  const [agentB, setAgentB] = useState("");
+  const [simResult, setSimResult] = useState(null);
+  const [simLoading, setSimLoading] = useState(false);
+  const [simVisStep, setSimVisStep] = useState(0);
+
+  useEffect(() => {
+    if (agentNodes.length > 0 && !agentA) setAgentA(agentNodes[0].label);
+    if (agentNodes.length > 1 && !agentB) setAgentB(agentNodes[1].label);
+  }, [agentNodes.length]);
+
+  const nowIso = new Date().toISOString();
+  const mockSessionId = "sess-" + Math.random().toString(36).slice(2, 10);
+  const mockClaimsHash = "a3f9b2c1d4e5..." + Math.random().toString(36).slice(2, 6);
+
+  const walkSteps = [
+    {
+      title: "Agent A Asserts Identity",
+      desc: "agt-orchestrator presents its UIS v1.1 identity token to the ZTIX exchange endpoint",
+      content: () => h("div", { className: "ztix-card" },
+        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Protocol"), h("div", { className: "mono", style: { fontSize: 12 } }, "spiffe")),
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Issuer"), h("div", { className: "mono", style: { fontSize: 12 } }, "https://auth.acme.io")),
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Attestation ID"), h("div", { className: "mono", style: { fontSize: 12, color: "#a5b4fc" } }, "att-orch-001")),
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Claims Hash"), h("div", { className: "mono", style: { fontSize: 12, color: "var(--muted)" } }, mockClaimsHash)),
+        )
+      ),
+    },
+    {
+      title: "ZTIX Verifies Binding",
+      desc: "Exchange verifies DPoP binding and attestation chain",
+      content: () => h("div", { className: "ztix-card" },
+        [
+          { label: "dpop_bound", pass: true },
+          { label: "attestation_id present", pass: true },
+          { label: "supply_chain_hash", pass: false },
+          { label: "issuer trusted", pass: true },
+        ].map(({ label, pass }) =>
+          h("div", { key: label, className: `ztix-check ${pass ? "ztix-check-pass" : "ztix-check-fail"}` },
+            h("span", null, pass ? "\u2713" : "\u2717"),
+            h("span", { className: "mono", style: { fontSize: 12, marginLeft: 8 } }, label),
+            !pass && h("span", { style: { fontSize: 11, color: "var(--muted)", marginLeft: 8 } }, "(not bound)"),
+          )
+        )
+      ),
+    },
+    {
+      title: "Risk Score Evaluated",
+      desc: "Runtime risk engine scores the presenting identity",
+      content: () => h("div", { className: "ztix-card" },
+        h("div", { className: "risk-gauge", style: { marginBottom: 10 } },
+          h("div", { style: { fontSize: 12, color: "var(--muted)", minWidth: 80 } }, "Risk Score"),
+          h("div", { className: "gauge-track" }, h("div", { className: "gauge-fill", style: { width: "22%", background: "var(--green)" } })),
+          h("div", { style: { fontSize: 13, fontWeight: 700, color: "var(--green)" } }, "22"),
+          h(Badge, { sev: "low" }),
+        ),
+        h("div", { style: { fontSize: 11, color: "var(--muted)", marginTop: 8 } }, "Indicators: none detected \u2014 clean identity posture"),
+      ),
+    },
+    {
+      title: "ZTIX Token Issued",
+      desc: "Exchange issues a short-lived ZTIX token bound to the verified identity",
+      content: () => h("div", { className: "ztix-token-card" },
+        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "ZTIX ID"), h("div", { className: "mono", style: { fontSize: 12, color: "var(--accent)" } }, "ztix-a3f1b2c9")),
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Bound To"), h("div", { className: "mono", style: { fontSize: 12 } }, "agt-orchestrator")),
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Issued At"), h("div", { className: "mono", style: { fontSize: 12 } }, ts(nowIso))),
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Expires In"), h("div", { className: "mono", style: { fontSize: 12, color: "var(--yellow)" } }, "300s")),
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Scope"), h("div", { className: "mono", style: { fontSize: 12 } }, "read:data, execute:tools")),
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Trust Level"), h("div", { style: { color: "var(--green)", fontWeight: 700 } }, "verified")),
+        )
+      ),
+    },
+    {
+      title: "Agent B Accepts",
+      desc: "agt-analyst accepts the ZTIX token and establishes the trust channel",
+      content: () => h("div", { className: "ztix-card" },
+        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Accepted By"), h("div", { className: "mono", style: { fontSize: 12 } }, "agt-analyst")),
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Verified At"), h("div", { className: "mono", style: { fontSize: 12 } }, ts(nowIso))),
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Session ID"), h("div", { className: "mono", style: { fontSize: 12, color: "var(--accent)" } }, mockSessionId)),
+          h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Channel"), h("div", { style: { color: "var(--green)", fontWeight: 700 } }, "encrypted")),
+        )
+      ),
+    },
   ];
 
-  return React.createElement("div", null,
-    React.createElement("div", { className: "section-title" }, "System Health"),
-    React.createElement("div", { className: "section-sub" }, "Infrastructure status and configuration"),
+  useEffect(() => {
+    if (playing && visibleStep < walkSteps.length) {
+      playRef.current = setTimeout(() => setVisibleStep(v => v + 1), 1500);
+    } else if (visibleStep >= walkSteps.length) {
+      setPlaying(false);
+    }
+    return () => clearTimeout(playRef.current);
+  }, [playing, visibleStep]);
 
-    React.createElement("div", { className: "grid-2", style: { marginBottom: 16 } },
-      React.createElement("div", { className: "card" },
-        React.createElement("div", { className: "card-header" },
-          React.createElement("span", { className: "card-title" }, "Services"),
-          health.loading && React.createElement("span", { className: "spinner" }),
-        ),
-        React.createElement("div", { className: "card-body" },
-          health.error ? React.createElement(ErrBox, { msg: health.error }) :
-          items.map(item =>
-            React.createElement("div", { key: item.label, className: "flex items-center gap16", style: { padding: "10px 0", borderBottom: "1px solid var(--border)" } },
-              React.createElement("span", { className: `status-dot ${h[item.key] ? "green" : "red"}` }),
-              React.createElement("span", { style: { fontWeight: 600, minWidth: 140 } }, item.label),
-              React.createElement("span", { className: "text-muted" }, item.detail),
-              React.createElement("span", { className: `badge ml-auto ${h[item.key] ? "badge-ok" : "badge-crit"}` },
-                health.loading ? "…" : (h[item.key] ? "Healthy" : "Down")
-              ),
-            )
-          )
-        )
+  const replay = () => { setVisibleStep(0); setTimeout(() => setVisibleStep(1), 50); };
+  const togglePlay = () => {
+    if (!playing && visibleStep === 0) setVisibleStep(1);
+    setPlaying(p => !p);
+  };
+
+  const runSimulate = async () => {
+    if (!agentA || !agentB) return;
+    setSimLoading(true); setSimResult(null); setSimVisStep(0);
+    try {
+      const r = await fetch(`${API_BASE}/api/ztix/simulate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-API-Key": "demo-key" },
+        body: JSON.stringify({ agent_a: agentA, agent_b: agentB }),
+      });
+      const d = await r.json();
+      setSimResult(d);
+      let step = 1;
+      const advance = () => {
+        setSimVisStep(step);
+        step++;
+        if (step <= 5) setTimeout(advance, 700);
+      };
+      setTimeout(advance, 300);
+    } catch(e) {}
+    setSimLoading(false);
+  };
+
+  return h("div", null,
+    h("div", { className: "section-head" },
+      h("div", { className: "section-title" }, "\ud83d\udd04 ZTIX Exchange Flow"),
+      h("div", { className: "section-sub" }, "Zero-Trust Identity Exchange \u2014 how two agents establish trust and exchange identity tokens"),
+    ),
+    // Honesty banner: this page is a sales-demo of ZTIX, not the
+    // production exchange. The returned tokens are unsigned. The real
+    // ZTIX surface lives in the federation Periodic Proof-of-Control
+    // routes; a signed-token endpoint will ship at /api/ztix/token later.
+    h("div", { className: "ztix-demo-banner" },
+      h("span", { className: "ztix-demo-badge" }, "DEMO"),
+      h("span", null,
+        "This page simulates a ZTIX exchange for walkthroughs. The token returned is ",
+        h("strong", null, "not"),
+        " cryptographically bound to any key. The production ZTIX surface is the ",
+        h("a", { href: "/api/federation/verifiers/proof-registry",
+                 style: { color: "var(--accent)", textDecoration: "none" } },
+          "Periodic Proof-of-Control"),
+        " feature on federation verifiers.",
       ),
-
-      React.createElement("div", { className: "card" },
-        React.createElement("div", { className: "card-header" }, React.createElement("span", { className: "card-title" }, "Score Thresholds")),
-        React.createElement("div", { className: "card-body" },
-          [
-            { label: "ALLOW",   val: "> 70", color: "var(--green)" },
-            { label: "STEP_UP", val: "> 50", color: "var(--yellow)" },
-            { label: "BLOCK",   val: "> 30", color: "var(--orange)" },
-            { label: "REVOKE",  val: "≤ 15", color: "var(--red)" },
-          ].map(row =>
-            React.createElement("div", { key: row.label, className: "flex items-center gap16", style: { padding: "10px 0", borderBottom: "1px solid var(--border)" } },
-              React.createElement("span", { className: `badge badge-${row.label.toLowerCase().replace("_", "")}`, style: { minWidth: 80 } }, row.label),
-              React.createElement("span", { className: "text-muted" }, "Score " + row.val),
-            )
-          )
-        )
-      )
+    ),
+    h("div", { style: { display: "flex", gap: 8, marginBottom: 20 } },
+      h("button", { className: `ztix-mode-btn${mode === "walkthrough" ? " active" : ""}`, onClick: () => setMode("walkthrough") }, "Walkthrough"),
+      h("button", { className: `ztix-mode-btn${mode === "live" ? " active" : ""}`, onClick: () => setMode("live") }, "Live Simulate"),
     ),
 
-    // API Key helper
-    React.createElement("div", { className: "card" },
-      React.createElement("div", { className: "card-header" }, React.createElement("span", { className: "card-title" }, "Session API Key")),
-      React.createElement("div", { className: "card-body" },
-        React.createElement("p", { className: "text-muted", style: { marginBottom: 12, fontSize: 13 } },
-          "Enter your API key to authenticate dashboard requests. Stored in sessionStorage — cleared when you close the tab."
+    mode === "walkthrough" && h("div", null,
+      h("div", { style: { display: "flex", gap: 10, marginBottom: 20, alignItems: "center" } },
+        h("button", {
+          onClick: togglePlay,
+          style: { background: "var(--accent)", color: "white", border: "none", padding: "8px 20px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer" },
+        }, playing ? "\u23f8 Pause" : "\u25b6 Play"),
+        visibleStep > 0 && h("button", {
+          onClick: replay,
+          style: { background: "var(--surface2)", color: "var(--text)", border: "1px solid var(--border)", padding: "8px 20px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer" },
+        }, "\ud83d\udd04 Replay"),
+        h("span", { style: { fontSize: 12, color: "var(--muted)" } },
+          visibleStep === 0 ? "Click \u25b6 Play to begin" : `Step ${Math.min(visibleStep, walkSteps.length)} of ${walkSteps.length}`),
+      ),
+      h("div", { className: "card" },
+        h("div", { className: "card-body" },
+          h("div", { className: "ztix-timeline" },
+            walkSteps.map((step, i) => {
+              const stepNum = i + 1;
+              const isVisible = visibleStep >= stepNum;
+              return h("div", { key: i, className: "ztix-step",
+                style: { opacity: isVisible ? 1 : 0, transition: `opacity .4s ease` },
+              },
+                h("div", { className: "ztix-step-line" },
+                  h("div", { className: `ztix-step-num${isVisible ? " active" : ""}` }, stepNum),
+                  i < walkSteps.length - 1 && h("div", { className: "ztix-step-connector" }),
+                ),
+                h("div", { className: "ztix-step-body" },
+                  h("div", { className: "ztix-step-title" }, step.title),
+                  h("div", { className: "ztix-step-desc" }, step.desc),
+                  isVisible && step.content(),
+                ),
+              );
+            })
+          ),
         ),
-        React.createElement("div", { className: "form-group", style: { display: "flex", gap: 12, alignItems: "flex-end" } },
-          React.createElement("input", {
-            type: "password",
-            placeholder: "tdna_…",
-            defaultValue: sessionStorage.getItem("tdna_api_key") || "",
-            id: "dash-api-key",
-            style: { flex: 1 }
-          }),
-          React.createElement("button", { className: "btn btn-primary", onClick: () => {
-            const v = document.getElementById("dash-api-key").value.trim();
-            if (v) { sessionStorage.setItem("tdna_api_key", v); location.reload(); }
-          }}, "Apply"),
-          React.createElement("button", { className: "btn", onClick: () => {
-            sessionStorage.removeItem("tdna_api_key");
-            location.reload();
-          }}, "Clear"),
-        )
-      )
-    )
+      ),
+    ),
+
+    mode === "live" && h("div", null,
+      h("div", { className: "card", style: { marginBottom: 20 } },
+        h("div", { className: "card-head" }, h("div", { className: "card-title" }, "Configure Exchange")),
+        h("div", { className: "card-body", style: { display: "flex", gap: 16, alignItems: "flex-end", flexWrap: "wrap" } },
+          h("div", null,
+            h("div", { style: { fontSize: 11, color: "var(--muted)", marginBottom: 6, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px" } }, "Agent A (Presenter)"),
+            h("select", {
+              value: agentA, onChange: e => setAgentA(e.target.value),
+              style: { background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)", padding: "8px 12px", borderRadius: 6, fontSize: 13, outline: "none", minWidth: 200 },
+            }, agentNodes.map(n => h("option", { key: n.node_id, value: n.label }, n.label))),
+          ),
+          h("div", null,
+            h("div", { style: { fontSize: 11, color: "var(--muted)", marginBottom: 6, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px" } }, "Agent B (Acceptor)"),
+            h("select", {
+              value: agentB, onChange: e => setAgentB(e.target.value),
+              style: { background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text)", padding: "8px 12px", borderRadius: 6, fontSize: 13, outline: "none", minWidth: 200 },
+            }, agentNodes.map(n => h("option", { key: n.node_id, value: n.label }, n.label))),
+          ),
+          h("button", {
+            onClick: runSimulate, disabled: simLoading || !agentA || !agentB,
+            style: { background: "var(--accent)", color: "white", border: "none", padding: "9px 22px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: simLoading ? "not-allowed" : "pointer", opacity: simLoading ? .7 : 1 },
+          }, simLoading ? "Simulating\u2026" : "\u25b6 Simulate Exchange"),
+        ),
+      ),
+      simResult && h("div", { className: "card" },
+        h("div", { className: "card-head" },
+          h("div", { className: "card-title" }, "Exchange Result"),
+          h("span", { className: "chip", style: { color: "var(--green)" } }, "\u2713 Exchange complete"),
+        ),
+        h("div", { className: "card-body" },
+          h("div", { className: "ztix-timeline" },
+            [
+              {
+                title: "Agent A Asserts Identity",
+                desc: `${agentA} presents its UIS v1.1 identity token`,
+                content: () => {
+                  const id = (simResult.event || {}).identity || {};
+                  const auth = (simResult.event || {}).auth || {};
+                  return h("div", { className: "ztix-card" },
+                    h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+                      h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Subject"), h("div", { className: "mono", style: { fontSize: 12 } }, id.subject || "\u2014")),
+                      h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Protocol"), h("div", { className: "mono", style: { fontSize: 12 } }, auth.protocol || "\u2014")),
+                    ),
+                  );
+                },
+              },
+              {
+                title: "ZTIX Verifies Binding",
+                desc: "Exchange checks DPoP binding and attestation",
+                content: () => {
+                  const binding = (simResult.event || {}).binding || {};
+                  return h("div", { className: "ztix-card" },
+                    Object.entries(binding).map(([k, v]) =>
+                      h("div", { key: k, className: `ztix-check ${v ? "ztix-check-pass" : "ztix-check-fail"}` },
+                        h("span", null, v ? "\u2713" : "\u2717"),
+                        h("span", { className: "mono", style: { fontSize: 12, marginLeft: 8 } }, k),
+                        v && h("span", { style: { fontSize: 11, color: "var(--muted)", marginLeft: 8 } }, String(v).slice(0, 30)),
+                      )
+                    ),
+                  );
+                },
+              },
+              {
+                title: "Risk Score Evaluated",
+                desc: "Runtime risk engine scores the presenting identity",
+                content: () => {
+                  const t = (simResult.event || {}).threat || {};
+                  return h("div", { className: "ztix-card" },
+                    h("div", { className: "risk-gauge" },
+                      h("div", { style: { fontSize: 12, color: "var(--muted)", minWidth: 80 } }, "Risk Score"),
+                      h("div", { className: "gauge-track" }, h("div", { className: "gauge-fill", style: {
+                        width: (t.risk_score || 0) + "%",
+                        background: (t.risk_score || 0) >= 70 ? "var(--red)" : (t.risk_score || 0) >= 40 ? "var(--yellow)" : "var(--green)",
+                      } })),
+                      h("div", { style: { fontSize: 13, fontWeight: 700 } }, t.risk_score ?? "\u2014"),
+                      h(Badge, { sev: t.risk_tier || "low" }),
+                    ),
+                  );
+                },
+              },
+              {
+                title: "ZTIX Token Issued",
+                desc: "Exchange issues a bound short-lived ZTIX token",
+                content: () => {
+                  const tok = simResult.ztix_token || {};
+                  return h("div", { className: "ztix-token-card" },
+                    h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+                      h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "ZTIX ID"), h("div", { className: "mono", style: { fontSize: 12, color: "var(--accent)" } }, tok.ztix_id || "\u2014")),
+                      h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Bound To"), h("div", { className: "mono", style: { fontSize: 12 } }, tok.bound_to || "\u2014")),
+                      h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Expires In"), h("div", { className: "mono", style: { fontSize: 12, color: "var(--yellow)" } }, tok.expires_in ? tok.expires_in + "s" : "\u2014")),
+                      h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Trust Level"), h("div", { style: { color: "var(--green)", fontWeight: 700 } }, tok.trust_level || "\u2014")),
+                    ),
+                  );
+                },
+              },
+              {
+                title: "Agent B Accepts",
+                desc: `${agentB} verifies the ZTIX token and opens the trust channel`,
+                content: () => {
+                  const d = simResult.graph_delta || {};
+                  return h("div", { className: "ztix-card" },
+                    h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+                      h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Accepted By"), h("div", { className: "mono", style: { fontSize: 12 } }, agentB)),
+                      h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Channel"), h("div", { style: { color: "var(--green)", fontWeight: 700 } }, "encrypted")),
+                      h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Graph Nodes"), h("div", { className: "mono", style: { fontSize: 12 } }, `${d.nodes_before} \u2192 ${d.nodes_after}`)),
+                      h("div", null, h("div", { style: { fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".7px", marginBottom: 3 } }, "Graph Edges"), h("div", { className: "mono", style: { fontSize: 12 } }, `${d.edges_before} \u2192 ${d.edges_after}`)),
+                    ),
+                  );
+                },
+              },
+            ].map((step, i) => {
+              const stepNum = i + 1;
+              const isVisible = simVisStep >= stepNum;
+              return h("div", { key: i, className: "ztix-step",
+                style: { opacity: isVisible ? 1 : 0, transition: `opacity .4s ease` },
+              },
+                h("div", { className: "ztix-step-line" },
+                  h("div", { className: `ztix-step-num${isVisible ? " active" : ""}` }, stepNum),
+                  i < 4 && h("div", { className: "ztix-step-connector" }),
+                ),
+                h("div", { className: "ztix-step-body" },
+                  h("div", { className: "ztix-step-title" }, step.title),
+                  h("div", { className: "ztix-step-desc" }, step.desc),
+                  isVisible && step.content(),
+                ),
+              );
+            })
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+// ── Expansion-feature pages ──────────────────────────────────────────────────
+// Scaffolds for the four new operator surfaces shipped in the expansion
+// sprint. Each uses useApi against the live API and renders a bare-bones
+// list/table so operators can sanity-check that data is flowing. Visual
+// polish lives in a follow-up.
+
+function FlywheelDigestPage() {
+  const [digest] = useApi("/api/threat-sharing/industry/digest", { items: [] }, 30000);
+  const [scored] = useApi("/api/threat-sharing/network/scored?limit=20", { playbooks: [] }, 30000);
+  const items = digest?.items || [];
+  const playbooks = scored?.playbooks || [];
+  return h("div", { className:"page" },
+    h("h1", { className:"page-title" }, "Threat-Sharing Flywheel"),
+    h("div", { className:"page-sub" },
+      digest?.industry
+        ? `Industry: ${digest.industry} — confirmed attacks against peers in your vertical (${items.length})`
+        : "No industry tag set — POST /api/threat-sharing/industry to enable digest."),
+    h("table", { className:"data-table" },
+      h("thead", null, h("tr", null,
+        h("th", null, "Playbook"),
+        h("th", null, "Severity"),
+        h("th", null, "Peer tenants"),
+        h("th", null, "Confirmed"),
+        h("th", null, "Last hit"),
+      )),
+      h("tbody", null, items.map((it, i) =>
+        h("tr", { key:i },
+          h("td", null, it.playbook_name || it.network_playbook_id),
+          h("td", null, h(Badge, { sev: it.severity })),
+          h("td", null, it.peer_tenants),
+          h("td", null, it.confirmed_hits),
+          h("td", { className:"text-muted", style:{fontSize:11} }, it.last_hit_at || "—"),
+        ),
+      )),
+    ),
+    h("h2", { className:"page-section" }, "Top scored network playbooks"),
+    h("table", { className:"data-table" },
+      h("thead", null, h("tr", null,
+        h("th", null, "Playbook"),
+        h("th", null, "Confidence"),
+        h("th", null, "Confirmed"),
+        h("th", null, "Tenants"),
+      )),
+      h("tbody", null, playbooks.map((pb, i) =>
+        h("tr", { key:i },
+          h("td", null, pb.name || pb.network_playbook_id),
+          h("td", null, h(ConfBar, { v: pb.score?.confidence || 0 })),
+          h("td", null, pb.score?.confirmed_hits || 0),
+          h("td", null, pb.score?.distinct_tenants || 0),
+        ),
+      )),
+    ),
+  );
+}
+
+function CompliancePosturePage() {
+  const [statements] = useApi("/api/compliance/posture/statements", { statements: [] }, 30000);
+  const items = statements?.statements || [];
+  return h("div", { className:"page" },
+    h("h1", { className:"page-title" }, "Compliance Posture"),
+    h("div", { className:"page-sub" },
+      "Signed evidence packs per framework. Generate via POST /api/compliance/posture/{framework}/generate."),
+    h("table", { className:"data-table" },
+      h("thead", null, h("tr", null,
+        h("th", null, "Framework"),
+        h("th", null, "Period"),
+        h("th", null, "Pass"),
+        h("th", null, "Signed at"),
+        h("th", null, "Statement ID"),
+      )),
+      h("tbody", null, items.map((s, i) =>
+        h("tr", { key:i },
+          h("td", null, s.framework?.toUpperCase() || "—"),
+          h("td", { className:"text-muted", style:{fontSize:11} },
+            `${(s.period_start || "").slice(0,10)} → ${(s.period_end || "").slice(0,10)}`),
+          h("td", null, h("span", {
+            className:`badge ${s.overall_pass ? "low" : "critical"}`,
+          }, s.overall_pass ? "PASS" : "FAIL")),
+          h("td", { className:"text-muted", style:{fontSize:11} }, (s.signed_at || "").slice(0,19)),
+          h("td", { style:{fontFamily:"monospace",fontSize:11} }, s.statement_id),
+        ),
+      )),
+    ),
+  );
+}
+
+function HoneypotHitsPage() {
+  const [hits] = useApi("/api/honeypot/hits?acknowledged=false", { hits: [] }, 10000);
+  const [decoys] = useApi("/api/honeypot/decoys", { decoys: [] }, 30000);
+  const hitItems = hits?.hits || [];
+  const decoyItems = decoys?.decoys || [];
+  const [hitDetail, setHitDetail] = useState(null);
+  const [decoyDetail, setDecoyDetail] = useState(null);
+  return h("div", { className:"page" },
+    h("h1", { className:"page-title" }, "Honeypot Mesh"),
+    h("div", { className:"page-sub" },
+      `Active deception. ${decoyItems.length} decoys deployed, ${hitItems.length} unacknowledged hits. Click any row for full detail.`),
+    h("h2", { className:"page-section" }, "Open hits (critical)"),
+    h("table", { className:"data-table" },
+      h("thead", null, h("tr", null,
+        h("th", null, "Decoy"),
+        h("th", null, "Source IP"),
+        h("th", null, "User-Agent"),
+        h("th", null, "Detected"),
+        h("th", null, "Severity"),
+      )),
+      h("tbody", null, hitItems.length === 0
+        ? [h("tr", { key:"empty" }, h("td", { colSpan:5, className:"text-muted" }, "No open hits."))]
+        : hitItems.map((hit, i) =>
+            h("tr", { key:i, className:"clickable", title:"Click for full hit detail", onClick:()=>setHitDetail(hit) },
+              h("td", { style:{fontFamily:"monospace",fontSize:11} }, hit.decoy_id),
+              h("td", null, hit.source_ip || "—"),
+              h("td", { className:"text-muted", style:{fontSize:11} }, hit.user_agent || "—"),
+              h("td", { className:"text-muted", style:{fontSize:11} }, (hit.detected_at || "").slice(0,19)),
+              h("td", null, h(Badge, { sev: hit.severity })),
+            ),
+          ),
+      ),
+    ),
+    h("h2", { className:"page-section" }, "Decoy inventory"),
+    h("table", { className:"data-table" },
+      h("thead", null, h("tr", null,
+        h("th", null, "Public ID"),
+        h("th", null, "Kind"),
+        h("th", null, "Hits"),
+        h("th", null, "Last hit"),
+      )),
+      h("tbody", null, decoyItems.map((d, i) =>
+        h("tr", { key:i, className:"clickable", title:"Click for full decoy detail", onClick:()=>setDecoyDetail(d) },
+          h("td", { style:{fontFamily:"monospace",fontSize:11} }, d.public_id),
+          h("td", null, d.kind),
+          h("td", null, d.hits),
+          h("td", { className:"text-muted", style:{fontSize:11} }, d.last_hit_at || "—"),
+        ),
+      )),
+    ),
+    hitDetail && h(DetailModal,{ title:"Honeypot Hit", sub:hitDetail.decoy_id, record:hitDetail, onClose:()=>setHitDetail(null) }),
+    decoyDetail && h(DetailModal,{ title:"Decoy", sub:decoyDetail.public_id, record:decoyDetail, onClose:()=>setDecoyDetail(null) }),
+  );
+}
+
+// ── Workflows — staged agent pipeline view (matches the reference Example) ────
+function WorkflowsPage() {
+  const FX = window.WORKFLOW_FIXTURES || [];
+  const [idx, setIdx] = useState(0);
+  const [sel, setSel] = useState(null);
+  const [hidden, setHidden] = useState({});
+  const [expanded, setExpanded] = useState({});
+  const ctrl = useRef({});
+  const wf = FX[idx] || { name:"—", framework:"—", source:"—", scanned_at:"", counts:{}, graphData:{ nodes:[], edges:[] }, anomalies:[] };
+  const anoms = wf.anomalies || [];
+  const c = wf.counts || {};
+  const present = Array.from(new Set((wf.graphData.nodes||[]).map(n=>n.node_type)));
+
+  const handlers = {
+    onSelectNode:(d)=>setSel({kind:"node",data:d}),
+    onSelectEdge:(d)=>setSel({kind:"edge",data:d}),
+    onBackground:()=>setSel(null),
+    onToggleGroup:(id)=>setExpanded(p=>({ ...p, [id]: !p[id] })),
+  };
+  const jumpTo = (label)=>{ if(label && ctrl.current.focusLabel) ctrl.current.focusLabel(label); };
+  const Stat = (label, val, color)=>h("div",{className:"gstat",style:{padding:"8px 14px"}},
+    h("div",{className:"gstat-num",style:{fontSize:20,color:color||"var(--text)"}},val),
+    h("div",{className:"gstat-label"},label));
+
+  return h("div", null,
+    h("div",{className:"section-head"},
+      h("div",{className:"section-title"},"🔗 Agent Workflows"),
+      h("div",{className:"section-sub"},"Staged left→right view of one agent workflow (start → triage → sub-agents → tools/MCP → guardrail → end). For the full population of agents and their attestations, see Trust Graph.")),
+
+    // picker + scan stat strip
+    h("div",{className:"card",style:{marginBottom:16}},
+      h("div",{className:"card-head"},
+        h("div",{className:"card-title"},"Workflow"),
+        h("select",{value:idx,onChange:e=>{ setIdx(Number(e.target.value)); setSel(null); setExpanded({}); },
+          style:{marginLeft:"auto",background:"var(--surface2)",border:"1px solid var(--border)",color:"var(--text)",padding:"6px 10px",borderRadius:6,fontSize:13}},
+          FX.map((w,i)=>h("option",{key:i,value:i},w.name)))),
+      h("div",{style:{display:"flex",gap:18,flexWrap:"wrap",alignItems:"center",padding:"12px 16px"}},
+        h("div",{style:{fontSize:12,color:"var(--muted)"}},
+          h("div",null,"Framework: ",h("span",{style:{color:"var(--text)"}},wf.framework)),
+          h("div",null,"Source: ",h("span",{className:"mono",style:{color:"var(--text)"}},wf.source)),
+          h("div",null,"Scanned: ",h("span",{className:"mono",style:{color:"var(--text)"}},(wf.scanned_at||"").slice(0,19).replace("T"," ")))),
+        h("div",{style:{display:"flex",gap:12,marginLeft:"auto"}},
+          Stat("Agents", c.agents||0, "var(--accent)"),
+          Stat("Tools", c.tools||0, "var(--green)"),
+          Stat("MCP Servers", c.mcp_servers||0, "#ec4899"),
+          Stat("Vulnerabilities", c.vulnerabilities||0, (c.vulnerabilities?"var(--red)":"var(--green)"))))),
+
+    // pipeline graph
+    h("div",{className:"card",style:{marginBottom:20}},
+      h("div",{className:"card-head"},
+        h("div",{className:"card-title"},"Pipeline"),
+        h("span",{className:"chip",style:{fontSize:10}},`${(wf.graphData.nodes||[]).length} nodes · ${(wf.graphData.edges||[]).length} edges`)),
+      h("div",{style:{padding:"12px 16px 16px"}},
+        h("div",{className:"tg-toolbar"},
+          h("button",{className:"tg-btn",onClick:()=>(ctrl.current.resetView||ctrl.current.fit)&&(ctrl.current.resetView||ctrl.current.fit)()},"⤢ Fit / Reset view"),
+          h("button",{className:"tg-btn",onClick:()=>setExpanded({})},"⊟ Collapse all"),
+          h("div",{className:"tg-legend",style:{marginLeft:"auto"}},
+            present.map(t=>h("div",{key:t,className:`tg-chip${hidden[t]?" off":""}`,onClick:()=>setHidden(p=>({...p,[t]:!p[t]}))},
+              h("span",{className:"dot",style:{background:gcol(t)}}), t)))),
+        h("div",{className:"tg-wrap"},
+          h(CytoGraph,{ graphData:wf.graphData, anomalies:anoms, hidden, expanded, ctrl, handlers }),
+          h("div",{className:"tg-hint"},"Hover a node for its label · click a node or edge to inspect · click ⤢ to fit")))),
+
+    sel && h(ContextPanel,{ sel, graphData:wf.graphData, anomalies:anoms, ctrl,
+      onClose:()=>setSel(null), onJump:jumpTo, onFindPaths:jumpTo, onKilled:()=>{} }),
+
+    // secondary: real workflow attestation chain table
+    h(WorkflowDriftPage),
+  );
+}
+
+function WorkflowDriftPage() {
+  const [workflows] = useApi("/api/workflow", { workflows: [] }, 30000);
+  const items = workflows?.workflows || [];
+  return h("div", { className:"page" },
+    h("h1", { className:"page-title" }, "Workflow Attestation"),
+    h("div", { className:"page-sub" },
+      `${items.length} active canonical workflows. Replay each to verify chain integrity end-to-end.`),
+    h("table", { className:"data-table" },
+      h("thead", null, h("tr", null,
+        h("th", null, "Workflow"),
+        h("th", null, "Hops"),
+        h("th", null, "Status"),
+        h("th", null, "Created"),
+        h("th", null, "Merkle root"),
+      )),
+      h("tbody", null, items.map((w, i) =>
+        h("tr", { key:i },
+          h("td", null, w.name),
+          h("td", null, (w.hops || []).length),
+          h("td", null, h("span", {
+            className:`badge ${w.status === "active" ? "low" : "medium"}`,
+          }, w.status)),
+          h("td", { className:"text-muted", style:{fontSize:11} }, (w.created_at || "").slice(0,19)),
+          h("td", { style:{fontFamily:"monospace",fontSize:11} }, (w.merkle_root || "").slice(0,16) + "…"),
+        ),
+      )),
+    ),
+  );
+}
+
+// ── Upsell modal — listens for tokendna:upsell events from apiFetch ───────────
+function UpsellModal() {
+  const [detail, setDetail] = useState(null);
+  useEffect(() => {
+    const onUpsell = e => setDetail(e.detail);
+    window.addEventListener("tokendna:upsell", onUpsell);
+    return () => window.removeEventListener("tokendna:upsell", onUpsell);
+  }, []);
+  if (!detail) return null;
+  const close = () => setDetail(null);
+  const onBackdrop = e => { if (e.target === e.currentTarget) close(); };
+  const upgradeHref = detail.upgrade_url || "/billing/upgrade";
+  return h("div", { className: "upsell-overlay", onClick: onBackdrop },
+    h("div", { className: "upsell-modal", role: "dialog", "aria-modal": "true" },
+      h("div", { className: "upsell-eyebrow" }, "Enterprise Feature"),
+      h("div", { className: "upsell-title" }, detail.feature_name || detail.feature),
+      h("div", { className: "upsell-message" }, detail.message),
+      h("div", { className: "upsell-tiers" },
+        h("div", { className: "upsell-tier-pill" },
+          h("div", { className: "upsell-tier-label" }, "Your tier"),
+          h("div", { className: "upsell-tier-value" }, detail.tenant_tier || "—"),
+        ),
+        h("div", { className: "upsell-tier-pill required" },
+          h("div", { className: "upsell-tier-label" }, "Required"),
+          h("div", { className: "upsell-tier-value" }, detail.required_tier || "—"),
+        ),
+      ),
+      h("div", { className: "upsell-actions" },
+        h("button", { className: "upsell-btn", onClick: close }, "Not now"),
+        h("a", { className: "upsell-btn primary", href: upgradeHref }, "Upgrade"),
+      ),
+    ),
   );
 }
 
 function App() {
   const [page, setPage] = useState("overview");
 
+  useEffect(() => {
+    const onNav = (e) => { if (e.detail) setPage(e.detail); };
+    window.addEventListener("tokendna:nav", onNav);
+    return () => window.removeEventListener("tokendna:nav", onNav);
+  }, []);
+
   const navItems = [
-    { id: "overview",  label: "Overview",        icon: "⬡" },
-    { id: "sessions",  label: "Sessions",         icon: "🛡" },
-    { id: "scan",      label: "Cloud Posture",    icon: "☁" },
-    { id: "onboarding",label: "Connect AWS",      icon: "🔗" },
-    { id: "tenants",   label: "Tenants",          icon: "🏢" },
-    { id: "system",    label: "System Health",    icon: "⚙" },
+    { section: "Monitor", items: [
+      { id:"overview",   label:"Overview",        icon:"📊" },
+      { id:"blast",      label:"Blast Radius",     icon:"💥" },
+      { id:"intent",     label:"Intent Detection", icon:"🎯" },
+      { id:"graph",      label:"Trust Graph",      icon:"🕸" },
+    ]},
+    { section: "Network", items: [
+      { id:"flywheel",   label:"Flywheel Digest",  icon:"📡" },
+      { id:"workflows",  label:"Workflows",        icon:"🔗" },
+      { id:"honeypots",  label:"Honeypots",        icon:"🍯" },
+    ]},
+    { section: "Identity", items: [
+      { id:"identity",   label:"Identity Card",    icon:"🪪" },
+      { id:"ztix",       label:"ZTIX Exchange",     icon:"🔄" },
+    ]},
+    { section: "Compliance", items: [
+      { id:"posture",    label:"Posture",          icon:"📜" },
+    ]},
+    { section: "System", items: [
+      { id:"system",     label:"System Health",    icon:"⚙" },
+    ]},
   ];
 
-  const pageMap = { overview: OverviewPage, sessions: SessionsPage, scan: ScanPage, onboarding: OnboardingPage, tenants: TenantsPage, system: SystemPage };
+  const pageMap = {
+    overview: OverviewPage, blast: BlastRadiusPage, intent: IntentPage, graph: TrustGraphPage,
+    identity: IdentityCardPage, ztix: ZTIXExchangePage, system: SystemPage,
+    flywheel: FlywheelDigestPage, workflows: WorkflowsPage,
+    honeypots: HoneypotHitsPage, posture: CompliancePosturePage,
+  };
   const Page = pageMap[page] || OverviewPage;
+  const currentLabel = navItems.flatMap(g=>g.items).find(n=>n.id===page)?.label || "Overview";
 
-  return React.createElement("div", { className: "shell" },
-    // Sidebar
-    React.createElement("nav", { className: "sidebar" },
-      React.createElement("div", { className: "logo" },
-        React.createElement("div", { className: "flex items-center gap8" },
-          React.createElement("span", { style: { fontSize: 22 } }, "🛡"),
-          React.createElement("div", null,
-            React.createElement("div", { className: "logo-text" }, "Aegis"),
-            React.createElement("div", { className: "logo-sub" }, "Security Platform"),
-          )
-        )
+  return h("div", { className:"shell" },
+    h("nav", { className:"sidebar" },
+      h("div", { className:"logo" },
+        h("div", { className:"logo-brand" }, "Token", h("span",null,"DNA")),
+        h("div", { className:"logo-tag" }, "Runtime Risk Engine"),
       ),
-      React.createElement("div", { className: "nav-section" },
-        React.createElement("div", { className: "nav-label" }, "Monitor"),
-        navItems.slice(0,3).map(n =>
-          React.createElement("div", { key: n.id, className: `nav-item${page === n.id ? " active" : ""}`, onClick: () => setPage(n.id) },
-            React.createElement("span", { className: "nav-icon" }, n.icon),
-            n.label,
-          )
-        )
+      navItems.map(group => h("div", { key:group.section, className:"nav-group" },
+        h("div", { className:"nav-label" }, group.section),
+        group.items.map(n => h("div", {
+          key:n.id,
+          className:`nav-item${page===n.id?" active":""}`,
+          onClick: ()=>setPage(n.id),
+        },
+          h("span",{className:"nav-icon"},n.icon),
+          n.label,
+        )),
+      )),
+      h("div", { style:{marginTop:"auto",padding:"16px 18px",borderTop:"1px solid var(--border)"} },
+        h("div",{style:{fontSize:11,color:"var(--muted)"}}, "TokenDNA v3.0"),
+        h("div",{style:{fontSize:11,color:"var(--muted)",marginTop:2}}, "Local Control Plane"),
       ),
-      React.createElement("div", { className: "nav-section" },
-        React.createElement("div", { className: "nav-label" }, "Configure"),
-        navItems.slice(3).map(n =>
-          React.createElement("div", { key: n.id, className: `nav-item${page === n.id ? " active" : ""}`, onClick: () => setPage(n.id) },
-            React.createElement("span", { className: "nav-icon" }, n.icon),
-            n.label,
-          )
-        )
-      ),
-      React.createElement("div", { style: { marginTop: "auto", padding: "16px", borderTop: "1px solid var(--border)" } },
-        React.createElement("div", { style: { fontSize: 11, color: "var(--muted)" } }, "Aegis Security Platform"),
-        React.createElement("div", { style: { fontSize: 11, color: "var(--muted)" } }, "v2.1.0"),
-      )
     ),
 
-    // Main
-    React.createElement("div", { className: "main" },
-      React.createElement("div", { className: "topbar" },
-        React.createElement("span", { style: { fontWeight: 600 } }, navItems.find(n => n.id === page)?.label),
-        React.createElement("div", { className: "ml-auto flex items-center gap16" },
-          React.createElement("span", { className: "flex items-center gap8 text-muted", style: { fontSize: 12 } },
-            React.createElement("span", { className: "status-dot green pulse" }),
-            "All systems operational"
+    h("div", { className:"main" },
+      h("div", { className:"topbar" },
+        h("span", { className:"topbar-title" }, currentLabel),
+        h("div", { className:"ml-auto", style:{display:"flex",alignItems:"center",gap:14} },
+          h("div",{className:"status-badge"},
+            h("div",{className:"dot green"}),
+            "API connected",
           ),
-          React.createElement("div", { style: { width: 32, height: 32, borderRadius: "50%", background: "var(--accent2)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 14 } }, "R"),
-        )
+          h("div", { className:"avatar" }, "R"),
+        ),
       ),
-      React.createElement("div", { className: "content" },
-        React.createElement(Page)
-      )
-    )
+      h("div", { className:"content" }, h(Page)),
+    ),
+    h(UpsellModal),
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+ReactDOM.createRoot(document.getElementById("root")).render(h(App));
 </script>
 </body>
 </html>

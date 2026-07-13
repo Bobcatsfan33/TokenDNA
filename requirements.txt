@@ -2,27 +2,33 @@
 # Pin major versions for reproducibility; use `pip install -r requirements.txt`
 
 # ── Web framework ─────────────────────────────────────────────────────────────
-fastapi==0.111.0
+fastapi==0.115.6
 uvicorn[standard]==0.29.0
-python-multipart==0.0.9
+python-multipart==0.0.31
 
 # ── JWT / OIDC ────────────────────────────────────────────────────────────────
-python-jose[cryptography]==3.3.0
-cryptography==42.0.8
+python-jose[cryptography]==3.4.0
+cryptography==48.0.1
 
 # ── HTTP client (JWKS fetch, webhooks, AbuseIPDB, ip-api) ────────────────────
-requests==2.32.3
-httpx==0.27.0                    # async-capable alternative used by some deps
+requests==2.33.0
+httpx==0.28.1                    # async-capable alternative used by some deps
+psycopg[binary]==3.3.3           # PostgreSQL backend for production data plane
+psycopg-pool==3.3.1              # ConnectionPool used by modules.storage.pg_connection
 
 # ── Redis ─────────────────────────────────────────────────────────────────────
-redis==5.0.4
+redis==7.3.0
+# redis-py 7.x requires async_timeout on Python < 3.12; pip resolves it via
+# transitive deps in some environments but a fresh distroless install does
+# not, so we pin it explicitly.
+async-timeout==5.0.1; python_version < "3.12"
 
 # ── ClickHouse ────────────────────────────────────────────────────────────────
-clickhouse-connect==0.7.16
+clickhouse-connect==0.15.1
 
 # ── AWS connector (optional — only needed when using AWS onboarding) ──────────
-boto3==1.34.100
-botocore==1.34.100
+boto3==1.42.96
+botocore==1.42.96
 
 # ── GeoIP (optional — only needed when GEOIP_PROVIDER=maxmind) ───────────────
 # geoip2==4.8.0                  # uncomment + download GeoLite2-City.mmdb
@@ -34,5 +40,6 @@ user-agents==2.2.0
 numpy==2.4.3                    # lightweight — used for profile distance math
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
-pydantic==2.7.1                  # FastAPI model validation (v2 API)
-python-dotenv==1.0.1             # load .env in development
+pydantic==2.13.3                  # FastAPI model validation (v2 API)
+python-dotenv==1.2.2             # load .env in development
+eval_type_backport==0.3.1   # Python 3.9 compat for PEP 604 type unions
