@@ -58,7 +58,7 @@ async def get_tenant(
     if DEV_MODE:
         return _DEV_TENANT
 
-    # ── Path 1: API key ───────────────────────────────────────────────────────
+    # ── Path 1: API key ─────────────────────────────────────────────────────────
     if api_key:
         result = store.lookup_by_key(api_key)
         if not result:
@@ -72,8 +72,28 @@ async def get_tenant(
             role=key_record.role,
         )
 
-    # ── Path 2: Bearer JWT (delegates to existing auth module) ────────────────
+    # ── Path 2: Bearer tenant API key or JWT ─────────────────────────────────
     if bearer:
+        # SCIM providers such as Okta send provisioning credentials as
+        # Authorization: Bearer <token>. Accept a tenant API key here before
+        # falling through to JWT verification for OIDC/API callers. A genuine
+        # JWT will never match a key hash, so this is safe; we swallow lookup
+        # errors so a JWT bearer never 500s on the (optional) key probe.
+        try:
+            result = store.lookup_by_key(bearer.credentials)
+        except Exception:
+            logger.debug("bearer API-key lookup failed; falling through to JWT", exc_info=True)
+            result = None
+        if result:
+            key_record, tenant = result
+            return TenantContext(
+                tenant_id=tenant.id,
+                tenant_name=tenant.name,
+                plan=tenant.plan,
+                api_key_id=key_record.id,
+                role=key_record.role,
+            )
+
         # Import here to avoid circular import
         from auth import _verify_jwt  # type: ignore
         try:
