@@ -36,6 +36,8 @@ class Migration:
 
 INIT_TARGETS: tuple[tuple[str, str], ...] = (
     ("modules.tenants.store", "init_db"),
+    ("modules.auth.saml", "init_db"),
+    ("modules.auth.scim", "init_db"),
     ("modules.identity.attestation_store", "init_db"),
     ("modules.identity.uis_store", "init_db"),
     ("modules.identity.trust_graph", "init_db"),
@@ -158,18 +160,31 @@ def _has_revision(revision: str) -> bool:
 
 
 def _baseline_schema() -> None:
+    _apply_init_targets(INIT_TARGETS)
+
+
+def _apply_init_targets(targets: Iterable[tuple[str, str]]) -> None:
     failures: list[str] = []
-    for dotted, attr in INIT_TARGETS:
+    for dotted, attr in targets:
         try:
             module = importlib.import_module(dotted)
             init = getattr(module, attr)
             init()
-            logger.info("migration baseline applied %s.%s", dotted, attr)
+            logger.info("migration init applied %s.%s", dotted, attr)
         except Exception as exc:  # noqa: BLE001
             failures.append(f"{dotted}.{attr}: {exc}")
     if failures:
         joined = "\n  - ".join(failures)
         raise RuntimeError(f"baseline migration failed:\n  - {joined}")
+
+
+def _enterprise_idp_schema() -> None:
+    _apply_init_targets(
+        (
+            ("modules.auth.saml", "init_db"),
+            ("modules.auth.scim", "init_db"),
+        )
+    )
 
 
 def _api_key_roles() -> None:
@@ -202,6 +217,11 @@ MIGRATIONS: tuple[Migration, ...] = (
         revision="202606010001_api_key_roles",
         description="Add least-privilege role column to tenant API keys",
         apply=_api_key_roles,
+    ),
+    Migration(
+        revision="202605230001_enterprise_idp_ga",
+        description="Initialize durable SAML/SCIM enterprise IdP schemas",
+        apply=_enterprise_idp_schema,
     ),
 )
 
