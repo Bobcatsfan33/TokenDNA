@@ -58,7 +58,7 @@ async def get_tenant(
     if DEV_MODE:
         return _DEV_TENANT
 
-    # ── Path 1: API key ─────────────────────────────────────────────────────────
+    # ── Path 1: API key ───────────────────────────────────────────────────────
     if api_key:
         result = store.lookup_by_key(api_key)
         if not result:
