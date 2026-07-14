@@ -5,6 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from scripts import preflight_prod
 from scripts.preflight_prod import run_preflight
 
 
@@ -50,6 +51,13 @@ def _clear(monkeypatch):
         "TLS_POSTGRES_KEY_PATH",
         "REDIS_TLS",
         "CLICKHOUSE_SECURE",
+        "SAML_SP_ENTITY_ID",
+        "SAML_SP_ACS_URL",
+        "SAML_IDP_SSO_URL",
+        "SAML_IDP_X509_CERT",
+        "SAML_IDP_METADATA_URL",
+        "SAML_ALLOWED_RELAY_STATE_HOSTS",
+        "SAML_ALLOW_IDP_INITIATED",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -221,3 +229,18 @@ def test_preflight_dod_il5_accepts_hardened_controls(monkeypatch):
 
     assert report["passed"] is True
     assert report["compliance_profile"] == "dod_il5"
+
+
+def test_preflight_gates_incomplete_saml_config(monkeypatch):
+    _clear(monkeypatch)
+    monkeypatch.setattr(preflight_prod, "_python_module_available", lambda module_name: False)
+    monkeypatch.setenv("SAML_SP_ENTITY_ID", "https://tokendna.example/sp")
+    monkeypatch.setenv("SAML_SP_ACS_URL", "https://tokendna.example/saml/acs")
+    monkeypatch.setenv("SAML_IDP_SSO_URL", "https://idp.example/sso")
+
+    report = run_preflight("production")
+
+    checks = {c["name"]: c for c in report["checks"]}
+    assert checks["saml_idp_x509_cert_set"]["ok"] is False
+    assert checks["saml_runtime_dependency_available"]["ok"] is False
+    assert checks["saml_relay_state_allowlist_set"]["ok"] is False
