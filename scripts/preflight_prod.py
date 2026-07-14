@@ -8,6 +8,7 @@ Exit code 0 means pass; non-zero means one or more required checks failed.
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import sys
@@ -94,6 +95,29 @@ def _valid_json_object(env_var: str) -> tuple[bool, str]:
     if not isinstance(parsed, dict):
         return False, f"{env_var} must be a JSON object"
     return True, "ok"
+
+
+def _python_module_available(module_name: str) -> bool:
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except (ImportError, AttributeError, ValueError):
+        return False
+
+
+def _is_https_url(value: str | None) -> bool:
+    text = str(value or "").strip().lower()
+    return text.startswith("https://")
+
+
+def _saml_configured() -> bool:
+    return any(
+        _has(os.getenv(key))
+        for key in (
+            "SAML_IDP_SSO_URL",
+            "SAML_IDP_X509_CERT",
+            "SAML_IDP_METADATA_URL",
+        )
+    )
 
 
 def run_preflight(environment: str | None = None) -> dict[str, Any]:
@@ -262,6 +286,35 @@ def run_preflight(environment: str | None = None) -> dict[str, Any]:
             "TLS_POSTGRES_CERT_PATH and TLS_POSTGRES_KEY_PATH required for DoD/FedRAMP High profiles",
         )
 
+    saml_enabled = _saml_configured()
+    if saml_enabled:
+        add_check("saml_sp_entity_id_https", _is_https_url(os.getenv("SAML_SP_ENTITY_ID")), "SAML_SP_ENTITY_ID must be an https URL")
+        add_check("saml_sp_acs_url_https", _is_https_url(os.getenv("SAML_SP_ACS_URL")), "SAML_SP_ACS_URL must be an https URL")
+        add_check("saml_idp_sso_url_set", _has(os.getenv("SAML_IDP_SSO_URL")), "SAML_IDP_SSO_URL required when SAML is enabled")
+        add_check("saml_idp_x509_cert_set", _has(os.getenv("SAML_IDP_X509_CERT")), "SAML_IDP_X509_CERT required when SAML is enabled")
+        add_check(
+            "saml_runtime_dependency_available",
+            _python_module_available("onelogin.saml2.response"),
+            "python3-saml runtime dependency required when SAML is enabled",
+        )
+        add_check(
+            "saml_xml_defusedxml_available",
+            _python_module_available("defusedxml"),
+            "defusedxml runtime dependency required for safe SAML XML parsing",
+        )
+        add_check(
+            "saml_relay_state_allowlist_set",
+            _has(os.getenv("SAML_ALLOWED_RELAY_STATE_HOSTS")),
+            "SAML_ALLOWED_RELAY_STATE_HOSTS required for enterprise return URL control",
+        )
+        add_check(
+            "saml_idp_initiated_disabled_by_default",
+            not _is_truthy(os.getenv("SAML_ALLOW_IDP_INITIATED")),
+            "IdP-initiated SAML must remain disabled unless explicitly approved per customer",
+        )
+    else:
+        add_check("saml_config_not_enabled", True, "SAML not configured in this environment")
+
     required_for_env = env in PROD_ENVS
     if not required_for_env:
         # For non-prod environments, degrade failing checks to informational only.
@@ -282,6 +335,11 @@ def run_preflight(environment: str | None = None) -> dict[str, Any]:
             "postgres_dsn_present": bool(storage.postgres_dsn),
             "direct_sqlite_module_count": len(direct_sqlite),
             "direct_sqlite_modules": direct_sqlite,
+        },
+        "saml": {
+            "configured": saml_enabled,
+            "idp_initiated": _is_truthy(os.getenv("SAML_ALLOW_IDP_INITIATED")),
+            "relay_state_allowlist_present": _has(os.getenv("SAML_ALLOWED_RELAY_STATE_HOSTS")),
         },
         "checks": checks,
     }

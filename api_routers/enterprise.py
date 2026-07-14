@@ -140,17 +140,38 @@ async def saml_acs(request: Request):
     from modules.auth.saml import parse_assertion, SAMLError
     form = await request.form()
     saml_response = form.get("SAMLResponse")
+    relay_state = form.get("RelayState")
     if not saml_response:
         raise HTTPException(status_code=400, detail="SAMLResponse missing")
     try:
-        assertion = parse_assertion(str(saml_response))
+        assertion = parse_assertion(str(saml_response), relay_state=str(relay_state or ""))
     except SAMLError as exc:
+        log_event(
+            AuditEventType.AUTH_FAILURE,
+            AuditOutcome.FAILURE,
+            subject="saml",
+            resource="/saml/acs",
+            detail={"error": str(exc)},
+        )
         raise HTTPException(status_code=401, detail=str(exc))
+    log_event(
+        AuditEventType.AUTH_SUCCESS,
+        AuditOutcome.SUCCESS,
+        subject=assertion.name_id,
+        resource="/saml/acs",
+        detail={
+            "issuer": assertion.issuer,
+            "session_index": assertion.session_index,
+            "in_response_to": assertion.in_response_to,
+            "assertion_id": assertion.assertion_id,
+        },
+    )
     return {
         "name_id": assertion.name_id,
         "attributes": assertion.attributes,
         "issuer": assertion.issuer,
         "session_index": assertion.session_index,
+        "in_response_to": assertion.in_response_to,
     }
 
 

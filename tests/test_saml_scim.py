@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 import sys
 
@@ -35,10 +36,10 @@ def test_saml_authn_request_emits_redirect_url(monkeypatch):
     monkeypatch.setenv("SAML_SP_ACS_URL", "https://test/acs")
     monkeypatch.setenv("SAML_IDP_SSO_URL", "https://idp.example/sso")
     cfg = saml.SAMLConfig.from_env()
-    req = saml.build_authn_request(cfg, relay_state="rs-fixed")
-    assert req.relay_state == "rs-fixed"
+    req = saml.build_authn_request(cfg, relay_state="/dashboard")
+    assert req.relay_state == "/dashboard"
     assert req.redirect_url.startswith("https://idp.example/sso?SAMLRequest=")
-    assert "RelayState=rs-fixed" in req.redirect_url
+    assert "RelayState=%2Fdashboard" in req.redirect_url
     assert req.request_id.startswith("_")
 
 
@@ -49,13 +50,75 @@ def test_saml_parse_assertion_refuses_without_cert(monkeypatch):
         saml.parse_assertion("base64-blob", cfg)
 
 
+def test_saml_relay_state_rejects_open_redirect(monkeypatch):
+    monkeypatch.delenv("SAML_ALLOWED_RELAY_STATE_HOSTS", raising=False)
+    with pytest.raises(saml.SAMLError, match="allowlisted"):
+        saml.validate_relay_state("https://evil.example/return")
+
+
+def test_saml_relay_state_allows_configured_https_host(monkeypatch):
+    monkeypatch.setenv("SAML_ALLOWED_RELAY_STATE_HOSTS", "app.example.com")
+    assert saml.validate_relay_state("https://app.example.com/dashboard") == "https://app.example.com/dashboard"
+
+
+def test_saml_authn_request_replay_state_is_single_use(monkeypatch):
+    monkeypatch.setenv("SAML_SP_ENTITY_ID", "https://test/sp")
+    monkeypatch.setenv("SAML_SP_ACS_URL", "https://test/acs")
+    monkeypatch.setenv("SAML_IDP_SSO_URL", "https://idp.example/sso")
+    cfg = saml.SAMLConfig.from_env()
+    req = saml.build_authn_request(cfg, relay_state="/return")
+
+    saml.consume_authn_request(req.request_id, "/return", cfg)
+    with pytest.raises(saml.SAMLError, match="already been consumed"):
+        saml.consume_authn_request(req.request_id, "/return", cfg)
+
+
+def test_saml_assertion_replay_is_rejected():
+    saml.record_assertion_replay(
+        "assertion-1",
+        "https://idp.example",
+        "alice@example.com",
+        "2099-01-01T00:00:00Z",
+    )
+    with pytest.raises(saml.SAMLError, match="replay"):
+        saml.record_assertion_replay(
+            "assertion-1",
+            "https://idp.example",
+            "alice@example.com",
+            "2099-01-01T00:00:00Z",
+        )
+
+
+def test_saml_extracts_request_and_assertion_ids():
+    xml = """<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+        xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+        ID="resp-1" InResponseTo="_req1" Destination="https://sp.example/acs">
+      <saml:Assertion ID="assertion-1">
+        <saml:Conditions NotBefore="2026-01-01T00:00:00Z" NotOnOrAfter="2026-01-01T00:05:00Z"/>
+        <saml:Subject><saml:SubjectConfirmation><saml:SubjectConfirmationData Recipient="https://sp.example/acs"/></saml:SubjectConfirmation></saml:Subject>
+      </saml:Assertion>
+    </samlp:Response>"""
+    extracted = saml._extract_response_state(base64.b64encode(xml.encode()).decode())
+    assert extracted["response_id"] == "resp-1"
+    assert extracted["in_response_to"] == "_req1"
+    assert extracted["assertion_id"] == "assertion-1"
+    assert extracted["destination"] == "https://sp.example/acs"
+
+
 # ── SCIM unit tests ───────────────────────────────────────────────────────────
 
 
 @pytest.fixture(autouse=True)
-def _scim_clean():
+def _scim_clean(tmp_path, monkeypatch):
+    monkeypatch.delenv("TOKENDNA_DB_BACKEND", raising=False)
+    monkeypatch.delenv("TOKENDNA_PG_DSN", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("DATA_BACKEND", "sqlite")
+    monkeypatch.setenv("DATA_DB_PATH", str(tmp_path / "saml-scim.db"))
+    saml._reset_for_tests()
     scim._reset_for_tests()
     yield
+    saml._reset_for_tests()
     scim._reset_for_tests()
 
 
@@ -129,6 +192,42 @@ def test_scim_create_group_and_lookup():
     assert fetched["id"] == g["id"]
 
 
+def test_scim_users_are_durable_in_shared_storage():
+    user = scim.create_user(
+        {"schemas": [scim.SCHEMA_USER], "userName": "durable@example.com"},
+        tenant_id="t-1",
+    )
+    fetched = scim.get_user(user["id"], tenant_id="t-1")
+    assert fetched["userName"] == "durable@example.com"
+    assert fetched["meta"]["version"].startswith('W/"')
+
+
+def test_scim_group_patch_members():
+    user = scim.create_user(
+        {"schemas": [scim.SCHEMA_USER], "userName": "member@example.com"},
+        tenant_id="t-1",
+    )
+    group = scim.create_group(
+        {"schemas": [scim.SCHEMA_GROUP], "displayName": "engineers"},
+        tenant_id="t-1",
+    )
+    patched = scim.patch_group(
+        group["id"],
+        {
+            "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+            "Operations": [
+                {
+                    "op": "replace",
+                    "path": "members",
+                    "value": [{"value": user["id"], "display": user["userName"]}],
+                }
+            ],
+        },
+        tenant_id="t-1",
+    )
+    assert patched["members"] == [{"value": user["id"], "display": user["userName"]}]
+
+
 def test_scim_group_membership_syncs_roles(monkeypatch):
     monkeypatch.setenv(
         "TOKENDNA_SCIM_GROUP_ROLE_MAP_JSON",
@@ -157,6 +256,7 @@ def test_scim_service_provider_config_advertises_bearer():
     cfg = scim.service_provider_config()
     schemes = cfg.get("authenticationSchemes", [])
     assert any(s["type"] == "oauthbearertoken" for s in schemes)
+    assert cfg["etag"]["supported"] is True
 
 
 # ── SAML / SCIM route smoke tests ─────────────────────────────────────────────
