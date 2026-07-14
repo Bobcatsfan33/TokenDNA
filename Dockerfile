@@ -25,7 +25,7 @@
 #     -e DEV_MODE=true \
 #     ghcr.io/bobcatsfan33/tokendna:dev
 
-# ── Stage 1: dependency builder ───────────────────────────────────────────────
+# ── Stage 1: dependency builder ─────────────────────────────────────────────
 FROM python:3.11-slim AS builder
 
 WORKDIR /build
