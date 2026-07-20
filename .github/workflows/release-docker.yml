@@ -211,7 +211,7 @@ jobs:
       # Build both flavors locally (amd64, load — no push) so the gate is
       # self-contained and does not depend on registry tags.
       - name: Build federal image (local)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.fips
@@ -222,7 +222,7 @@ jobs:
           cache-from: type=gha
 
       - name: Build commercial image (local)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
