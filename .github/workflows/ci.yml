@@ -220,7 +220,7 @@ jobs:
           fetch-depth: 0      # full history for git log scanning
 
       - name: TruffleHog OSS — scan for leaked secrets
-        uses: trufflesecurity/trufflehog@v3.95.2
+        uses: trufflesecurity/trufflehog@v3.95.9
         with:
           path: ./
           base: ${{ github.event.before || github.event.repository.default_branch }}
