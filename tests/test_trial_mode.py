@@ -26,9 +26,10 @@ import json, os
 os.environ["DEV_MODE"] = "true"
 os.environ.setdefault("TOKENDNA_ENV", "ci")
 import api
+from api_routers import iter_registered_routes
 IGNORE = {"/openapi.json", "/docs", "/redoc", "/docs/oauth2-redirect"}
 surface = set()
-for r in api.app.routes:
+for r in iter_registered_routes(api.app):
     path = getattr(r, "path", None)
     methods = getattr(r, "methods", None)
     if not path or not methods or path in IGNORE:

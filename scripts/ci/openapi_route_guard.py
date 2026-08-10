@@ -30,9 +30,10 @@ def current_surface() -> list[str]:
     os.environ.setdefault("DEV_MODE", "true")
     sys.path.insert(0, str(pathlib.Path.cwd()))
     import api  # noqa: PLC0415
+    from api_routers import iter_registered_routes  # noqa: PLC0415
 
     surface: set[str] = set()
-    for route in api.app.routes:
+    for route in iter_registered_routes(api.app):
         path = getattr(route, "path", None)
         methods = getattr(route, "methods", None)
         if not path or not methods or path in _IGNORE_PATHS:

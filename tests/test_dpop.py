@@ -79,7 +79,7 @@ def _make_proof(
 
     header_b64 = _b64url(json.dumps(header).encode())
     payload_b64 = _b64url(json.dumps(payload).encode())
-    # Fake signature — sig verification is skipped when python-jose isn't available
+    # Fake signature — claim-validation tests patch signature verification.
     sig_b64 = _b64url(b"\x00" * 64)
     return f"{header_b64}.{payload_b64}.{sig_b64}"
 
@@ -88,7 +88,7 @@ def _make_verifier(redis=None, require_nonce: bool = False) -> DPoPVerifier:
     v = DPoPVerifier(redis_client=redis, require_nonce=require_nonce)
     # Patch signature verification so tests work without real EC keys.
     # The signature check is separate from claim validation — we test
-    # claim validation logic; signature crypto is covered by python-jose tests.
+    # claim validation logic; real signature verification is covered below.
     from unittest.mock import patch as _patch
     _patcher = _patch.object(v, "_verify_signature", return_value=None)
     _patcher.start()
@@ -173,6 +173,50 @@ class TestDPoPVerifierHappyPath:
         # Should accept case-insensitive match
         result = v.verify(proof, "get", "https://api.example.com/token")
         assert result is not None
+
+    def test_real_rs256_signature_is_verified(self):
+        import jwt
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        public_jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(private_key.public_key()))
+        now = int(time.time())
+        proof = jwt.encode(
+            {
+                "jti": uuid.uuid4().hex,
+                "htm": "GET",
+                "htu": "https://api.example.com/token",
+                "iat": now,
+            },
+            private_key,
+            algorithm="RS256",
+            headers={"typ": "dpop+jwt", "jwk": public_jwk},
+        )
+
+        result = DPoPVerifier().verify(proof, "GET", "https://api.example.com/token")
+        assert result.alg == "RS256"
+
+    def test_invalid_signature_fails_closed(self):
+        import jwt
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        signing_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        unrelated_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        unrelated_jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(unrelated_key.public_key()))
+        proof = jwt.encode(
+            {
+                "jti": uuid.uuid4().hex,
+                "htm": "GET",
+                "htu": "https://api.example.com/token",
+                "iat": int(time.time()),
+            },
+            signing_key,
+            algorithm="RS256",
+            headers={"typ": "dpop+jwt", "jwk": unrelated_jwk},
+        )
+
+        with pytest.raises(DPoPError, match="signature verification failed"):
+            DPoPVerifier().verify(proof, "GET", "https://api.example.com/token")
 
 
 # ---------------------------------------------------------------------------

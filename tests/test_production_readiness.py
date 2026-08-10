@@ -394,8 +394,9 @@ class TestOpenEndpointsHaveRateLimiting:
         """
         import api as api_mod
         import api_routers._shared as _shared_mod
+        from api_routers import iter_registered_routes
 
-        for route in api_mod.app.routes:
+        for route in iter_registered_routes(api_mod.app):
             if hasattr(route, "path") and route.path == path:
                 if method.upper() in getattr(route, "methods", set()):
                     names = []

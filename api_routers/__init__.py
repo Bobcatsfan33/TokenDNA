@@ -11,6 +11,8 @@ import hashlib
 import os
 import pathlib
 
+from collections.abc import Iterator
+
 from fastapi import APIRouter, FastAPI
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -170,7 +172,8 @@ def mount_all(app: FastAPI) -> None:
     offline with zero third-party CDN requests. A StaticFiles ``Mount`` has no
     ``methods`` attribute, so the route-surface guard skips it.
     """
-    for router in ALL_ROUTERS:
+    mounted_routers = list(ALL_ROUTERS)
+    for router in mounted_routers:
         app.include_router(router)
     # Trial-mode router — mounted ONLY when TOKENDNA_TRIAL_MODE is on, so the
     # production route surface is unchanged when the flag is off (T0.3/T0.6).
@@ -178,6 +181,12 @@ def mount_all(app: FastAPI) -> None:
     if trial_enabled():
         from api_routers.trial import router as trial_router  # noqa: PLC0415
         app.include_router(trial_router)
+        mounted_routers.append(trial_router)
+    # FastAPI 0.139+ retains included routers as nested runtime objects instead
+    # of copying every APIRoute into app.routes.  Keep an explicit inventory so
+    # security controls can inspect the effective endpoints without depending
+    # on FastAPI's private _IncludedRouter implementation.
+    app.state.tokendna_mounted_routers = tuple(mounted_routers)
     if _STATIC_DIR.is_dir():
         app.mount("/static", _CachingStatic(directory=str(_STATIC_DIR)), name="static")
     # Optional public-demo password gate (no-op unless DEMO_PASSWORD is set, so
@@ -185,3 +194,24 @@ def mount_all(app: FastAPI) -> None:
     demo_pw = (os.getenv("DEMO_PASSWORD") or "").strip()
     if demo_pw:
         app.add_middleware(DemoAuthMiddleware, password=demo_pw)
+
+
+def iter_registered_routes(app: FastAPI) -> Iterator[object]:
+    """Yield every effective HTTP route using only supported objects.
+
+    Direct application routes (OpenAPI, health, metrics) remain visible in
+    ``app.routes``. Product routes are sourced from the explicit router
+    inventory recorded by :func:`mount_all`. TokenDNA pins the framework
+    version because this boundary is part of its security-control surface.
+    """
+    def emit(routes):
+        for route in routes:
+            path = getattr(route, "path", None)
+            methods = tuple(sorted(getattr(route, "methods", None) or ()))
+            if not path or not methods:
+                continue
+            yield route
+
+    yield from emit(app.routes)
+    for router in getattr(app.state, "tokendna_mounted_routers", ()):
+        yield from emit(router.routes)

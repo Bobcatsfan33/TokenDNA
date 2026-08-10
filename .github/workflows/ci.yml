@@ -175,8 +175,8 @@ jobs:
       - name: pip-audit
         run: |
           pip install pip-audit
-          pip-audit -r requirements.txt --no-deps --disable-pip --progress-spinner off --format=json --output=pip-audit-results.json
-          pip-audit -r requirements.txt --no-deps --disable-pip --progress-spinner off
+          pip-audit -r requirements.txt --progress-spinner off --format=json --output=pip-audit-results.json
+          pip-audit -r requirements.txt --progress-spinner off
 
       - name: Upload audit results
         uses: actions/upload-artifact@v7
