@@ -133,6 +133,10 @@ select = ["F", "E", "W"]
 testpaths = ["tokendna_sdk/tests"]
 python_files = ["test_*.py"]
 asyncio_mode = "auto"
+markers = [
+    "unit: isolated unit tests",
+    "integration: component or deployment integration tests",
+]
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]

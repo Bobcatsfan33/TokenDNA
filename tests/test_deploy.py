@@ -26,7 +26,8 @@ def test_railway_config_present():
     assert 'healthcheckPath = "/healthz"' in toml
     assert "python serve.py" in toml
     assert (ROOT / "Dockerfile.railway").read_text().count("serve.py") >= 1
-    assert "python:3.12-slim" in (ROOT / "Dockerfile.railway").read_text()
+    railway_image = (ROOT / "Dockerfile.railway").read_text()
+    assert "python:3.13-slim@sha256:" in railway_image
     assert (ROOT / "DEPLOY.md").exists()
 
 

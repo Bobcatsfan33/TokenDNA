@@ -15,8 +15,9 @@
       "owner": "engineering",
       "acceptance": "Blocking CI covers the full test suite, dependency audit, CodeQL, secrets, route surface, production configuration, Postgres, policy, adversarial, stress, efficacy, Helm, and container vulnerability checks.",
       "evidence": [
-        {"path": ".github/workflows/ci.yml", "sha256": "7a2d8398c4071f0ca6638dd53eb938a1b37c4fd1ebce52354701c02fa467c0c1"},
-        {"path": "requirements.txt", "sha256": "86cde1eacc3e9f3f248c69bba40217b73f704a1f1546dd6111ed490edd6eea76"},
+        {"path": ".github/workflows/ci.yml", "sha256": "bef33e4b7dfbc47d3521cbe7724497f3ee74aed1e0603d6b21fb26995bea3c55"},
+        {"path": "requirements.txt", "sha256": "9e12b555d41b82a3935849ec6390d62846151b0b5b2b1eab137d87c0f6cf8d81"},
+        {"path": "requirements-prod.txt", "sha256": "59fbbb86fe199285400e6fcafa729893cb4029c27da96367da8c7fc44c2a3bdb"},
         {"path": "scripts/ci/openapi_routes.json", "sha256": "74afb2bbd1ea269ef58f506abe157a7b868f122265de2caa3d3e48634f66e073"}
       ]
     },
