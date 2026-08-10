@@ -38,7 +38,11 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc \
         libffi-dev \
+        libxml2-dev \
+        libxmlsec1-dev \
+        libxmlsec1-openssl \
         libssl-dev \
+        pkg-config \
         libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 

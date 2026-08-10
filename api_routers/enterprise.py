@@ -140,17 +140,38 @@ async def saml_acs(request: Request):
     from modules.auth.saml import parse_assertion, SAMLError
     form = await request.form()
     saml_response = form.get("SAMLResponse")
+    relay_state = form.get("RelayState")
     if not saml_response:
         raise HTTPException(status_code=400, detail="SAMLResponse missing")
     try:
-        assertion = parse_assertion(str(saml_response))
+        assertion = parse_assertion(str(saml_response), relay_state=str(relay_state or ""))
     except SAMLError as exc:
+        log_event(
+            AuditEventType.AUTH_FAILURE,
+            AuditOutcome.FAILURE,
+            subject="saml",
+            resource="/saml/acs",
+            detail={"error": str(exc)},
+        )
         raise HTTPException(status_code=401, detail=str(exc))
+    log_event(
+        AuditEventType.AUTH_SUCCESS,
+        AuditOutcome.SUCCESS,
+        subject=assertion.name_id,
+        resource="/saml/acs",
+        detail={
+            "issuer": assertion.issuer,
+            "session_index": assertion.session_index,
+            "in_response_to": assertion.in_response_to,
+            "assertion_id": assertion.assertion_id,
+        },
+    )
     return {
         "name_id": assertion.name_id,
         "attributes": assertion.attributes,
         "issuer": assertion.issuer,
         "session_index": assertion.session_index,
+        "in_response_to": assertion.in_response_to,
     }
 
 
@@ -187,7 +208,14 @@ async def scim_get_user(user_id: str, tenant: TenantContext = Depends(get_tenant
 async def scim_replace_user(user_id: str, request: Request, tenant: TenantContext = Depends(get_tenant)):
     from modules.auth.scim import replace_user
     payload = await request.json()
-    return _scim_response(replace_user(user_id, payload, tenant_id=tenant.tenant_id))
+    return _scim_response(
+        replace_user(
+            user_id,
+            payload,
+            tenant_id=tenant.tenant_id,
+            if_match=request.headers.get("if-match"),
+        )
+    )
 
 
 @router.patch("/scim/v2/Users/{user_id}")
@@ -195,14 +223,21 @@ async def scim_replace_user(user_id: str, request: Request, tenant: TenantContex
 async def scim_patch_user(user_id: str, request: Request, tenant: TenantContext = Depends(get_tenant)):
     from modules.auth.scim import patch_user
     payload = await request.json()
-    return _scim_response(patch_user(user_id, payload, tenant_id=tenant.tenant_id))
+    return _scim_response(
+        patch_user(
+            user_id,
+            payload,
+            tenant_id=tenant.tenant_id,
+            if_match=request.headers.get("if-match"),
+        )
+    )
 
 
 @router.delete("/scim/v2/Users/{user_id}")
 @_scim_handle
-async def scim_delete_user(user_id: str, tenant: TenantContext = Depends(get_tenant)):
+async def scim_delete_user(user_id: str, request: Request, tenant: TenantContext = Depends(get_tenant)):
     from modules.auth.scim import delete_user
-    delete_user(user_id, tenant_id=tenant.tenant_id)
+    delete_user(user_id, tenant_id=tenant.tenant_id, if_match=request.headers.get("if-match"))
     return Response(status_code=204)
 
 
@@ -255,14 +290,21 @@ async def scim_list_groups(
 async def scim_patch_group(group_id: str, request: Request, tenant: TenantContext = Depends(get_tenant)):
     from modules.auth.scim import patch_group
     payload = await request.json()
-    return _scim_response(patch_group(group_id, payload, tenant_id=tenant.tenant_id))
+    return _scim_response(
+        patch_group(
+            group_id,
+            payload,
+            tenant_id=tenant.tenant_id,
+            if_match=request.headers.get("if-match"),
+        )
+    )
 
 
 @router.delete("/scim/v2/Groups/{group_id}")
 @_scim_handle
-async def scim_delete_group(group_id: str, tenant: TenantContext = Depends(get_tenant)):
+async def scim_delete_group(group_id: str, request: Request, tenant: TenantContext = Depends(get_tenant)):
     from modules.auth.scim import delete_group
-    delete_group(group_id, tenant_id=tenant.tenant_id)
+    delete_group(group_id, tenant_id=tenant.tenant_id, if_match=request.headers.get("if-match"))
     return Response(status_code=204)
 
 
@@ -380,5 +422,4 @@ async def aws_test(body: dict, tenant: TenantContext = Depends(require_role(Role
         "errors":      result.errors,
         "warnings":    result.warnings,
     }
-
 

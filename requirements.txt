@@ -9,6 +9,10 @@ python-multipart==0.0.31
 # ── JWT / OIDC ────────────────────────────────────────────────────────────────
 PyJWT[crypto]==2.13.0
 cryptography==50.0.0
+defusedxml==0.7.1
+
+# ── Enterprise SSO / provisioning ────────────────────────────────────────────
+python3-saml==1.16.0
 
 # ── HTTP client (JWKS fetch, webhooks, AbuseIPDB, ip-api) ────────────────────
 requests==2.34.2

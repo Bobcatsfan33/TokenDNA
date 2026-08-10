@@ -257,6 +257,11 @@ jobs:
       - name: Build Docker image
         run: docker build --no-cache -t aegis-tokendna:ci .
 
+      - name: Verify SAML runtime linkage in final image
+        run: |
+          docker run --rm --entrypoint=python aegis-tokendna:ci -c \
+            "from onelogin.saml2.response import OneLogin_Saml2_Response; import defusedxml, xmlsec"
+
       - name: Trivy container scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:

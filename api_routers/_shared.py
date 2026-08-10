@@ -162,10 +162,12 @@ def _tenant_subject(tenant: TenantContext) -> str:
 
 
 def _scim_response(body: dict, status: int = 200):
+    version = (body.get("meta") or {}).get("version") if isinstance(body, dict) else None
     return JSONResponse(
         content=body,
         status_code=status,
         media_type="application/scim+json",
+        headers={"ETag": str(version)} if version else None,
     )
 
 
