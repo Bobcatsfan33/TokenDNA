@@ -8,7 +8,7 @@
 
 > **v3.0.0 — Runtime Risk Engine.** Targets three runtime-security gaps highlighted at RSA 2026: (1) agent self-modification of policy, (2) silent permission drift, (3) MCP intent-aware inspection. End-to-end demo arc shippable in 10 minutes against a fresh deployment.
 
-> **Project status.** Early-stage, single-maintainer project. The code is functional and CI-gated, but it has **not** had an independent security audit or penetration test, has no production deployments or reference customers yet, and all compliance references describe control *mappings and design intent* — not third-party certification or accreditation. Evaluate accordingly.
+> **Project status.** Early-stage, single-maintainer project. The code is functional and CI-gated, but it has **not** had an independent security audit or penetration test, has no production deployments or reference customers yet, and all compliance references describe control *mappings and design intent* — not third-party certification or accreditation. The machine-verifiable [enterprise readiness register](docs/enterprise-readiness.json) remains `not-approved` until its external gates are independently closed. Evaluate accordingly.
 
 ## TokenDNA Runtime Risk Engine
 

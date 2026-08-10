@@ -10,8 +10,8 @@ TokenDNA / Aegis Security Platform — a zero-trust token integrity and session 
 
 | Service | How to start | Notes |
 |---------|-------------|-------|
-| **Redis** | `redis-server --daemonize yes` | Hard dependency. Must be running before the app starts. |
-| **TokenDNA API** | `DEV_MODE=true uvicorn api:app --host 0.0.0.0 --port 8000 --reload` | `DEV_MODE=true` bypasses OIDC/JWT auth; uses a synthetic dev-user. |
+| **Redis** | `redis-server --daemonize yes` | Optional for single-process evaluation; required for shared revocation, rate limits, and baselines in multi-worker production. |
+| **TokenDNA API** | `TOKENDNA_ENV=dev DEV_MODE=true uvicorn api:app --host 0.0.0.0 --port 8000 --reload` | `DEV_MODE=true` bypasses OIDC/JWT auth and is rejected unless the environment is explicitly development/test/CI. |
 
 ClickHouse is optional for local dev — the app starts without it (reports `clickhouse: false` in health check). Slack/SIEM webhooks and OIDC providers are also optional.
 
@@ -19,7 +19,10 @@ ClickHouse is optional for local dev — the app starts without it (reports `cli
 
 - The `/data` directory must exist and be writable (used for SQLite tenant DB). Run `sudo mkdir -p /data && sudo chmod 777 /data` if it doesn't exist.
 - Copy `.env.example` to `.env` and set `DEV_MODE=true`, `REDIS_HOST=localhost`, `CLICKHOUSE_HOST=localhost`.
-- `starlette` must be pinned to `<1.0.0` (e.g. `starlette>=0.46.0,<1.0.0`) to avoid `MutableHeaders.pop()` incompatibility. The update script handles this.
+- FastAPI is pinned in `requirements.txt`. FastAPI 0.139+ retains included
+  routers as nested runtime objects, so route/security introspection must use
+  `api_routers.iter_registered_routes()` rather than reading `app.routes`
+  directly.
 
 ### Running commands
 

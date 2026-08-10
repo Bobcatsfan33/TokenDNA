@@ -1,0 +1,146 @@
+{
+  "schemaVersion": 1,
+  "product": "TokenDNA AI Agent Identity Control Plane",
+  "productVersion": "3.0.0",
+  "assessedCommit": "8a7ea76352104781647026b95954a0bcd24ca9ce",
+  "assessedAt": "2026-08-10T14:00:00Z",
+  "deploymentDecision": "not-approved",
+  "approval": null,
+  "gates": [
+    {
+      "id": "automated-security-and-test-baseline",
+      "kind": "repository",
+      "required": true,
+      "status": "closed",
+      "owner": "engineering",
+      "acceptance": "Blocking CI covers the full test suite, dependency audit, CodeQL, secrets, route surface, production configuration, Postgres, policy, adversarial, stress, efficacy, Helm, and container vulnerability checks.",
+      "evidence": [
+        {"path": ".github/workflows/ci.yml", "sha256": "9f6ba256f0611d1c165430a2c835f50b4a61f228c567526aefc507479e688582"},
+        {"path": "requirements.txt", "sha256": "0241868872d9e45ef735bba24819594c7440fae36345b3de047441c84b8c0c4a"},
+        {"path": "requirements-prod.txt", "sha256": "59fbbb86fe199285400e6fcafa729893cb4029c27da96367da8c7fc44c2a3bdb"},
+        {"path": "scripts/ci/openapi_routes.json", "sha256": "74afb2bbd1ea269ef58f506abe157a7b868f122265de2caa3d3e48634f66e073"}
+      ]
+    },
+    {
+      "id": "immutable-build-supply-chain",
+      "kind": "repository",
+      "required": true,
+      "status": "closed",
+      "owner": "release-engineering",
+      "acceptance": "Runtime bases and third-party Actions are immutable; fixable HIGH/CRITICAL image findings block CI.",
+      "evidence": [
+        {"path": "Dockerfile", "sha256": "5657f094afb6f2c9c687b436df43eab8a21931c56250301d69a3c7642291897a"},
+        {"path": "Dockerfile.fips", "sha256": "89a33474194eb54407b198c2756fe07594d0f9069a3be74ac235e5d6b30daecd"},
+        {"path": "scripts/ci/workflow_action_pin_guard.py", "sha256": "fd716ed03497f0d75a7be5b107d33cb4e8fb368bcb4c4dbc40dda344ce23ca37"}
+      ]
+    },
+    {
+      "id": "release-inventory-and-version-integrity",
+      "kind": "repository",
+      "required": true,
+      "status": "closed",
+      "owner": "release-engineering",
+      "acceptance": "The release manifest fails on missing artifacts, distinguishes product and SDK versions, and only enumerates components present in the checkout.",
+      "evidence": [
+        {"path": "scripts/build_release_bundle.py", "sha256": "301f89c4dd1e60944328ea4b2fcd8a535dc4a726f05163c95eafd83f6341376a"},
+        {"path": "docs/api/openapi.json", "sha256": "d9309a988947a1f6e55772bc93420e2660d806f764002f757c76765ed57296a6"},
+        {"path": "docs/governance/SDLC_POLICY.md", "sha256": "9407d707a3ecf11d2790ab2450991aeba3b52824d900e0eb5404c48eab989532"}
+      ]
+    },
+    {
+      "id": "open-uis-contract-integrity",
+      "kind": "repository",
+      "required": true,
+      "status": "closed",
+      "owner": "identity-platform-engineering",
+      "acceptance": "Every TokenDNA schema surface returns the byte-identical UIS artifact pinned to an immutable uis-spec revision.",
+      "evidence": [
+        {"path": "modules/identity/uis_spec.lock.json", "sha256": "dbf221e7453025bbb010e5c256b7ce4b1cad93dd4500511ab176680846e4cc47"},
+        {"path": "modules/identity/uis_schema_v1.json", "sha256": "cddcdf73bb9a5d9caf6093740168c196c8af525a0edf4fd739bc359f94967d50"},
+        {"path": "scripts/ci/verify_uis_spec_sync.py", "sha256": "d3ce57b13d14a49ee433313522d0f9d21fd3806d16e4c0c745b59fcdcf970c87"}
+      ]
+    },
+    {
+      "id": "enterprise-idp-code-controls",
+      "kind": "repository",
+      "required": true,
+      "status": "closed",
+      "owner": "identity-platform-engineering",
+      "acceptance": "SAML and SCIM code enforces issuer and audience binding, atomic replay controls, tenant uniqueness and membership isolation, safe role deprovisioning, conditional writes, durable migrations, production preflight, and final-image SAML linkage verification.",
+      "evidence": [
+        {"path": "modules/auth/saml.py", "sha256": "74781d0800d7a0d3684dcfa145992e4dc69f2d121670690e072034436f2ff550"},
+        {"path": "modules/auth/scim.py", "sha256": "6440b99d20a440c4d4975c27308096cf58bb256457423ab4db21845f3449c218"},
+        {"path": "modules/tenants/middleware.py", "sha256": "8c513427be444c5e1603f01be52c3fc62d4dc1dbba7a94daca67a70555b8560a"},
+        {"path": "scripts/preflight_prod.py", "sha256": "36069df4a2aad454a77b2ee7c95378550c6f4ab571e55be8ad2f066649f8bbae"},
+        {"path": "scripts/idp_ga_validation.py", "sha256": "4f3f9e64c1596cfaa27dc502329d98e56254024e305f2b7c3bb761757a9c0983"},
+        {"path": "tests/test_saml_scim.py", "sha256": "5d167d704f6b75428b5ad7199754f00343d80f85e0fea299e2453c829cdc16c0"}
+      ]
+    },
+    {
+      "id": "independent-security-assessment",
+      "kind": "external",
+      "required": true,
+      "status": "open",
+      "owner": "independent-security-assessor",
+      "acceptance": "Independent report and retest show no open Critical or High findings.",
+      "evidence": [
+        {"path": "docs/external-readiness/independent-security-assessment.md", "sha256": "2b42901a215d5c9ebbd83626b448e3e65cfd5a63d091bc29588f0fba53c51c4b"}
+      ]
+    },
+    {
+      "id": "identity-interoperability",
+      "kind": "external",
+      "required": true,
+      "status": "open",
+      "owner": "enterprise-identity-engineering",
+      "acceptance": "Real-provider OIDC/SAML/SCIM positive and negative matrix is signed off.",
+      "evidence": [
+        {"path": "docs/external-readiness/identity-interoperability.md", "sha256": "ac6812e10790dfa39187c271a7bea969d0fc17b43ac57422a77041d6d6e1e4e2"}
+      ]
+    },
+    {
+      "id": "production-operations-and-resilience",
+      "kind": "external",
+      "required": true,
+      "status": "open",
+      "owner": "production-sre",
+      "acceptance": "Production-equivalent soak, failure, restore, DR, upgrade, and rollback exercises meet signed SLO/RTO/RPO targets.",
+      "evidence": [
+        {"path": "docs/external-readiness/production-operations-validation.md", "sha256": "07637b065165c1f3f5933edd0da2f021bd01210a2524ed08427e09e5aba4b1d8"}
+      ]
+    },
+    {
+      "id": "repository-governance-and-separation-of-duties",
+      "kind": "external",
+      "required": true,
+      "status": "open",
+      "owner": "repository-administrator",
+      "acceptance": "An independent second maintainer is active and live branch controls block self-approval, admin bypass, unsigned commits, and failed checks.",
+      "evidence": [
+        {"path": "docs/external-readiness/repository-governance.md", "sha256": "44a587e564e2dd70ecc805d7fca783d99231c5ca984397c50dbf60185f8bdfeb"}
+      ]
+    },
+    {
+      "id": "compliance-privacy-legal-commercial-approval",
+      "kind": "external",
+      "required": true,
+      "status": "open",
+      "owner": "governance-legal-product",
+      "acceptance": "Applicable authorities sign the system boundary, obligations, residual risk, and release decision without unsupported certification claims.",
+      "evidence": [
+        {"path": "docs/external-readiness/compliance-commercial-approval.md", "sha256": "6cc87a038466be230b4c28b09916931563d3faff6fc767245c1e3da5b416721b"}
+      ]
+    },
+    {
+      "id": "production-pilot-and-customer-acceptance",
+      "kind": "external",
+      "required": true,
+      "status": "open",
+      "owner": "design-partner-and-product",
+      "acceptance": "A release-identical production-like pilot meets agreed efficacy, latency, availability, integration, and support criteria.",
+      "evidence": [
+        {"path": "docs/external-readiness/production-pilot.md", "sha256": "4eeec9ec9a0dc7bea705155dfcaa727d3bbf2d531f14de5086c3d842db4d679f"}
+      ]
+    }
+  ]
+}

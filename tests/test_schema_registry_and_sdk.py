@@ -6,6 +6,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from modules.identity import schema_registry
+from modules.identity.uis import schema_dict
 from modules.integrations import sdk_wrappers
 
 
@@ -17,7 +18,8 @@ def test_schema_registry_builds_json_artifacts():
 
     uis = schema_registry.get_schema_artifact("uis")
     assert uis is not None
-    assert uis["$id"].endswith("/uis.schema.json")
+    assert uis == schema_dict()
+    assert uis["$id"] == "https://schemas.tokendna.dev/uis/v1.0/event.json"
 
     attest = schema_registry.get_schema_artifact("attestation")
     assert attest is not None

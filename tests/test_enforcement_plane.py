@@ -400,11 +400,9 @@ class TestAPIRouteRegistration(unittest.TestCase):
         assert hasattr(_r, "enforcement_plane")
 
     def test_enforcement_routes_registered(self):
-        try:
-            import api as api_mod
-        except Exception:
-            pytest.skip("api.py failed to import")
-        routes = {r.path for r in api_mod.app.routes if hasattr(r, "path")}
+        import api as api_mod
+        from api_routers import iter_registered_routes
+        routes = {r.path for r in iter_registered_routes(api_mod.app)}
         expected = [
             "/api/enforcement/policies",
             "/api/enforcement/evaluate",

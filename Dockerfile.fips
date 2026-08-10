@@ -12,7 +12,7 @@
 # fail-closes (exit 78) at startup if the validated provider is not active.
 
 # ── Stage 1: dependency builder ──────────────────────────────────────────────
-FROM registry.access.redhat.com/ubi9/python-312:latest AS builder
+FROM registry.access.redhat.com/ubi9/python-312@sha256:9e030f2458759faacb43682ef0c98babd78d1e15b3aeef7b2ccd5a6caf27abe4 AS builder
 USER 0
 RUN dnf install -y gcc libpq-devel openssl-devel && dnf clean all
 WORKDIR /build
@@ -24,7 +24,7 @@ RUN pip install --prefix=/install -r requirements.txt
 
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
-FROM registry.access.redhat.com/ubi9/python-312-minimal:latest AS runtime
+FROM registry.access.redhat.com/ubi9/python-312-minimal@sha256:74c596c5d658fd82d226e84418b199640e5819b7b0475801ec5083b8d144aa0d AS runtime
 USER 0
 RUN microdnf install -y libpq && microdnf clean all
 

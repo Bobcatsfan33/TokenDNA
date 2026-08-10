@@ -72,8 +72,26 @@ async def get_tenant(
             role=key_record.role,
         )
 
-    # ── Path 2: Bearer JWT (delegates to existing auth module) ────────────────
+    # ── Path 2: Bearer tenant API key or JWT ─────────────────────────────────
     if bearer:
+        # SCIM providers such as Okta send provisioning credentials as
+        # Authorization: Bearer <token>. TokenDNA API keys have an explicit
+        # prefix, so do not probe the datastore for ordinary OIDC JWTs. If a
+        # prefixed credential cannot be looked up, fail as an API key instead
+        # of masking a datastore outage or producing a misleading JWT error.
+        if bearer.credentials.startswith("tdna_"):
+            result = store.lookup_by_key(bearer.credentials)
+            if not result:
+                raise HTTPException(status_code=401, detail="Invalid or revoked bearer API key")
+            key_record, tenant = result
+            return TenantContext(
+                tenant_id=tenant.id,
+                tenant_name=tenant.name,
+                plan=tenant.plan,
+                api_key_id=key_record.id,
+                role=key_record.role,
+            )
+
         # Import here to avoid circular import
         from auth import _verify_jwt  # type: ignore
         try:

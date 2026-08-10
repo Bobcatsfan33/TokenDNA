@@ -12,10 +12,10 @@ import logging
 import threading
 from typing import Optional
 
+import jwt
 import requests
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
 
 from config import DEV_MODE, OIDC_AUDIENCE, OIDC_ISSUER
 from modules.identity.cache_redis import is_token_revoked
@@ -72,7 +72,7 @@ def _verify_jwt(token: str) -> dict:
     """
     try:
         header = jwt.get_unverified_header(token)
-    except JWTError:
+    except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Malformed token")
 
     kid = header.get("kid")
@@ -84,14 +84,15 @@ def _verify_jwt(token: str) -> dict:
         raise HTTPException(status_code=401, detail="Signing key not found")
 
     try:
+        signing_key = jwt.PyJWK.from_dict(key, algorithm="RS256").key
         payload = jwt.decode(
             token,
-            key,
+            signing_key,
             algorithms=["RS256"],
             audience=OIDC_AUDIENCE,
             issuer=OIDC_ISSUER,
         )
-    except JWTError as e:
+    except (jwt.PyJWTError, ValueError) as e:
         logger.warning(f"JWT validation failed: {e}")
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 

@@ -6,7 +6,8 @@ decision, how data is stored, and every gate CI enforces.
 
 > Companion docs: `CLAUDE.md` (current state + roadmap), `docs/LICENSING.md`
 > (entitlement boundary), `docs/BENCHMARK.md` (detection efficacy),
-> `docs/operations/` (RUNBOOK, HA, incident response), `docs/api/` (OpenAPI).
+> `docs/operations/` (RUNBOOK, HA, incident response), `docs/api/` (OpenAPI),
+> and `docs/enterprise-readiness.json` (production approval gates).
 
 ## 1. What it is
 
@@ -21,20 +22,19 @@ step-up / block, and record why.
 | Path | What lives here |
 |---|---|
 | `api.py` | FastAPI app factory. **Frozen** at ~205 lines (CI ratchet); it only wires config, middleware, and calls `api_routers.mount_all`. |
-| `api_routers/` | 31 domain routers (the decomposed API surface). New endpoints are born here, never in `api.py`. `__init__.py` holds `ALL_ROUTERS` + `mount_all`. |
-| `modules/identity/` | The product core — 67 modules: UIS, passport, trust graph, drift, policy guard/advisor, MCP inspector, blast radius, intent correlation, federation, cert/attestation, kill-switch planes, etc. |
+| `api_routers/` | 27 mounted domain routers (the decomposed API surface). New endpoints are born here, never in `api.py`. `__init__.py` holds `ALL_ROUTERS` + `mount_all`. |
+| `modules/identity/` | The product core — 64 Python modules: UIS, passport, trust graph, drift, policy guard/advisor, MCP inspector, blast radius, intent correlation, federation, cert/attestation, kill-switch planes, etc. |
 | `modules/security/` | Cross-cutting security: `audit_log`, `rbac`, `fips`, `mtls`, `field_crypto`, `headers`. |
 | `modules/tenants/` | Multi-tenant context: `models` (Plan/TenantContext), `store`, `middleware` (`get_tenant`, DEV_MODE synthetic tenant). |
 | `modules/product/` | Commercial layer: `commercial_tiers` (ent.* gates), `licensing` (signed-license entitlement boundary), `feature_gates`, `staged_rollout`. |
 | `modules/storage/` | Storage gateway: `pg_connection` (DSN normalization; the only sanctioned DB entrypoint). |
-| `collector/` | Apache-2.0 open-core edge collector (adapters → NormalizedEvent → transport). Separate pip package `tokendna_collector`. |
-| `platform/` | BUSL-1.1 cloud ingestion + stream engines. Separate pip package `tokendna_platform`. |
 | `tokendna_sdk/` | The pip-published SDK (`tokendna-sdk`), the only pip-installable part of the monorepo. |
+| `modules/identity/uis_schema_v1.json` | Vendored runtime copy of the Apache-2.0 UIS contract, pinned to `Bobcatsfan33/uis-spec` by `uis_spec.lock.json`. |
 | `edge/` | Edge (JS) enforcement worker — JWT → DPoP → revocation → drift-tier checks. |
 | `dashboard/`, `landing/`, `console` | Operator UI + marketing landing + Cytoscape console. |
 | `scripts/` | Ops + CI scripts: route guard, monolith ratchet, seeders, demo arc, adversarial + efficacy harnesses, OSCAL/STIG generators. |
 | `alembic/` | Postgres migrations. |
-| `tests/` | Backend test suite (2200+). `platform/tests`, `collector/tests` cover the sub-packages. |
+| `tests/` | Backend test suite (2,000+ tests across 118 test modules). |
 | `.github/workflows/` | CI (`ci.yml`), image release (`release-docker.yml`), PyPI publish (`publish.yml`). |
 
 ## 3. The request → decision path (runtime loop)
@@ -71,26 +71,34 @@ drift (`/api/drift/record`), policy self-modification (`/api/policy/guard/evalua
 CONST-01..06), and MCP tool-chain attacks (`/api/mcp/inspect`, bounded-gap
 subsequence matcher). `docs/BENCHMARK.md` measures detection on all three.
 
-## 4. Data flow: open-core ingestion split
+## 4. Data flow and shipped integration boundary
 
-Two Apache-2.0 / BUSL-1.1 layers exist alongside the monolith:
+The current repository ships the control plane, SDK, edge worker, and operator
+UI. The former `collector/` and `platform/` packages were intentionally removed
+during the v3 simplification and remain available only in git history and the
+`attic/2026-07` archival branch. They are not release artifacts.
 
 ```
-  cloud logs / IdP / MCP  ──► collector/ (Apache-2.0)
-     Okta, CloudTrail,          BaseAdapter → NormalizedEvent → transport
-     Azure Activity, DNS                │
-                                        ▼
-                              platform/ (BUSL-1.1)
-     schema registry → dedup (tenant,event_id) → EventRouter → StreamEngine(s)
-     (TrustGraph / BehavioralDNA / PermissionDrift / MCPChain / PolicyGuard)
+  agent applications / MCP clients ──► tokendna-sdk
                                         │
                                         ▼
-                          Findings → AlertRouter → SIEM forwarders
-                          (Splunk HEC / Datadog) + compliance reports
+                              control-plane API routers
+                                        │
+                  UIS store → identity engines → decision audit
+                                        │
+                                        ▼
+                         Postgres / Redis / ClickHouse + SIEM outputs
 ```
 
-The engines under `platform/tokendna_platform/engines/*` currently DELEGATE to
-the algorithms in `modules/identity/*` (disposition map in `platform/README.md`).
+An enterprise connector or collector must integrate through the documented
+control-plane APIs or SDK. Reintroducing a standalone collector requires its
+own maintained package, threat model, release artifact, tests, and support
+commitment; no such component is implied by this checkout.
+
+UIS is the stable wire contract across this boundary. TokenDNA serves the
+canonical schema at `/api/schema/uis.json`; every other schema-bundle surface
+returns that same artifact. `verify_uis_spec_sync.py` prevents the vendored
+runtime schema from silently diverging from the pinned open specification.
 
 ## 5. API surface discipline (T-1)
 
@@ -146,7 +154,7 @@ the algorithms in `modules/identity/*` (disposition map in `platform/README.md`)
 | FIPS crypto-primitive gate | `ci.yml: lint` | SC-13 hash discipline |
 | FIPS fail-closed gate | `ci.yml: lint` | `assert_fips_mode()` exits 78 off-FIPS |
 | Import verification | `ci.yml: lint` | core modules import |
-| Full test suite | `ci.yml: test-suite` | `tests` + `platform/tests` + `collector/tests` (incl. `test_licensing.py`, `test_dev_mode_guard.py`) |
+| Full test suite | `ci.yml: test-suite` | `tests` (incl. `test_licensing.py`, `test_dev_mode_guard.py`) |
 | DoD ATO evidence | `ci.yml: ato-evidence` | OSCAL/STIG evidence generates; uploads artifact |
 | Dependency scan | `ci.yml: dependency-scan` — pip-audit | CVEs in `requirements.txt` |
 | CodeQL | `ci.yml: codeql` | static security analysis |
@@ -159,7 +167,7 @@ the algorithms in `modules/identity/*` (disposition map in `platform/README.md`)
 | Postgres integration | `ci.yml: postgres-integration` | real-Postgres tests |
 | Helm lint | `ci.yml: helm-lint` | chart validity |
 | Stress smoke | `ci.yml: stress-smoke` | p95 gate under load |
-| Detection efficacy (advisory) | `ci.yml: efficacy-benchmark` | `efficacy_benchmark.py`; uploads report (non-blocking) |
+| Detection efficacy | `ci.yml: efficacy-benchmark` | `efficacy_benchmark.py`; blocks regressions and uploads the report |
 | DCO | `dco.yml` | every PR commit carries `Signed-off-by` |
 | Image release | `release-docker.yml` (tags) | multi-arch build, cosign keyless sign + verify, SLSA provenance, cosign-signed SPDX SBOM attestation |
 | SDK publish | `publish.yml` (tags) | builds + OIDC-publishes `tokendna-sdk` to (Test)PyPI |
@@ -168,14 +176,13 @@ the algorithms in `modules/identity/*` (disposition map in `platform/README.md`)
 
 ```bash
 pip install -r requirements.txt pytest pytest-asyncio ruff
-pip install -e ./platform -e ./collector           # sub-packages
 cp .env.example .env
 
 # Boot (DEV_MODE bypasses auth — TOKENDNA_ENV=ci satisfies the deny-by-default guard):
 TOKENDNA_ENV=ci DEV_MODE=true uvicorn api:app --reload
 
 # Tests (mirrors CI):
-python -m pytest -q --import-mode=importlib tests platform/tests collector/tests
+python -m pytest -q --import-mode=importlib tests
 
 # Seed a demo + run the 10-minute narrative arc:
 python scripts/demo_seed_v2.py && python scripts/demo_seed_gap.py

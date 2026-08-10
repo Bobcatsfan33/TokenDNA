@@ -7,6 +7,7 @@ cycle: api.py imports api_routers).
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from fastapi import HTTPException
 
@@ -100,7 +101,7 @@ def sdk_attest_agent(**kwargs):
 # ── App version + edge-sync auth (moved from api.py) ──────────────────────────
 import hmac as _edge_hmac  # noqa: E402
 
-APP_VERSION = "2.5.0"
+APP_VERSION = (Path(__file__).resolve().parent.parent / "VERSION").read_text(encoding="utf-8").strip()
 
 
 def _edge_sync_authorized(request: Request) -> bool:
@@ -112,8 +113,6 @@ def _edge_sync_authorized(request: Request) -> bool:
 
 
 # ── SCIM + dashboard + tenant-subject helpers (moved from api.py) ─────────────
-from pathlib import Path  # noqa: E402
-
 from fastapi.responses import JSONResponse  # noqa: E402
 
 # Repo-root-relative (this file lives in api_routers/, so go up one level).
@@ -163,10 +162,12 @@ def _tenant_subject(tenant: TenantContext) -> str:
 
 
 def _scim_response(body: dict, status: int = 200):
+    version = (body.get("meta") or {}).get("version") if isinstance(body, dict) else None
     return JSONResponse(
         content=body,
         status_code=status,
         media_type="application/scim+json",
+        headers={"ETag": str(version)} if version else None,
     )
 
 

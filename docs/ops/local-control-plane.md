@@ -9,7 +9,6 @@ where the agents and identities operate.
 | Artifact | Package | Runs where | Purpose |
 |---|---|---|---|
 | `tokendna-sdk` | Python wheel / `pip` | Inside agent applications | Emits signed agent action, workflow, attestation, and policy-verdict evidence. |
-| `tokendna-collector` | Wheel, `pipx`, signed OCI image, or systemd package | Near identity providers, SIEMs, cloud logs, and MCP gateways | Pulls customer-side telemetry, normalizes it, buffers outages, and streams into the local control plane. |
 | `tokendna-control-plane` | Signed OCI image, Docker Compose pilot, Helm chart, air-gapped image bundle | Customer VPC, Kubernetes cluster, appliance VM, or enclave | Stores identity evidence, builds trust graphs, evaluates policies, issues findings, and exposes APIs/UI/SIEM outputs. |
 | `tokendna-policy-packs` | Signed bundle | Imported into the control plane | Versioned rules, detection content, compliance mappings, and policy defaults. |
 
@@ -21,9 +20,8 @@ Agent apps / MCP clients
   -> local verify / attest / normalize endpoints
 
 Identity, cloud, and SIEM systems
-  -> tokendna-collector
-  -> local disk buffer during outages
-  -> /api/v1/ingest
+  -> customer-owned connector using the SDK or documented APIs
+  -> control-plane domain endpoints
 
 Local control plane
   -> FastAPI API and dashboard
@@ -87,15 +85,15 @@ in front of it for TLS, SSO, and network policy.
 
 ## Packaging Guidance
 
-Use `pip` only for the SDK. Use `pipx`, a signed container image, or an
-OS-native package for the collector. Use containers/Helm/an appliance bundle
-for the control plane because it owns migrations, durable storage, TLS, RBAC,
-SSO, policy packs, and operational lifecycle.
+Use `pip` only for the SDK. Use containers/Helm/an appliance bundle for the
+control plane because it owns migrations, durable storage, TLS, RBAC, SSO,
+policy packs, and operational lifecycle. The former collector and platform
+packages were removed during the v3 simplification and do not ship.
 
 Air-gapped customer bundles should include:
 
-- signed control-plane and collector images
-- SDK and collector wheels
+- signed control-plane image
+- SDK wheel
 - SBOMs and provenance attestations
 - release manifest from `scripts/build_release_bundle.py`
 - policy-pack signatures

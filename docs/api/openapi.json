@@ -1,6 +1,21 @@
 {
   "components": {
     "schemas": {
+      "ActivateBody": {
+        "properties": {
+          "license_key": {
+            "maxLength": 8192,
+            "minLength": 10,
+            "title": "License Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "license_key"
+        ],
+        "title": "ActivateBody",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -16,6 +31,13 @@
       },
       "ValidationError": {
         "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
           "loc": {
             "items": {
               "anyOf": [
@@ -63,7 +85,7 @@
   "info": {
     "description": "Zero-trust identity exchange, UIS normalization, and agent supply-chain attestation",
     "title": "TokenDNA Identity Backbone",
-    "version": "2.5.0"
+    "version": "3.0.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -104,7 +126,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "List Tenants"
+        "summary": "List Tenants",
+        "tags": [
+          "enterprise"
+        ]
       },
       "post": {
         "operationId": "create_tenant_admin_tenants_post",
@@ -148,7 +173,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Create Tenant"
+        "summary": "Create Tenant",
+        "tags": [
+          "enterprise"
+        ]
       }
     },
     "/admin/tenants/{tenant_id}/keys": {
@@ -187,10 +215,16 @@
         },
         "security": [
           {
+            "APIKeyHeader": []
+          },
+          {
             "HTTPBearer": []
           }
         ],
-        "summary": "List Keys"
+        "summary": "List Keys",
+        "tags": [
+          "enterprise"
+        ]
       },
       "post": {
         "operationId": "create_key_admin_tenants__tenant_id__keys_post",
@@ -239,10 +273,16 @@
         },
         "security": [
           {
+            "APIKeyHeader": []
+          },
+          {
             "HTTPBearer": []
           }
         ],
-        "summary": "Create Key"
+        "summary": "Create Key",
+        "tags": [
+          "enterprise"
+        ]
       }
     },
     "/admin/tenants/{tenant_id}/keys/{key_id}": {
@@ -290,10 +330,16 @@
         },
         "security": [
           {
+            "APIKeyHeader": []
+          },
+          {
             "HTTPBearer": []
           }
         ],
-        "summary": "Revoke Key"
+        "summary": "Revoke Key",
+        "tags": [
+          "enterprise"
+        ]
       }
     },
     "/api/abac/evaluate": {
@@ -339,7 +385,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Abac Evaluate"
+        "summary": "Api Abac Evaluate",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/admin/staged-rollout/feature/{feature_key}": {
@@ -385,7 +434,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Staged List For Feature"
+        "summary": "Api Staged List For Feature",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/admin/staged-rollout/grant": {
@@ -432,7 +484,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Staged Grant"
+        "summary": "Api Staged Grant",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/admin/staged-rollout/revoke": {
@@ -479,7 +534,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Staged Revoke"
+        "summary": "Api Staged Revoke",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/admin/staged-rollout/{tenant_id}": {
@@ -535,7 +593,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Staged List"
+        "summary": "Api Staged List",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/agent/attest": {
@@ -581,7 +642,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Agent Attest"
+        "summary": "Api Agent Attest",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agent/attestations": {
@@ -659,7 +723,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api List Agent Attestations"
+        "summary": "Api List Agent Attestations",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agent/attestations/{attestation_id}": {
@@ -704,7 +771,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Get Agent Attestation"
+        "summary": "Api Get Agent Attestation",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agent/ca-keyring": {
@@ -728,7 +798,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Ca Keyring Preview"
+        "summary": "Api Ca Keyring Preview",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agent/ca-keys": {
@@ -790,7 +863,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api List Ca Keys"
+        "summary": "Api List Ca Keys",
+        "tags": [
+          "agents"
+        ]
       },
       "post": {
         "operationId": "api_upsert_ca_key_api_agent_ca_keys_post",
@@ -834,7 +910,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Upsert Ca Key"
+        "summary": "Api Upsert Ca Key",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agent/certificates": {
@@ -928,7 +1007,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api List Agent Certificates"
+        "summary": "Api List Agent Certificates",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agent/certificates/crl": {
@@ -974,7 +1056,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Certificate Crl"
+        "summary": "Api Certificate Crl",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agent/certificates/issue": {
@@ -1020,7 +1105,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Issue Agent Certificate"
+        "summary": "Api Issue Agent Certificate",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agent/certificates/revoke": {
@@ -1066,7 +1154,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Revoke Agent Certificate"
+        "summary": "Api Revoke Agent Certificate",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agent/certificates/status/{certificate_id}": {
@@ -1111,11 +1202,15 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Certificate Status"
+        "summary": "Api Certificate Status",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agent/certificates/transparency-log": {
       "get": {
+        "description": "Cursor-paginated transparency log.  ?limit=N (default 50, max 200)\n+ ?cursor=<opaque>; response includes ``next_cursor`` (null when\nexhausted).",
         "operationId": "api_certificate_transparency_log_api_agent_certificates_transparency_log_get",
         "parameters": [
           {
@@ -1123,9 +1218,25 @@
             "name": "limit",
             "required": false,
             "schema": {
-              "default": 100,
+              "default": 50,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           }
         ],
@@ -1157,7 +1268,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Certificate Transparency Log"
+        "summary": "Api Certificate Transparency Log",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agent/certificates/transparency-log/verify": {
@@ -1181,7 +1295,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Verify Certificate Transparency Log"
+        "summary": "Api Verify Certificate Transparency Log",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agent/certificates/verify": {
@@ -1227,7 +1344,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Verify Agent Certificate"
+        "summary": "Api Verify Agent Certificate",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agent/certificates/{certificate_id}": {
@@ -1272,7 +1392,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Get Agent Certificate"
+        "summary": "Api Get Agent Certificate",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agent/dna/{agent_id}": {
@@ -1318,7 +1441,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Get Agent Dna"
+        "summary": "Api Get Agent Dna",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agent/dna/{agent_id}/refresh": {
@@ -1364,7 +1490,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Refresh Agent Dna"
+        "summary": "Api Refresh Agent Dna",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agent/drift/assess": {
@@ -1410,7 +1539,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Assess Agent Drift"
+        "summary": "Api Assess Agent Drift",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agent/drift/events": {
@@ -1486,15 +1618,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api List Agent Drift Events"
+        "summary": "Api List Agent Drift Events",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agents/decommission/{agent_id}": {
@@ -1552,7 +1681,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Decommission Agent"
+        "summary": "Api Decommission Agent",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agents/heartbeat/{agent_id}": {
@@ -1598,7 +1730,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Agent Heartbeat"
+        "summary": "Api Agent Heartbeat",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agents/inventory": {
@@ -1661,7 +1796,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Agent Inventory"
+        "summary": "Api Agent Inventory",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agents/orphans": {
@@ -1718,7 +1856,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Agent Orphans"
+        "summary": "Api Agent Orphans",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agents/reactivate/{agent_id}": {
@@ -1776,7 +1917,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Reactivate Agent"
+        "summary": "Api Reactivate Agent",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agents/register": {
@@ -1823,7 +1967,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Register Agent"
+        "summary": "Api Register Agent",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agents/suspend/{agent_id}": {
@@ -1881,7 +2028,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Suspend Agent"
+        "summary": "Api Suspend Agent",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agents/{agent_id}": {
@@ -1927,7 +2077,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Get Agent"
+        "summary": "Api Get Agent",
+        "tags": [
+          "agents"
+        ]
       }
     },
     "/api/agents/{agent_id}/events": {
@@ -1983,7 +2136,175 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Agent Events"
+        "summary": "Api Agent Events",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/assets/scan": {
+      "post": {
+        "description": "Scan an agent-workflow definition and persist the inventory.\n\nBody: {\"definition\": {...framework workflow...}, \"source\": str?}",
+        "operationId": "scan_api_assets_scan_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "default": {},
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Scan",
+        "tags": [
+          "asset-inventory"
+        ]
+      }
+    },
+    "/api/assets/scans": {
+      "get": {
+        "description": "List scan history for the tenant (most recent first).",
+        "operationId": "scans_api_assets_scans_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Scans",
+        "tags": [
+          "asset-inventory"
+        ]
+      }
+    },
+    "/api/assets/scans/{scan_id}": {
+      "get": {
+        "description": "Full inventory for one scan; optional ?kind=agent|tool|mcp_server|vulnerability.",
+        "operationId": "scan_detail_api_assets_scans__scan_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scan_id",
+            "required": true,
+            "schema": {
+              "title": "Scan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Scan Detail",
+        "tags": [
+          "asset-inventory"
+        ]
       }
     },
     "/api/attestation/spec": {
@@ -2007,7 +2328,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Attestation Protocol Spec"
+        "summary": "Api Attestation Protocol Spec",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/audit": {
@@ -2054,7 +2378,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Audit Log"
+        "summary": "Api Audit Log",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/behavioral/alerts": {
@@ -2104,15 +2431,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Bd Alerts"
+        "summary": "Api Bd Alerts",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/behavioral/alerts/{alert_id}/acknowledge": {
@@ -2167,15 +2491,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Bd Ack Alert"
+        "summary": "Api Bd Ack Alert",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/behavioral/audit/{agent_id}": {
@@ -2228,15 +2549,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Bd Audit"
+        "summary": "Api Bd Audit",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/behavioral/baseline/{agent_id}": {
@@ -2279,15 +2597,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Bd Baseline"
+        "summary": "Api Bd Baseline",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/behavioral/drift/{agent_id}": {
@@ -2330,15 +2645,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Bd Drift"
+        "summary": "Api Bd Drift",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/behavioral/event": {
@@ -2383,15 +2695,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Bd Record Event"
+        "summary": "Api Bd Record Event",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/behavioral/snapshot/{agent_id}": {
@@ -2446,15 +2755,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Bd Snapshot"
+        "summary": "Api Bd Snapshot",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/certs/anomalies": {
@@ -2517,7 +2823,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Cert Anomalies"
+        "summary": "Api Cert Anomalies",
+        "tags": [
+          "certs"
+        ]
       }
     },
     "/api/certs/anomalies/{anomaly_id}/resolve": {
@@ -2575,7 +2884,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Resolve Cert Anomaly"
+        "summary": "Api Resolve Cert Anomaly",
+        "tags": [
+          "certs"
+        ]
       }
     },
     "/api/certs/expiring": {
@@ -2632,7 +2944,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Certs Expiring"
+        "summary": "Api Certs Expiring",
+        "tags": [
+          "certs"
+        ]
       }
     },
     "/api/certs/expiry-alerts/{alert_id}/acknowledge": {
@@ -2690,7 +3005,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Ack Expiry Alert"
+        "summary": "Api Ack Expiry Alert",
+        "tags": [
+          "certs"
+        ]
       }
     },
     "/api/certs/fleet": {
@@ -2753,7 +3071,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Certs Fleet"
+        "summary": "Api Certs Fleet",
+        "tags": [
+          "certs"
+        ]
       }
     },
     "/api/certs/fleet/summary": {
@@ -2778,7 +3099,110 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Certs Fleet Summary"
+        "summary": "Api Certs Fleet Summary",
+        "tags": [
+          "certs"
+        ]
+      }
+    },
+    "/api/certs/renewals": {
+      "get": {
+        "description": "List recorded certificate renewal actions for the tenant (T-4).",
+        "operationId": "api_certs_renewals_api_certs_renewals_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Api Certs Renewals",
+        "tags": [
+          "certs"
+        ]
+      }
+    },
+    "/api/certs/sweep": {
+      "post": {
+        "description": "Run the adaptive certificate-lifecycle sweep (T-4 automation).\n\nClassifies the fleet, refreshes expiry alerts, and triggers registered\nrenewal hooks for certs inside the renewal window \u2014 idempotently.\nBody: {\"renew_within_days\": int?, \"dry_run\": bool?}.",
+        "operationId": "api_certs_sweep_api_certs_sweep_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "default": {},
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Api Certs Sweep",
+        "tags": [
+          "certs"
+        ]
       }
     },
     "/api/certs/usage": {
@@ -2825,7 +3249,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Record Cert Usage"
+        "summary": "Api Record Cert Usage",
+        "tags": [
+          "certs"
+        ]
       }
     },
     "/api/certs/{cert_id}/history": {
@@ -2881,7 +3308,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Cert History"
+        "summary": "Api Cert History",
+        "tags": [
+          "certs"
+        ]
       }
     },
     "/api/cloud-findings": {
@@ -2928,7 +3358,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Cloud Findings"
+        "summary": "Api Cloud Findings",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/compliance/agents/{agent_id}/assess": {
@@ -2985,7 +3418,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Ce Assess"
+        "summary": "Api Ce Assess",
+        "tags": [
+          "compliance"
+        ]
       }
     },
     "/api/compliance/agents/{agent_id}/assessment": {
@@ -3040,7 +3476,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Ce Get Assessment"
+        "summary": "Api Ce Get Assessment",
+        "tags": [
+          "compliance"
+        ]
       }
     },
     "/api/compliance/agents/{agent_id}/audit": {
@@ -3101,7 +3540,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Ce Audit Export"
+        "summary": "Api Ce Audit Export",
+        "tags": [
+          "compliance"
+        ]
       }
     },
     "/api/compliance/agents/{agent_id}/classification": {
@@ -3156,7 +3598,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Ce Get Classification"
+        "summary": "Api Ce Get Classification",
+        "tags": [
+          "compliance"
+        ]
       }
     },
     "/api/compliance/agents/{agent_id}/classify": {
@@ -3213,7 +3658,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Ce Classify"
+        "summary": "Api Ce Classify",
+        "tags": [
+          "compliance"
+        ]
       }
     },
     "/api/compliance/agents/{agent_id}/enforce": {
@@ -3270,7 +3718,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Ce Enforce"
+        "summary": "Api Ce Enforce",
+        "tags": [
+          "compliance"
+        ]
       }
     },
     "/api/compliance/controls/{framework}": {
@@ -3315,7 +3766,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Compliance Controls"
+        "summary": "Api Compliance Controls",
+        "tags": [
+          "compliance"
+        ]
       }
     },
     "/api/compliance/dashboard": {
@@ -3339,7 +3793,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Ce Dashboard"
+        "summary": "Api Ce Dashboard",
+        "tags": [
+          "compliance"
+        ]
       }
     },
     "/api/compliance/evidence/generate": {
@@ -3385,11 +3842,15 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Generate Compliance Evidence"
+        "summary": "Api Generate Compliance Evidence",
+        "tags": [
+          "compliance"
+        ]
       }
     },
     "/api/compliance/evidence/packages": {
       "get": {
+        "description": "Cursor-paginated evidence packages.  ?limit=N (default 50, max 200)\n+ ?cursor=<opaque>; response includes ``next_cursor`` (null when\nexhausted).",
         "operationId": "api_list_compliance_evidence_packages_api_compliance_evidence_packages_get",
         "parameters": [
           {
@@ -3416,6 +3877,22 @@
               "default": 50,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           }
         ],
@@ -3447,7 +3924,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api List Compliance Evidence Packages"
+        "summary": "Api List Compliance Evidence Packages",
+        "tags": [
+          "compliance"
+        ]
       }
     },
     "/api/compliance/evidence/snapshot": {
@@ -3493,7 +3973,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Create Compliance Signed Snapshot"
+        "summary": "Api Create Compliance Signed Snapshot",
+        "tags": [
+          "compliance"
+        ]
       }
     },
     "/api/compliance/evidence/snapshots": {
@@ -3539,7 +4022,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api List Compliance Signed Snapshots"
+        "summary": "Api List Compliance Signed Snapshots",
+        "tags": [
+          "compliance"
+        ]
       }
     },
     "/api/compliance/evidence/snapshots/{snapshot_id}": {
@@ -3584,7 +4070,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Get Compliance Signed Snapshot"
+        "summary": "Api Get Compliance Signed Snapshot",
+        "tags": [
+          "compliance"
+        ]
       }
     },
     "/api/compliance/frameworks": {
@@ -3608,7 +4097,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Ce List Frameworks"
+        "summary": "Api Ce List Frameworks",
+        "tags": [
+          "compliance"
+        ]
       }
     },
     "/api/compliance/frameworks/{framework_id}/controls": {
@@ -3653,7 +4145,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Ce Framework Controls"
+        "summary": "Api Ce Framework Controls",
+        "tags": [
+          "compliance"
+        ]
       }
     },
     "/api/compliance/incident/reports/{report_id}": {
@@ -3698,7 +4193,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Incident Get"
+        "summary": "Api Incident Get",
+        "tags": [
+          "compliance"
+        ]
       }
     },
     "/api/compliance/incident/{agent_id}/reconstruct": {
@@ -3756,7 +4254,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Incident Reconstruct"
+        "summary": "Api Incident Reconstruct",
+        "tags": [
+          "compliance"
+        ]
       }
     },
     "/api/compliance/posture/statements": {
@@ -3818,7 +4319,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Posture List"
+        "summary": "Api Posture List",
+        "tags": [
+          "compliance"
+        ]
       }
     },
     "/api/compliance/posture/statements/{statement_id}": {
@@ -3863,7 +4367,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Posture Get"
+        "summary": "Api Posture Get",
+        "tags": [
+          "compliance"
+        ]
       }
     },
     "/api/compliance/posture/statements/{statement_id}/verify": {
@@ -3908,7 +4415,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Posture Verify"
+        "summary": "Api Posture Verify",
+        "tags": [
+          "compliance"
+        ]
       }
     },
     "/api/compliance/posture/{framework}/generate": {
@@ -3966,7 +4476,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Posture Generate"
+        "summary": "Api Posture Generate",
+        "tags": [
+          "compliance"
+        ]
       }
     },
     "/api/decision-audit": {
@@ -4044,7 +4557,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api List Decision Audits"
+        "summary": "Api List Decision Audits",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/decision-audit/{audit_id}": {
@@ -4089,7 +4605,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Get Decision Audit"
+        "summary": "Api Get Decision Audit",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/decision-audit/{audit_id}/replay": {
@@ -4146,7 +4665,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Replay Decision Audit"
+        "summary": "Api Replay Decision Audit",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/delegation/chain/{receipt_id}": {
@@ -4191,7 +4713,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Delegation Chain"
+        "summary": "Api Delegation Chain",
+        "tags": [
+          "delegation"
+        ]
       }
     },
     "/api/delegation/chain/{receipt_id}/report": {
@@ -4236,7 +4761,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Delegation Chain Report"
+        "summary": "Api Delegation Chain Report",
+        "tags": [
+          "delegation"
+        ]
       }
     },
     "/api/delegation/receipt": {
@@ -4283,7 +4811,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Delegation Issue"
+        "summary": "Api Delegation Issue",
+        "tags": [
+          "delegation"
+        ]
       }
     },
     "/api/delegation/receipt/{receipt_id}": {
@@ -4328,7 +4859,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Delegation Get"
+        "summary": "Api Delegation Get",
+        "tags": [
+          "delegation"
+        ]
       }
     },
     "/api/delegation/receipt/{receipt_id}/revoke": {
@@ -4385,7 +4919,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Delegation Revoke"
+        "summary": "Api Delegation Revoke",
+        "tags": [
+          "delegation"
+        ]
       }
     },
     "/api/delegation/receipt/{receipt_id}/verify": {
@@ -4430,7 +4967,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Delegation Verify"
+        "summary": "Api Delegation Verify",
+        "tags": [
+          "delegation"
+        ]
       }
     },
     "/api/delegation/receipts/{agent_id}": {
@@ -4485,7 +5025,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Delegation Receipts For Agent"
+        "summary": "Api Delegation Receipts For Agent",
+        "tags": [
+          "delegation"
+        ]
       }
     },
     "/api/discovery/agents": {
@@ -4594,15 +5137,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Discovery Census"
+        "summary": "Api Discovery Census",
+        "tags": [
+          "discovery"
+        ]
       }
     },
     "/api/discovery/agents/register": {
@@ -4647,15 +5187,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Discovery Register"
+        "summary": "Api Discovery Register",
+        "tags": [
+          "discovery"
+        ]
       }
     },
     "/api/discovery/agents/summary": {
@@ -4678,15 +5215,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Discovery Summary"
+        "summary": "Api Discovery Summary",
+        "tags": [
+          "discovery"
+        ]
       }
     },
     "/api/discovery/agents/{agent_id}": {
@@ -4730,15 +5264,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Discovery Get Agent"
+        "summary": "Api Discovery Get Agent",
+        "tags": [
+          "discovery"
+        ]
       },
       "patch": {
         "description": "Update mutable agent fields.",
@@ -4794,7 +5325,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Discovery Update Agent"
+        "summary": "Api Discovery Update Agent",
+        "tags": [
+          "discovery"
+        ]
       }
     },
     "/api/discovery/agents/{agent_id}/activity": {
@@ -4838,15 +5372,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Discovery Record Activity"
+        "summary": "Api Discovery Record Activity",
+        "tags": [
+          "discovery"
+        ]
       }
     },
     "/api/discovery/agents/{agent_id}/lifecycle": {
@@ -4890,15 +5421,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Discovery Lifecycle History"
+        "summary": "Api Discovery Lifecycle History",
+        "tags": [
+          "discovery"
+        ]
       },
       "post": {
         "description": "Transition agent lifecycle state.",
@@ -4952,15 +5480,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Discovery Lifecycle Transition"
+        "summary": "Api Discovery Lifecycle Transition",
+        "tags": [
+          "discovery"
+        ]
       }
     },
     "/api/discovery/scan": {
@@ -5005,15 +5530,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Discovery Scan"
+        "summary": "Api Discovery Scan",
+        "tags": [
+          "discovery"
+        ]
       }
     },
     "/api/discovery/scans": {
@@ -5074,15 +5596,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Discovery List Scans"
+        "summary": "Api Discovery List Scans",
+        "tags": [
+          "discovery"
+        ]
       }
     },
     "/api/discovery/scans/{scan_id}": {
@@ -5126,15 +5645,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Discovery Get Scan"
+        "summary": "Api Discovery Get Scan",
+        "tags": [
+          "discovery"
+        ]
       }
     },
     "/api/discovery/shadow": {
@@ -5157,15 +5673,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Discovery Shadow Alerts"
+        "summary": "Api Discovery Shadow Alerts",
+        "tags": [
+          "discovery"
+        ]
       }
     },
     "/api/discovery/shadow/{alert_id}/acknowledge": {
@@ -5221,15 +5734,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Discovery Ack Shadow"
+        "summary": "Api Discovery Ack Shadow",
+        "tags": [
+          "discovery"
+        ]
       }
     },
     "/api/drift/alerts": {
@@ -5309,7 +5819,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Drift Alerts"
+        "summary": "Api Drift Alerts",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/drift/approve/{drift_id}": {
@@ -5365,15 +5878,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Drift Approve"
+        "summary": "Api Drift Approve",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/drift/blast-comparison/{agent_id}": {
@@ -5438,7 +5948,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Drift Blast Comparison"
+        "summary": "Api Drift Blast Comparison",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/drift/record": {
@@ -5485,7 +5998,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Drift Record"
+        "summary": "Api Drift Record",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/drift/report/{agent_id}": {
@@ -5550,7 +6066,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Drift Report"
+        "summary": "Api Drift Report",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/drift/summary": {
@@ -5575,7 +6094,50 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Drift Summary"
+        "summary": "Api Drift Summary",
+        "tags": [
+          "identity-surface"
+        ]
+      }
+    },
+    "/api/edge/drift-snapshot": {
+      "get": {
+        "description": "Return the current drift tier + score for every agent, for the\nworker to mirror into KV and reject high-drift requests at the edge.",
+        "operationId": "api_edge_drift_snapshot_api_edge_drift_snapshot_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Edge Drift Snapshot",
+        "tags": [
+          "misc"
+        ]
+      }
+    },
+    "/api/edge/revoked-certs": {
+      "get": {
+        "description": "Return every currently revoked attestation cert id for the worker\nto mirror into KV.",
+        "operationId": "api_edge_revoked_certs_api_edge_revoked_certs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Edge Revoked Certs",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/enforcement/decisions": {
@@ -5651,15 +6213,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Ep Decisions"
+        "summary": "Api Ep Decisions",
+        "tags": [
+          "enforcement"
+        ]
       }
     },
     "/api/enforcement/evaluate": {
@@ -5704,15 +6263,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Ep Evaluate"
+        "summary": "Api Ep Evaluate",
+        "tags": [
+          "enforcement"
+        ]
       }
     },
     "/api/enforcement/killswitch": {
@@ -5734,15 +6290,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Ep Kill Switches List"
+        "summary": "Api Ep Kill Switches List",
+        "tags": [
+          "enforcement"
+        ]
       }
     },
     "/api/enforcement/killswitch/{agent_id}": {
@@ -5797,15 +6350,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Ep Kill Switch Deactivate"
+        "summary": "Api Ep Kill Switch Deactivate",
+        "tags": [
+          "enforcement"
+        ]
       },
       "get": {
         "operationId": "api_ep_kill_switch_status_api_enforcement_killswitch__agent_id__get",
@@ -5846,15 +6396,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Ep Kill Switch Status"
+        "summary": "Api Ep Kill Switch Status",
+        "tags": [
+          "enforcement"
+        ]
       },
       "post": {
         "description": "Activate kill switch for an agent.",
@@ -5908,15 +6455,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Ep Kill Switch Activate"
+        "summary": "Api Ep Kill Switch Activate",
+        "tags": [
+          "enforcement"
+        ]
       }
     },
     "/api/enforcement/policies": {
@@ -5967,15 +6511,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Ep List Policies"
+        "summary": "Api Ep List Policies",
+        "tags": [
+          "enforcement"
+        ]
       },
       "post": {
         "description": "Create an enforcement policy.",
@@ -6018,15 +6559,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Ep Create Policy"
+        "summary": "Api Ep Create Policy",
+        "tags": [
+          "enforcement"
+        ]
       }
     },
     "/api/enforcement/policies/{policy_id}": {
@@ -6069,15 +6607,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Ep Deactivate Policy"
+        "summary": "Api Ep Deactivate Policy",
+        "tags": [
+          "enforcement"
+        ]
       },
       "get": {
         "operationId": "api_ep_get_policy_api_enforcement_policies__policy_id__get",
@@ -6118,15 +6653,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Ep Get Policy"
+        "summary": "Api Ep Get Policy",
+        "tags": [
+          "enforcement"
+        ]
       },
       "patch": {
         "operationId": "api_ep_update_policy_api_enforcement_policies__policy_id__patch",
@@ -6181,7 +6713,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Ep Update Policy"
+        "summary": "Api Ep Update Policy",
+        "tags": [
+          "enforcement"
+        ]
       }
     },
     "/api/enforcement/shadow/report": {
@@ -6203,15 +6738,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Ep Shadow Report"
+        "summary": "Api Ep Shadow Report",
+        "tags": [
+          "enforcement"
+        ]
       }
     },
     "/api/events": {
@@ -6258,7 +6790,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Events"
+        "summary": "Api Events",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/events/hourly": {
@@ -6305,7 +6840,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Events Hourly"
+        "summary": "Api Events Hourly",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/federation/attestations": {
@@ -6399,7 +6937,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api List Federation Attestations"
+        "summary": "Api List Federation Attestations",
+        "tags": [
+          "federation"
+        ]
       },
       "post": {
         "operationId": "api_issue_federation_attestation_api_federation_attestations_post",
@@ -6443,7 +6984,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Issue Federation Attestation"
+        "summary": "Api Issue Federation Attestation",
+        "tags": [
+          "federation"
+        ]
       }
     },
     "/api/federation/quorum/evaluate": {
@@ -6489,7 +7033,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Evaluate Federation Quorum"
+        "summary": "Api Evaluate Federation Quorum",
+        "tags": [
+          "federation"
+        ]
       }
     },
     "/api/federation/verifiers": {
@@ -6551,7 +7098,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api List Federation Verifiers"
+        "summary": "Api List Federation Verifiers",
+        "tags": [
+          "federation"
+        ]
       },
       "post": {
         "operationId": "api_upsert_federation_verifier_api_federation_verifiers_post",
@@ -6595,7 +7145,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Upsert Federation Verifier"
+        "summary": "Api Upsert Federation Verifier",
+        "tags": [
+          "federation"
+        ]
       }
     },
     "/api/federation/verifiers/proof-registry": {
@@ -6658,7 +7211,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Proof Registry"
+        "summary": "Api Proof Registry",
+        "tags": [
+          "federation"
+        ]
       }
     },
     "/api/federation/verifiers/proof-renew-all": {
@@ -6683,7 +7239,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Proof Renew All"
+        "summary": "Api Proof Renew All",
+        "tags": [
+          "federation"
+        ]
       }
     },
     "/api/federation/verifiers/proof-stats": {
@@ -6708,7 +7267,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Proof Stats"
+        "summary": "Api Proof Stats",
+        "tags": [
+          "federation"
+        ]
       }
     },
     "/api/federation/verifiers/proof-sweep": {
@@ -6755,7 +7317,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Proof Sweep"
+        "summary": "Api Proof Sweep",
+        "tags": [
+          "federation"
+        ]
       }
     },
     "/api/federation/verifiers/{verifier_id}/lifecycle": {
@@ -6800,7 +7365,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Get Federation Verifier Lifecycle"
+        "summary": "Api Get Federation Verifier Lifecycle",
+        "tags": [
+          "federation"
+        ]
       }
     },
     "/api/federation/verifiers/{verifier_id}/proof-interval": {
@@ -6858,7 +7426,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Set Proof Interval"
+        "summary": "Api Set Proof Interval",
+        "tags": [
+          "federation"
+        ]
       }
     },
     "/api/federation/verifiers/{verifier_id}/proof-status": {
@@ -6904,7 +7475,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Proof Status"
+        "summary": "Api Proof Status",
+        "tags": [
+          "federation"
+        ]
       }
     },
     "/api/federation/verifiers/{verifier_id}/revoke": {
@@ -6961,7 +7535,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Revoke Federation Verifier"
+        "summary": "Api Revoke Federation Verifier",
+        "tags": [
+          "federation"
+        ]
       }
     },
     "/api/federation/verifiers/{verifier_id}/rotate": {
@@ -7018,7 +7595,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Rotate Federation Verifier Key"
+        "summary": "Api Rotate Federation Verifier Key",
+        "tags": [
+          "federation"
+        ]
       }
     },
     "/api/graph/anomalies": {
@@ -7081,7 +7661,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Graph Anomalies"
+        "summary": "Api Graph Anomalies",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/graph/data": {
@@ -7128,7 +7711,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Graph Data"
+        "summary": "Api Graph Data",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/graph/path/{from_label}": {
@@ -7183,7 +7769,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Graph Path"
+        "summary": "Api Graph Path",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/graph/stats": {
@@ -7208,7 +7797,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Graph Stats"
+        "summary": "Api Graph Stats",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/health": {
@@ -7233,7 +7825,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Health Detail"
+        "summary": "Api Health Detail",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/honeypot/decoy/honeytoken": {
@@ -7280,7 +7875,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Honeypot Seed Honeytoken"
+        "summary": "Api Honeypot Seed Honeytoken",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/honeypot/decoy/synthetic-agent": {
@@ -7327,7 +7925,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Honeypot Synthesize Agent"
+        "summary": "Api Honeypot Synthesize Agent",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/honeypot/decoys": {
@@ -7389,7 +7990,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Honeypot List Decoys"
+        "summary": "Api Honeypot List Decoys",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/honeypot/decoys/{decoy_id}/deactivate": {
@@ -7434,7 +8038,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Honeypot Deactivate"
+        "summary": "Api Honeypot Deactivate",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/honeypot/hits": {
@@ -7506,7 +8113,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Honeypot Hits"
+        "summary": "Api Honeypot Hits",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/honeypot/hits/record": {
@@ -7553,7 +8163,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Honeypot Record Hit"
+        "summary": "Api Honeypot Record Hit",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/honeypot/hits/{hit_id}/acknowledge": {
@@ -7610,7 +8223,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Honeypot Ack"
+        "summary": "Api Honeypot Ack",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/integrations/catalog": {
@@ -7634,7 +8250,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Integrations Catalog"
+        "summary": "Api Integrations Catalog",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/integrations/idp/normalize": {
@@ -7680,7 +8299,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Integrations Idp Normalize"
+        "summary": "Api Integrations Idp Normalize",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/intel/assess": {
@@ -7726,7 +8348,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Network Intel Assess"
+        "summary": "Api Network Intel Assess",
+        "tags": [
+          "intel"
+        ]
       }
     },
     "/api/intel/decay": {
@@ -7772,7 +8397,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Network Intel Decay"
+        "summary": "Api Network Intel Decay",
+        "tags": [
+          "intel"
+        ]
       }
     },
     "/api/intel/feed": {
@@ -7838,7 +8466,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Network Intel Feed"
+        "summary": "Api Network Intel Feed",
+        "tags": [
+          "intel"
+        ]
       }
     },
     "/api/intel/feed/taxii": {
@@ -7904,7 +8535,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Network Intel Feed Taxii"
+        "summary": "Api Network Intel Feed Taxii",
+        "tags": [
+          "intel"
+        ]
       }
     },
     "/api/intel/record": {
@@ -7950,7 +8584,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Network Intel Record"
+        "summary": "Api Network Intel Record",
+        "tags": [
+          "intel"
+        ]
       }
     },
     "/api/intel/rules": {
@@ -8012,7 +8649,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Network Intel List Rules"
+        "summary": "Api Network Intel List Rules",
+        "tags": [
+          "intel"
+        ]
       },
       "post": {
         "operationId": "api_network_intel_upsert_rule_api_intel_rules_post",
@@ -8056,7 +8696,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Network Intel Upsert Rule"
+        "summary": "Api Network Intel Upsert Rule",
+        "tags": [
+          "intel"
+        ]
       }
     },
     "/api/intent/matches": {
@@ -8135,7 +8778,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Intent Matches"
+        "summary": "Api Intent Matches",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/intent/playbooks": {
@@ -8182,7 +8828,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Intent Playbooks"
+        "summary": "Api Intent Playbooks",
+        "tags": [
+          "identity-surface"
+        ]
       },
       "post": {
         "description": "POST /api/intent/playbooks\n\nCreate a custom attack playbook for the tenant.\n\nRequest body:\n  {\n    \"name\": \"My Custom Playbook\",\n    \"description\": \"...\",\n    \"severity\": \"high\",\n    \"steps\": [\n      { \"category\": \"auth_anomaly\", \"min_confidence\": 0.5 },\n      { \"category\": \"privilege_escalation\" }\n    ],\n    \"window_seconds\": 3600\n  }",
@@ -8225,15 +8874,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Intent Add Playbook"
+        "summary": "Api Intent Add Playbook",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/intent/playbooks/{playbook_id}": {
@@ -8277,7 +8923,62 @@
           },
           {
             "HTTPBearer": []
+          }
+        ],
+        "summary": "Api Intent Delete Playbook",
+        "tags": [
+          "identity-surface"
+        ]
+      }
+    },
+    "/api/kill/{agent_id}": {
+      "post": {
+        "description": "Rip an agent's credentials across every connected plane.\n\nBody: {\"reason\": str (required), \"planes\": [str]?, \"jtis\": [str]?,\n       \"timeout_ms\": int?}",
+        "operationId": "kill_rip_api_kill__agent_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "default": {},
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
           },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
           {
             "APIKeyHeader": []
           },
@@ -8285,7 +8986,324 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Intent Delete Playbook"
+        "summary": "Kill Rip",
+        "tags": [
+          "kill-switch"
+        ]
+      }
+    },
+    "/api/kill/{agent_id}/cascade": {
+      "post": {
+        "description": "Cascade rip: the agent + every agent/workload in its blast radius.\n\nOWNER-gated (step-up). Body must set {\"confirm\": true, \"reason\": str}.",
+        "operationId": "kill_cascade_api_kill__agent_id__cascade_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "default": {},
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Kill Cascade",
+        "tags": [
+          "kill-switch"
+        ]
+      }
+    },
+    "/api/kill/{agent_id}/preview": {
+      "get": {
+        "description": "Pre-flight: which planes are connected and would be revoked. No effect.",
+        "operationId": "kill_preview_api_kill__agent_id__preview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Kill Preview",
+        "tags": [
+          "kill-switch"
+        ]
+      }
+    },
+    "/api/kill/{agent_id}/reverse": {
+      "post": {
+        "description": "Restore reversible planes for an agent (irreversible planes reported).",
+        "operationId": "kill_reverse_api_kill__agent_id__reverse_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "default": {},
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Kill Reverse",
+        "tags": [
+          "kill-switch"
+        ]
+      }
+    },
+    "/api/kill/{agent_id}/trace": {
+      "get": {
+        "description": "Tamper-evident TraceReport for an agent (P2.2).\n\nTime-ordered evidence \u2014 anomalies, the agent's own actions, its delegated\nauthority, and every containment action TokenDNA took \u2014 with each row chained\nand each citing its source of record. ``verification`` is the result of\nre-deriving that chain and re-checking its audit citations, so a reader never\nhas to take the report's word for itself.\n\nP2.4 re-exposes this as ``GET /v1/contain/{agent_id}``.",
+        "operationId": "kill_trace_api_kill__agent_id__trace_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "window_hours",
+            "required": false,
+            "schema": {
+              "default": 24,
+              "title": "Window Hours",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Kill Trace",
+        "tags": [
+          "kill-switch"
+        ]
+      }
+    },
+    "/api/license/activate": {
+      "post": {
+        "description": "Verify a license key and persist it to the configured license file.",
+        "operationId": "api_license_activate_api_license_activate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActivateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Api License Activate Api License Activate Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Api License Activate",
+        "tags": [
+          "license"
+        ]
+      }
+    },
+    "/api/license/status": {
+      "get": {
+        "description": "Return the current license state, enforcement mode, and granted tier.",
+        "operationId": "api_license_status_api_license_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Api License Status Api License Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Api License Status",
+        "tags": [
+          "license"
+        ]
       }
     },
     "/api/mcp/anomaly/alerts": {
@@ -8336,15 +9354,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Gw Anomaly Alerts"
+        "summary": "Api Gw Anomaly Alerts",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/mcp/anomaly/alerts/{alert_id}/acknowledge": {
@@ -8400,15 +9415,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Gw Ack Anomaly"
+        "summary": "Api Gw Ack Anomaly",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/mcp/anomaly/baseline/{agent_id}": {
@@ -8452,15 +9464,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Gw Anomaly Baseline"
+        "summary": "Api Gw Anomaly Baseline",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/mcp/chain/{session_id}": {
@@ -8516,7 +9525,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Mcp Chain"
+        "summary": "Api Mcp Chain",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/mcp/fingerprint/alerts": {
@@ -8567,15 +9579,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Gw Fp Alerts"
+        "summary": "Api Gw Fp Alerts",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/mcp/fingerprint/alerts/{alert_id}/resolve": {
@@ -8631,15 +9640,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Gw Resolve Fp Alert"
+        "summary": "Api Gw Resolve Fp Alert",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/mcp/fingerprint/register": {
@@ -8684,15 +9690,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Gw Register Manifest"
+        "summary": "Api Gw Register Manifest",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/mcp/fingerprint/{server_id}": {
@@ -8736,15 +9739,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Gw Get Fingerprint"
+        "summary": "Api Gw Get Fingerprint",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/mcp/gateway/enforce": {
@@ -8789,15 +9789,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Gw Enforce"
+        "summary": "Api Gw Enforce",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/mcp/gateway/enforcements": {
@@ -8874,15 +9871,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Gw List Enforcements"
+        "summary": "Api Gw List Enforcements",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/mcp/gateway/session/close/{session_id}": {
@@ -8926,15 +9920,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Gw Close Session"
+        "summary": "Api Gw Close Session",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/mcp/gateway/session/open": {
@@ -8979,15 +9970,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Gw Open Session"
+        "summary": "Api Gw Open Session",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/mcp/gateway/session/{session_id}/bind": {
@@ -9043,15 +10031,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Gw Bind Passport"
+        "summary": "Api Gw Bind Passport",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/mcp/gateway/sessions": {
@@ -9128,15 +10113,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Gw List Sessions"
+        "summary": "Api Gw List Sessions",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/mcp/gateway/sessions/{session_id}": {
@@ -9180,15 +10162,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Gw Get Session"
+        "summary": "Api Gw Get Session",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/mcp/inspect": {
@@ -9235,7 +10214,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Mcp Inspect"
+        "summary": "Api Mcp Inspect",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/mcp/tools": {
@@ -9260,7 +10242,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Mcp List Tools"
+        "summary": "Api Mcp List Tools",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/mcp/tools/register": {
@@ -9307,7 +10292,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Mcp Register Tool"
+        "summary": "Api Mcp Register Tool",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/mcp/tools/{tool_name}": {
@@ -9353,7 +10341,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Mcp Get Tool"
+        "summary": "Api Mcp Get Tool",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/mcp/verify": {
@@ -9399,7 +10390,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Mcp Verify"
+        "summary": "Api Mcp Verify",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/mcp/violations": {
@@ -9462,7 +10456,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Mcp Violations"
+        "summary": "Api Mcp Violations",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/mcp/violations/{violation_id}/resolve": {
@@ -9520,7 +10517,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Mcp Resolve Violation"
+        "summary": "Api Mcp Resolve Violation",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/operator/status": {
@@ -9544,7 +10544,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Operator Status"
+        "summary": "Api Operator Status",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/oss/onboarding": {
@@ -9568,7 +10571,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Oss Onboarding"
+        "summary": "Api Oss Onboarding",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/oss/schema-bundle": {
@@ -9592,7 +10598,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Schema Bundle"
+        "summary": "Api Schema Bundle",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/oss/schema-bundle/{artifact_name}": {
@@ -9637,7 +10646,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Schema Artifact"
+        "summary": "Api Schema Artifact",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/oss/sdk/attest": {
@@ -9683,7 +10695,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Sdk Wrapper Attest"
+        "summary": "Api Sdk Wrapper Attest",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/oss/sdk/normalize": {
@@ -9729,7 +10744,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Sdk Wrapper Normalize"
+        "summary": "Api Sdk Wrapper Normalize",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/passport/integrations/playbook/{vendor}": {
@@ -9767,7 +10785,10 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Api Passport Playbook Detail"
+        "summary": "Api Passport Playbook Detail",
+        "tags": [
+          "passport"
+        ]
       }
     },
     "/api/passport/integrations/playbooks": {
@@ -9784,7 +10805,10 @@
             "description": "Successful Response"
           }
         },
-        "summary": "Api Passport Playbooks List"
+        "summary": "Api Passport Playbooks List",
+        "tags": [
+          "passport"
+        ]
       }
     },
     "/api/passport/request": {
@@ -9831,7 +10855,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Passport Request"
+        "summary": "Api Passport Request",
+        "tags": [
+          "passport"
+        ]
       }
     },
     "/api/passport/verify": {
@@ -9870,7 +10897,10 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Api Passport Verify"
+        "summary": "Api Passport Verify",
+        "tags": [
+          "passport"
+        ]
       }
     },
     "/api/passport/{passport_id}": {
@@ -9916,7 +10946,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Passport Get"
+        "summary": "Api Passport Get",
+        "tags": [
+          "passport"
+        ]
       }
     },
     "/api/passport/{passport_id}/approve": {
@@ -9962,7 +10995,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Passport Approve"
+        "summary": "Api Passport Approve",
+        "tags": [
+          "passport"
+        ]
       }
     },
     "/api/passport/{passport_id}/evidence": {
@@ -10008,7 +11044,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Passport List Evidence"
+        "summary": "Api Passport List Evidence",
+        "tags": [
+          "passport"
+        ]
       },
       "post": {
         "description": "Attach an evidence bundle to a pending passport.",
@@ -10064,7 +11103,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Passport Submit Evidence"
+        "summary": "Api Passport Submit Evidence",
+        "tags": [
+          "passport"
+        ]
       }
     },
     "/api/passport/{passport_id}/issue": {
@@ -10110,7 +11152,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Passport Issue"
+        "summary": "Api Passport Issue",
+        "tags": [
+          "passport"
+        ]
       }
     },
     "/api/passport/{passport_id}/revoke": {
@@ -10168,7 +11213,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Passport Revoke"
+        "summary": "Api Passport Revoke",
+        "tags": [
+          "passport"
+        ]
       }
     },
     "/api/passport/{passport_id}/status": {
@@ -10206,7 +11254,10 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Api Passport Status Check"
+        "summary": "Api Passport Status Check",
+        "tags": [
+          "passport"
+        ]
       }
     },
     "/api/passports": {
@@ -10285,7 +11336,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Passports List"
+        "summary": "Api Passports List",
+        "tags": [
+          "passport"
+        ]
       }
     },
     "/api/policy/bundles": {
@@ -10379,7 +11433,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api List Policy Bundles"
+        "summary": "Api List Policy Bundles",
+        "tags": [
+          "policy-bundles"
+        ]
       },
       "post": {
         "operationId": "api_create_policy_bundle_api_policy_bundles_post",
@@ -10423,7 +11480,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Create Policy Bundle"
+        "summary": "Api Create Policy Bundle",
+        "tags": [
+          "policy-bundles"
+        ]
       }
     },
     "/api/policy/bundles/active/simulate": {
@@ -10469,7 +11529,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Simulate Active Policy Bundle"
+        "summary": "Api Simulate Active Policy Bundle",
+        "tags": [
+          "policy-bundles"
+        ]
       }
     },
     "/api/policy/bundles/simulate": {
@@ -10515,7 +11578,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Simulate Policy Bundle"
+        "summary": "Api Simulate Policy Bundle",
+        "tags": [
+          "policy-bundles"
+        ]
       }
     },
     "/api/policy/bundles/{bundle_id}/activate": {
@@ -10572,7 +11638,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Activate Policy Bundle"
+        "summary": "Api Activate Policy Bundle",
+        "tags": [
+          "policy-bundles"
+        ]
       }
     },
     "/api/policy/bundles/{bundle_id}/approve": {
@@ -10629,7 +11698,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Approve Policy Bundle"
+        "summary": "Api Approve Policy Bundle",
+        "tags": [
+          "policy-bundles"
+        ]
       }
     },
     "/api/policy/bundles/{bundle_id}/governance-log": {
@@ -10684,7 +11756,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Policy Bundle Governance Log"
+        "summary": "Api Policy Bundle Governance Log",
+        "tags": [
+          "policy-bundles"
+        ]
       }
     },
     "/api/policy/bundles/{bundle_id}/review": {
@@ -10741,7 +11816,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Review Policy Bundle"
+        "summary": "Api Review Policy Bundle",
+        "tags": [
+          "policy-bundles"
+        ]
       }
     },
     "/api/policy/bundles/{bundle_id}/rollback": {
@@ -10786,7 +11864,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Policy Bundle Rollback"
+        "summary": "Api Policy Bundle Rollback",
+        "tags": [
+          "policy-bundles"
+        ]
       }
     },
     "/api/policy/guard/evaluate": {
@@ -10833,7 +11914,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Policy Guard Evaluate"
+        "summary": "Api Policy Guard Evaluate",
+        "tags": [
+          "policy-guard"
+        ]
       }
     },
     "/api/policy/guard/stats": {
@@ -10858,7 +11942,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Policy Guard Stats"
+        "summary": "Api Policy Guard Stats",
+        "tags": [
+          "policy-guard"
+        ]
       }
     },
     "/api/policy/guard/violations": {
@@ -10953,7 +12040,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Policy Guard Violations"
+        "summary": "Api Policy Guard Violations",
+        "tags": [
+          "policy-guard"
+        ]
       }
     },
     "/api/policy/guard/violations/{violation_id}": {
@@ -10999,7 +12089,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Policy Guard Get Violation"
+        "summary": "Api Policy Guard Get Violation",
+        "tags": [
+          "policy-guard"
+        ]
       }
     },
     "/api/policy/guard/violations/{violation_id}/approve": {
@@ -11055,15 +12148,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Policy Guard Approve"
+        "summary": "Api Policy Guard Approve",
+        "tags": [
+          "policy-guard"
+        ]
       }
     },
     "/api/policy/guard/violations/{violation_id}/reject": {
@@ -11119,15 +12209,12 @@
           },
           {
             "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
           }
         ],
-        "summary": "Api Policy Guard Reject"
+        "summary": "Api Policy Guard Reject",
+        "tags": [
+          "policy-guard"
+        ]
       }
     },
     "/api/policy/suggestions": {
@@ -11216,7 +12303,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api List Policy Suggestions"
+        "summary": "Api List Policy Suggestions",
+        "tags": [
+          "policy-suggestions"
+        ]
       }
     },
     "/api/policy/suggestions/analyze": {
@@ -11263,7 +12353,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Policy Suggestions Analyze"
+        "summary": "Api Policy Suggestions Analyze",
+        "tags": [
+          "policy-suggestions"
+        ]
       }
     },
     "/api/policy/suggestions/auto-tighten": {
@@ -11310,7 +12403,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Policy Auto Tighten"
+        "summary": "Api Policy Auto Tighten",
+        "tags": [
+          "policy-suggestions"
+        ]
       }
     },
     "/api/policy/suggestions/stats": {
@@ -11335,7 +12431,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Policy Suggestion Stats"
+        "summary": "Api Policy Suggestion Stats",
+        "tags": [
+          "policy-suggestions"
+        ]
       }
     },
     "/api/policy/suggestions/{suggestion_id}": {
@@ -11381,7 +12480,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Get Policy Suggestion"
+        "summary": "Api Get Policy Suggestion",
+        "tags": [
+          "policy-suggestions"
+        ]
       }
     },
     "/api/policy/suggestions/{suggestion_id}/approve": {
@@ -11439,7 +12541,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Approve Policy Suggestion"
+        "summary": "Api Approve Policy Suggestion",
+        "tags": [
+          "policy-suggestions"
+        ]
       }
     },
     "/api/policy/suggestions/{suggestion_id}/reject": {
@@ -11497,7 +12602,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Reject Policy Suggestion"
+        "summary": "Api Reject Policy Suggestion",
+        "tags": [
+          "policy-suggestions"
+        ]
       }
     },
     "/api/product/entitlements": {
@@ -11522,7 +12630,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Product Entitlements"
+        "summary": "Api Product Entitlements",
+        "tags": [
+          "product"
+        ]
       }
     },
     "/api/product/features": {
@@ -11546,7 +12657,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Product Feature Matrix"
+        "summary": "Api Product Feature Matrix",
+        "tags": [
+          "product"
+        ]
       }
     },
     "/api/product/features/evaluate": {
@@ -11592,7 +12706,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Evaluate Product Feature"
+        "summary": "Api Evaluate Product Feature",
+        "tags": [
+          "product"
+        ]
       }
     },
     "/api/product/usage": {
@@ -11644,7 +12761,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Product Usage"
+        "summary": "Api Product Usage",
+        "tags": [
+          "product"
+        ]
       }
     },
     "/api/product/usage/evaluate": {
@@ -11690,7 +12810,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Product Usage Evaluate"
+        "summary": "Api Product Usage Evaluate",
+        "tags": [
+          "product"
+        ]
       }
     },
     "/api/product/usage/export": {
@@ -11736,7 +12859,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Product Usage Export"
+        "summary": "Api Product Usage Export",
+        "tags": [
+          "product"
+        ]
       }
     },
     "/api/product/usage/exports": {
@@ -11798,7 +12924,211 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Product Usage Exports"
+        "summary": "Api Product Usage Exports",
+        "tags": [
+          "product"
+        ]
+      }
+    },
+    "/api/retrieval/check": {
+      "post": {
+        "description": "Evaluate (and audit) whether an agent may retrieve from a source.\n\nBody: {\"agent_id\": str, \"source\": str}",
+        "operationId": "check_api_retrieval_check_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "default": {},
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Check",
+        "tags": [
+          "governed-retrieval"
+        ]
+      }
+    },
+    "/api/retrieval/sources": {
+      "get": {
+        "operationId": "list_sources_api_retrieval_sources_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "agent_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agent Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Sources",
+        "tags": [
+          "governed-retrieval"
+        ]
+      },
+      "post": {
+        "description": "Allow an agent (or '*') to retrieve from sources matching a glob pattern.\n\nBody: {\"agent_id\": str, \"pattern\": str, \"kind\": str?}",
+        "operationId": "add_source_api_retrieval_sources_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "default": {},
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Add Source",
+        "tags": [
+          "governed-retrieval"
+        ]
+      }
+    },
+    "/api/retrieval/sources/{source_id}": {
+      "delete": {
+        "operationId": "delete_source_api_retrieval_sources__source_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Source",
+        "tags": [
+          "governed-retrieval"
+        ]
       }
     },
     "/api/schema/attestation.json": {
@@ -11822,7 +13152,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Schema Attestation Json"
+        "summary": "Api Schema Attestation Json",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/schema/uis.json": {
@@ -11846,7 +13179,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Schema Uis Json"
+        "summary": "Api Schema Uis Json",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/sessions": {
@@ -11893,7 +13229,164 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Sessions"
+        "summary": "Api Sessions",
+        "tags": [
+          "misc"
+        ]
+      }
+    },
+    "/api/siem/format": {
+      "post": {
+        "description": "Map a gateway enforcement record to a SIEM target format.\n\nBody: {\"enforcement\": {...}, \"target\": \"ecs\"|\"splunk\"|\"sentinel\"|\"canonical\"}",
+        "operationId": "fmt_api_siem_format_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "default": {},
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Fmt",
+        "tags": [
+          "siem"
+        ]
+      }
+    },
+    "/api/siem/mcp-calls": {
+      "get": {
+        "description": "Recent MCP tool-call enforcements rendered for a SIEM target.",
+        "operationId": "mcp_calls_api_siem_mcp_calls_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "target",
+            "required": false,
+            "schema": {
+              "default": "ecs",
+              "title": "Target",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "session_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Mcp Calls",
+        "tags": [
+          "siem"
+        ]
+      }
+    },
+    "/api/siem/schema": {
+      "get": {
+        "description": "The canonical per-MCP-call schema + supported SIEM targets.",
+        "operationId": "schema_api_siem_schema_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Schema",
+        "tags": [
+          "siem"
+        ]
       }
     },
     "/api/simulate/blast_radius": {
@@ -11940,7 +13433,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Blast Radius"
+        "summary": "Api Blast Radius",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/simulate/blast_radius/history": {
@@ -12003,7 +13499,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Blast Radius History"
+        "summary": "Api Blast Radius History",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/stats": {
@@ -12028,11 +13527,15 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Stats"
+        "summary": "Api Stats",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/threat-intel/feed": {
       "get": {
+        "description": "Cursor-paginated threat-intel feed.  ?limit=N (default 50, max 200)\n+ ?cursor=<opaque>; response includes ``next_cursor`` (null when\nexhausted).",
         "operationId": "api_threat_intel_feed_api_threat_intel_feed_get",
         "parameters": [
           {
@@ -12040,9 +13543,25 @@
             "name": "limit",
             "required": false,
             "schema": {
-              "default": 100,
+              "default": 50,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           },
           {
@@ -12094,594 +13613,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Threat Intel Feed"
-      }
-    },
-    "/api/threat-sharing/auto-sync": {
-      "post": {
-        "description": "Honour auto-subscribe \u2014 pull every network playbook above the\ntenant's confidence threshold. Falls through to plain sync if\nauto-subscribe is off.",
-        "operationId": "api_flywheel_auto_sync_api_threat_sharing_auto_sync_post",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Api Flywheel Auto Sync"
-      }
-    },
-    "/api/threat-sharing/hits/{hit_id}/confirm": {
-      "post": {
-        "description": "Operator confirms a network-playbook hit was a true positive.",
-        "operationId": "api_flywheel_confirm_hit_api_threat_sharing_hits__hit_id__confirm_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "hit_id",
-            "required": true,
-            "schema": {
-              "title": "Hit Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": true,
-                "title": "Body",
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Api Flywheel Confirm Hit"
-      }
-    },
-    "/api/threat-sharing/industry": {
-      "post": {
-        "description": "Tag the tenant with an industry vertical for digest clustering.",
-        "operationId": "api_flywheel_set_industry_api_threat_sharing_industry_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": true,
-                "title": "Body",
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Api Flywheel Set Industry"
-      }
-    },
-    "/api/threat-sharing/industry/digest": {
-      "get": {
-        "description": "Confirmed attacks against peers in the same industry vertical.",
-        "operationId": "api_flywheel_industry_digest_api_threat_sharing_industry_digest_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "days",
-            "required": false,
-            "schema": {
-              "default": 7,
-              "title": "Days",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 25,
-              "title": "Limit",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Api Flywheel Industry Digest"
-      }
-    },
-    "/api/threat-sharing/network": {
-      "get": {
-        "description": "Browse the anonymized network catalog.",
-        "operationId": "api_threat_sharing_network_api_threat_sharing_network_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 100,
-              "title": "Limit",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Api Threat Sharing Network"
-      }
-    },
-    "/api/threat-sharing/network/scored": {
-      "get": {
-        "description": "Browse the network catalog with derived confidence scores attached.\nSorted by confidence desc.",
-        "operationId": "api_flywheel_scored_catalog_api_threat_sharing_network_scored_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 100,
-              "title": "Limit",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "min_confidence",
-            "required": false,
-            "schema": {
-              "default": 0.0,
-              "title": "Min Confidence",
-              "type": "number"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Api Flywheel Scored Catalog"
-      }
-    },
-    "/api/threat-sharing/network/{network_playbook_id}/hit": {
-      "post": {
-        "description": "Log that a network-sourced playbook fired in this tenant.",
-        "operationId": "api_flywheel_record_hit_api_threat_sharing_network__network_playbook_id__hit_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "network_playbook_id",
-            "required": true,
-            "schema": {
-              "title": "Network Playbook Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": true,
-                "title": "Body",
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Api Flywheel Record Hit"
-      }
-    },
-    "/api/threat-sharing/network/{network_playbook_id}/score": {
-      "get": {
-        "operationId": "api_flywheel_playbook_score_api_threat_sharing_network__network_playbook_id__score_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "network_playbook_id",
-            "required": true,
-            "schema": {
-              "title": "Network Playbook Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Api Flywheel Playbook Score"
-      }
-    },
-    "/api/threat-sharing/opt-in": {
-      "post": {
-        "description": "Opt the current tenant into the threat-sharing network.",
-        "operationId": "api_threat_sharing_opt_in_api_threat_sharing_opt_in_post",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Api Threat Sharing Opt In"
-      }
-    },
-    "/api/threat-sharing/opt-out": {
-      "post": {
-        "description": "Opt the current tenant out. Past propagations are retained.",
-        "operationId": "api_threat_sharing_opt_out_api_threat_sharing_opt_out_post",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Api Threat Sharing Opt Out"
-      }
-    },
-    "/api/threat-sharing/publish/{playbook_id}": {
-      "post": {
-        "description": "Anonymize and publish one of the tenant's custom playbooks.",
-        "operationId": "api_threat_sharing_publish_api_threat_sharing_publish__playbook_id__post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "playbook_id",
-            "required": true,
-            "schema": {
-              "title": "Playbook Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Api Threat Sharing Publish"
-      }
-    },
-    "/api/threat-sharing/status": {
-      "get": {
-        "description": "Opt-in status + counters for the current tenant.",
-        "operationId": "api_threat_sharing_status_api_threat_sharing_status_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Api Threat Sharing Status"
-      }
-    },
-    "/api/threat-sharing/subscription": {
-      "post": {
-        "description": "Enable or disable auto-subscribe + tune the confidence threshold.",
-        "operationId": "api_flywheel_set_subscription_api_threat_sharing_subscription_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": true,
-                "title": "Body",
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Api Flywheel Set Subscription"
-      }
-    },
-    "/api/threat-sharing/sync": {
-      "post": {
-        "description": "Pull every new network playbook the tenant has not yet received.",
-        "operationId": "api_threat_sharing_sync_api_threat_sharing_sync_post",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Api Threat Sharing Sync"
+        "summary": "Api Threat Intel Feed",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/threats": {
@@ -12706,7 +13641,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Threats"
+        "summary": "Api Threats",
+        "tags": [
+          "misc"
+        ]
       }
     },
     "/api/uis/adapters/normalize": {
@@ -12752,7 +13690,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Uis Adapter Normalize"
+        "summary": "Api Uis Adapter Normalize",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/uis/events": {
@@ -12830,7 +13771,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api List Uis Events"
+        "summary": "Api List Uis Events",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/uis/events/{event_id}": {
@@ -12875,7 +13819,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Get Uis Event"
+        "summary": "Api Get Uis Event",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/uis/normalize": {
@@ -12921,7 +13868,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Uis Normalize"
+        "summary": "Api Uis Normalize",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/uis/schema/artifacts": {
@@ -12945,7 +13895,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Uis Schema Artifacts"
+        "summary": "Api Uis Schema Artifacts",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/uis/spec": {
@@ -12969,7 +13922,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Uis Spec"
+        "summary": "Api Uis Spec",
+        "tags": [
+          "identity-surface"
+        ]
       }
     },
     "/api/verifier/challenge/{challenge_id}/respond": {
@@ -13019,7 +13975,10 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Api Resolve Challenge"
+        "summary": "Api Resolve Challenge",
+        "tags": [
+          "verifier"
+        ]
       }
     },
     "/api/verifier/reputation/anomalies": {
@@ -13044,7 +14003,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Reputation Anomalies"
+        "summary": "Api Reputation Anomalies",
+        "tags": [
+          "verifier"
+        ]
       }
     },
     "/api/verifier/reputation/due-for-challenge": {
@@ -13101,7 +14063,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Due For Challenge"
+        "summary": "Api Due For Challenge",
+        "tags": [
+          "verifier"
+        ]
       }
     },
     "/api/verifier/reputation/expire-challenges": {
@@ -13126,7 +14091,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Expire Pending Challenges"
+        "summary": "Api Expire Pending Challenges",
+        "tags": [
+          "verifier"
+        ]
       }
     },
     "/api/verifier/reputation/leaderboard": {
@@ -13173,7 +14141,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Reputation Leaderboard"
+        "summary": "Api Reputation Leaderboard",
+        "tags": [
+          "verifier"
+        ]
       }
     },
     "/api/verifier/reputation/quorum": {
@@ -13220,7 +14191,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Reputation Quorum"
+        "summary": "Api Reputation Quorum",
+        "tags": [
+          "verifier"
+        ]
       }
     },
     "/api/verifier/reputation/sync-scores": {
@@ -13245,7 +14219,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Sync Static Scores"
+        "summary": "Api Sync Static Scores",
+        "tags": [
+          "verifier"
+        ]
       }
     },
     "/api/verifier/{verifier_id}/challenge": {
@@ -13291,7 +14268,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Issue Challenge"
+        "summary": "Api Issue Challenge",
+        "tags": [
+          "verifier"
+        ]
       }
     },
     "/api/verifier/{verifier_id}/challenges": {
@@ -13347,7 +14327,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Verifier Challenge History"
+        "summary": "Api Verifier Challenge History",
+        "tags": [
+          "verifier"
+        ]
       }
     },
     "/api/verifier/{verifier_id}/reputation": {
@@ -13393,7 +14376,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Verifier Reputation"
+        "summary": "Api Verifier Reputation",
+        "tags": [
+          "verifier"
+        ]
       }
     },
     "/api/workflow": {
@@ -13449,7 +14435,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Workflow List"
+        "summary": "Api Workflow List",
+        "tags": [
+          "workflow"
+        ]
       }
     },
     "/api/workflow/register": {
@@ -13496,7 +14485,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Workflow Register"
+        "summary": "Api Workflow Register",
+        "tags": [
+          "workflow"
+        ]
       }
     },
     "/api/workflow/{workflow_id}": {
@@ -13541,7 +14533,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Workflow Get"
+        "summary": "Api Workflow Get",
+        "tags": [
+          "workflow"
+        ]
       }
     },
     "/api/workflow/{workflow_id}/observations": {
@@ -13606,7 +14601,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Workflow Observations"
+        "summary": "Api Workflow Observations",
+        "tags": [
+          "workflow"
+        ]
       }
     },
     "/api/workflow/{workflow_id}/observe": {
@@ -13664,7 +14662,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Workflow Observe"
+        "summary": "Api Workflow Observe",
+        "tags": [
+          "workflow"
+        ]
       }
     },
     "/api/workflow/{workflow_id}/replay": {
@@ -13710,7 +14711,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Workflow Replay"
+        "summary": "Api Workflow Replay",
+        "tags": [
+          "workflow"
+        ]
       }
     },
     "/api/workflow/{workflow_id}/retire": {
@@ -13755,7 +14759,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Workflow Retire"
+        "summary": "Api Workflow Retire",
+        "tags": [
+          "workflow"
+        ]
       }
     },
     "/api/ztix/simulate": {
@@ -13802,7 +14809,31 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Api Ztix Simulate"
+        "summary": "Api Ztix Simulate",
+        "tags": [
+          "misc"
+        ]
+      }
+    },
+    "/console": {
+      "get": {
+        "operationId": "console_console_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Console",
+        "tags": [
+          "console"
+        ]
       }
     },
     "/dashboard": {
@@ -13820,7 +14851,31 @@
             "description": "Successful Response"
           }
         },
-        "summary": "Dashboard"
+        "summary": "Dashboard",
+        "tags": [
+          "enterprise"
+        ]
+      }
+    },
+    "/demo": {
+      "get": {
+        "operationId": "demo_console_demo_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Demo Console",
+        "tags": [
+          "demo"
+        ]
       }
     },
     "/healthz": {
@@ -13872,10 +14927,16 @@
         },
         "security": [
           {
+            "APIKeyHeader": []
+          },
+          {
             "HTTPBearer": []
           }
         ],
-        "summary": "Aws External Id"
+        "summary": "Aws External Id",
+        "tags": [
+          "enterprise"
+        ]
       }
     },
     "/onboarding/aws/test": {
@@ -13915,104 +14976,16 @@
         },
         "security": [
           {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Aws Test"
-      }
-    },
-    "/profile/{user_id}": {
-      "delete": {
-        "operationId": "reset_profile_profile__user_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "user_id",
-            "required": true,
-            "schema": {
-              "title": "User Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          },
-          {
             "APIKeyHeader": []
           },
           {
             "HTTPBearer": []
           }
         ],
-        "summary": "Reset Profile"
-      },
-      "get": {
-        "operationId": "get_profile_profile__user_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "user_id",
-            "required": true,
-            "schema": {
-              "title": "User Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Get Profile"
+        "summary": "Aws Test",
+        "tags": [
+          "enterprise"
+        ]
       }
     },
     "/readyz": {
@@ -14032,55 +15005,6 @@
         "summary": "Readyz"
       }
     },
-    "/revoke": {
-      "post": {
-        "operationId": "manual_revoke_revoke_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": true,
-                "title": "Body",
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          },
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Manual Revoke"
-      }
-    },
     "/saml/acs": {
       "post": {
         "operationId": "saml_acs_saml_acs_post",
@@ -14094,7 +15018,10 @@
             "description": "Successful Response"
           }
         },
-        "summary": "Saml Acs"
+        "summary": "Saml Acs",
+        "tags": [
+          "enterprise"
+        ]
       }
     },
     "/saml/login": {
@@ -14138,7 +15065,10 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Saml Login"
+        "summary": "Saml Login",
+        "tags": [
+          "enterprise"
+        ]
       }
     },
     "/saml/metadata": {
@@ -14149,7 +15079,10 @@
             "description": "Successful Response"
           }
         },
-        "summary": "Saml Metadata"
+        "summary": "Saml Metadata",
+        "tags": [
+          "enterprise"
+        ]
       }
     },
     "/scim/v2/Groups": {
@@ -14201,7 +15134,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Scim List Groups"
+        "summary": "Scim List Groups",
+        "tags": [
+          "enterprise"
+        ]
       },
       "post": {
         "operationId": "scim_create_group_scim_v2_Groups_post",
@@ -14223,7 +15159,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Scim Create Group"
+        "summary": "Scim Create Group",
+        "tags": [
+          "enterprise"
+        ]
       }
     },
     "/scim/v2/Groups/{group_id}": {
@@ -14268,7 +15207,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Scim Delete Group"
+        "summary": "Scim Delete Group",
+        "tags": [
+          "enterprise"
+        ]
       },
       "get": {
         "operationId": "scim_get_group_scim_v2_Groups__group_id__get",
@@ -14311,7 +15253,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Scim Get Group"
+        "summary": "Scim Get Group",
+        "tags": [
+          "enterprise"
+        ]
       },
       "patch": {
         "operationId": "scim_patch_group_scim_v2_Groups__group_id__patch",
@@ -14354,7 +15299,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Scim Patch Group"
+        "summary": "Scim Patch Group",
+        "tags": [
+          "enterprise"
+        ]
       }
     },
     "/scim/v2/ResourceTypes": {
@@ -14370,7 +15318,10 @@
             "description": "Successful Response"
           }
         },
-        "summary": "Scim Resource Types"
+        "summary": "Scim Resource Types",
+        "tags": [
+          "enterprise"
+        ]
       }
     },
     "/scim/v2/ServiceProviderConfig": {
@@ -14386,7 +15337,10 @@
             "description": "Successful Response"
           }
         },
-        "summary": "Scim Spc"
+        "summary": "Scim Spc",
+        "tags": [
+          "enterprise"
+        ]
       }
     },
     "/scim/v2/Users": {
@@ -14458,7 +15412,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Scim List Users"
+        "summary": "Scim List Users",
+        "tags": [
+          "enterprise"
+        ]
       },
       "post": {
         "operationId": "scim_create_user_scim_v2_Users_post",
@@ -14480,7 +15437,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Scim Create User"
+        "summary": "Scim Create User",
+        "tags": [
+          "enterprise"
+        ]
       }
     },
     "/scim/v2/Users/{user_id}": {
@@ -14525,7 +15485,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Scim Delete User"
+        "summary": "Scim Delete User",
+        "tags": [
+          "enterprise"
+        ]
       },
       "get": {
         "operationId": "scim_get_user_scim_v2_Users__user_id__get",
@@ -14568,7 +15531,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Scim Get User"
+        "summary": "Scim Get User",
+        "tags": [
+          "enterprise"
+        ]
       },
       "patch": {
         "operationId": "scim_patch_user_scim_v2_Users__user_id__patch",
@@ -14611,7 +15577,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Scim Patch User"
+        "summary": "Scim Patch User",
+        "tags": [
+          "enterprise"
+        ]
       },
       "put": {
         "operationId": "scim_replace_user_scim_v2_Users__user_id__put",
@@ -14654,12 +15623,50 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Scim Replace User"
+        "summary": "Scim Replace User",
+        "tags": [
+          "enterprise"
+        ]
       }
     },
-    "/secure": {
+    "/trust-graph": {
       "get": {
-        "operationId": "secure_secure_get",
+        "description": "Clean trust-graph explorer \u2014 toggle Nodes / Edges / Anomalies / Correlate.",
+        "operationId": "trust_graph_trust_graph_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Trust Graph",
+        "tags": [
+          "console"
+        ]
+      }
+    },
+    "/v1/authorize": {
+      "post": {
+        "description": "Is it allowed to do what it's doing, and go where it's going?\n\nBody: {\"agent_id\": str (required), \"action\": str (required),\n       \"resource\": str (required), \"destination\": str?, \"claims\": {...}?}\n\n``claims`` are the agent's verified token claims. When supplied, its scopes are\nevaluated too \u2014 honouring the log-only rollout switch, so enabling this cannot\nsilently start denying traffic that used to flow.",
+        "operationId": "authorize_v1_authorize_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "default": {},
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -14668,12 +15675,19 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [
-          {
-            "HTTPBearer": []
-          },
           {
             "APIKeyHeader": []
           },
@@ -14681,7 +15695,180 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Secure"
+        "summary": "Authorize",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/contain/{agent_id}": {
+      "get": {
+        "description": "Has it been compromised \u2014 what is the blast radius, and can I trace it?\n\nReturns the verdict plus ``blast_radius.trace`` \u2014 the tamper-evident\nTraceReport (P2.2) \u2014 and ``blast_radius.trace_verification``, the result of\nre-deriving that chain, so a reader never takes the report's word for itself.",
+        "operationId": "contain_v1_contain__agent_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "window_hours",
+            "required": false,
+            "schema": {
+              "default": 24,
+              "title": "Window Hours",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Contain",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/contain/{agent_id}/revoke": {
+      "post": {
+        "description": "Contain it: rip credentials across every connected plane, then re-diagnose.\n\nBody: {\"reason\": str (required), \"planes\": [str]?, \"jtis\": [str]?}\n\nReturns the kill receipt AND the post-containment verdict, so the caller can\nsee that containment actually changed the agent's state rather than trusting\nthat it did.",
+        "operationId": "contain_revoke_v1_contain__agent_id__revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "default": {},
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Contain Revoke",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/verify": {
+      "post": {
+        "description": "Is this a legitimate agent identity, and are its credentials valid?\n\nBody: {\"agent_id\": str (required), \"passport\": {...}?, \"dpop_proof\": str?,\n       \"dpop_method\": str?, \"dpop_uri\": str?}\n\nA failed identity is a 401, not a 403: nothing was refused on policy grounds \u2014\nthe identity itself did not hold up.",
+        "operationId": "verify_v1_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "default": {},
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Verify",
+        "tags": [
+          "v1"
+        ]
       }
     }
   }

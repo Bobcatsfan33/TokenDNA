@@ -18,9 +18,11 @@ jobs:
     name: Lint & Import Verification
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
           cache: pip
@@ -30,6 +32,15 @@ jobs:
 
       - name: Ruff lint
         run: ruff check . --output-format=github
+
+      - name: Immutable GitHub Actions guard
+        run: python scripts/ci/workflow_action_pin_guard.py
+
+      - name: UIS specification contract guard
+        run: python scripts/ci/verify_uis_spec_sync.py
+
+      - name: Enterprise readiness evidence integrity
+        run: python scripts/ci/verify_enterprise_readiness.py
 
       - name: Storage backend guardrail
         run: |
@@ -60,6 +71,11 @@ jobs:
 
       - name: API route-surface guard (decomposition preserves the surface — T-1)
         run: TOKENDNA_ENV=ci python scripts/ci/openapi_route_guard.py
+
+      - name: API reference drift guard
+        run: |
+          TOKENDNA_ENV=ci python scripts/generate_api_reference.py
+          git diff --exit-code -- docs/api
 
       - name: FIPS crypto-primitive gate (SC-13)
         run: |
@@ -115,9 +131,11 @@ jobs:
     name: Full Test Suite
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
           cache: pip
@@ -133,9 +151,9 @@ jobs:
     name: DoD ATO Evidence Gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
           cache: pip
@@ -153,7 +171,7 @@ jobs:
         run: python -m pytest -q tests/test_ato_evidence.py tests/test_preflight_prod.py
 
       - name: Upload ATO evidence
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: ato-evidence
@@ -165,21 +183,23 @@ jobs:
     name: Dependency Security Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
           cache: pip
 
-      - name: pip-audit
+      - name: Resolve, test, and audit the production dependency graph
         run: |
-          pip install pip-audit
-          pip-audit -r requirements.txt --no-deps --disable-pip --progress-spinner off --format=json --output=pip-audit-results.json
-          pip-audit -r requirements.txt --no-deps --disable-pip --progress-spinner off
+          pip install -r requirements.txt -r requirements-prod.txt pip-audit pytest
+          pip check
+          python -m pytest -q tests/test_dependency_matrix.py
+          pip-audit --local --progress-spinner off --format=json --output=pip-audit-results.json
+          pip-audit --local --progress-spinner off
 
       - name: Upload audit results
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: pip-audit-results
@@ -194,19 +214,19 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
+        uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3
         with:
           languages: python
           queries: security-extended,security-and-quality
 
       - name: Autobuild
-        uses: github/codeql-action/autobuild@v4
+        uses: github/codeql-action/autobuild@5595ccaf912efad79be6eef63a5619ff05969be3
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v4
+        uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3
         with:
           category: "/language:python"
 
@@ -215,12 +235,12 @@ jobs:
     name: Secret Detection
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           fetch-depth: 0      # full history for git log scanning
 
       - name: TruffleHog OSS — scan for leaked secrets
-        uses: trufflesecurity/trufflehog@v3.95.2
+        uses: trufflesecurity/trufflehog@27b0417c16317ca9a472a9a8092acce143b49c55
         with:
           path: ./
           base: ${{ github.event.before || github.event.repository.default_branch }}
@@ -232,24 +252,29 @@ jobs:
     name: Docker Build Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
 
       - name: Build Docker image
         run: docker build --no-cache -t aegis-tokendna:ci .
 
+      - name: Verify SAML runtime linkage in final image
+        run: |
+          docker run --rm --entrypoint=python aegis-tokendna:ci -c \
+            "from onelogin.saml2.response import OneLogin_Saml2_Response; import defusedxml, xmlsec"
+
       - name: Trivy container scan
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: "aegis-tokendna:ci"
           format: "sarif"
           output: "trivy-results.sarif"
           severity: "CRITICAL,HIGH"
-          exit-code: "0"           # advisory only — SARIF uploaded to Security tab
+          exit-code: "1"           # block fixable HIGH/CRITICAL findings
           ignore-unfixed: true     # only report CVEs that have an available fix
           vuln-type: "os,library"
 
       - name: Upload Trivy results
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3
         if: always()
         with:
           sarif_file: "trivy-results.sarif"
@@ -259,9 +284,9 @@ jobs:
     name: Runtime Readiness Gates
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
           cache: pip
@@ -302,9 +327,9 @@ jobs:
     name: Adversarial Security Harness
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
           cache: pip
@@ -326,9 +351,9 @@ jobs:
       DATA_DB_PATH: /tmp/tokendna-policy-regression-ci.db
       ATTESTATION_CA_SECRET: policy-regression-ci-secret
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
           cache: pip
@@ -398,9 +423,9 @@ jobs:
     name: Production Secret Gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
           cache: pip
@@ -490,9 +515,9 @@ jobs:
       TOKENDNA_HONEYPOT_SECRET: ci-honeypot-secret-32-bytes-aaaaaa
       TOKENDNA_POSTURE_SECRET: ci-posture-secret-32-bytes-aaaaaaa
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
           cache: pip
@@ -520,9 +545,9 @@ jobs:
     name: Helm Chart Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
 
-      - uses: azure/setup-helm@v5
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310
         with:
           version: v3.14.0
 
@@ -543,6 +568,7 @@ jobs:
         run: |
           curl -sSL -o /tmp/kc.tgz \
             https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          echo "95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73  /tmp/kc.tgz" | sha256sum --check
           tar -xzf /tmp/kc.tgz -C /tmp
           /tmp/kubeconform -strict -summary /tmp/rendered.yaml /tmp/rendered-prod.yaml
 
@@ -559,9 +585,9 @@ jobs:
       TOKENDNA_ENV: ci
       ATTESTATION_CA_SECRET: ci-stress-smoke-secret
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
           cache: pip
@@ -592,27 +618,25 @@ jobs:
 
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: stress-report
           path: /tmp/stress-report.json
           if-no-files-found: ignore
 
-  # ── Detection-efficacy benchmark (ADVISORY / non-blocking) ─────────────────
+  # ── Detection-efficacy regression gate ──────────────────────────────────────
   # Replays the three RSA-2026 scenarios against an in-process instance and
   # publishes a detection-rate / false-positive / latency report as an artifact.
-  # continue-on-error keeps this off the required-checks path — it informs, it
-  # does not gate. TOKENDNA_ENV=ci satisfies the DEV_MODE deny-by-default guard.
+  # TOKENDNA_ENV=ci satisfies the DEV_MODE deny-by-default guard.
   efficacy-benchmark:
-    name: Detection Efficacy Benchmark (advisory)
+    name: Detection Efficacy Benchmark
     runs-on: ubuntu-latest
-    continue-on-error: true
     env:
       TOKENDNA_ENV: ci
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
           cache: pip
@@ -625,7 +649,7 @@ jobs:
 
       - name: Upload efficacy report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: efficacy-report
           path: dist/benchmark

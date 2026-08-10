@@ -3,9 +3,9 @@
 # Multi-stage build → distroless runtime.
 #
 # Security posture:
-#   * Build stage:  python:3.11-slim with toolchain to compile cryptography +
+#   * Build stage:  Python 3.13 slim with toolchain to compile cryptography +
 #                   psycopg + any other native-extension wheels.
-#   * Runtime stage: gcr.io/distroless/python3-debian12:nonroot
+#   * Runtime stage: digest-pinned distroless Python on Debian 13
 #                   - no shell, no apt, no busybox, no curl, no wget
 #                   - ships only the Python interpreter + libc + ca-certs
 #                   - default UID 65532 (nonroot variant); we keep it
@@ -26,7 +26,7 @@
 #     ghcr.io/bobcatsfan33/tokendna:dev
 
 # ── Stage 1: dependency builder ──────────────────────────────────────────────
-FROM python:3.11-slim AS builder
+FROM python:3.13-slim@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6 AS builder
 
 WORKDIR /build
 
@@ -38,7 +38,11 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc \
         libffi-dev \
+        libxml2-dev \
+        libxmlsec1-dev \
+        libxmlsec1-openssl \
         libssl-dev \
+        pkg-config \
         libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -49,7 +53,7 @@ RUN pip install --prefix=/install -r requirements.txt
 # ── Stage 2: app staging ─────────────────────────────────────────────────────
 # Separate from runtime so we can strip secrets / build artefacts before
 # they reach the distroless layer.
-FROM python:3.11-slim AS appstage
+FROM python:3.13-slim@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6 AS appstage
 
 WORKDIR /app
 COPY . /app
@@ -62,7 +66,7 @@ RUN find /app -name '__pycache__' -type d -prune -exec rm -rf {} + \
 
 
 # ── Stage 3: runtime ─────────────────────────────────────────────────────────
-FROM gcr.io/distroless/python3-debian12:nonroot AS runtime
+FROM gcr.io/distroless/python3-debian13:nonroot@sha256:1c680cdb442a9e7a89f64fd1706367c62302ea1f9ab80fdebdb72ae9fcded46f AS runtime
 
 # Cosign-friendly OCI labels (parsed by GHCR, scanners, and the release
 # workflow when computing the SBOM).
@@ -83,7 +87,7 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONFAULTHANDLER=1 \
-    PYTHONPATH=/app:/usr/local/lib/python3.11/site-packages \
+    PYTHONPATH=/app:/usr/local/lib/python3.13/site-packages \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     DATA_DB_PATH=/data/tokendna.db \
     AUDIT_LOG_PATH=/var/log/aegis/audit.jsonl

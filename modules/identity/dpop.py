@@ -104,28 +104,17 @@ class DPoPVerifier:
     def _verify_signature(self, token: str, jwk: dict) -> None:
         """Verify JWT signature using the JWK from the header."""
         try:
-            from jose import jwt as jose_jwt
-            from jose.backends import RSAKey, ECKey
+            import jwt
 
             header, _, _ = self._decode_jwt_parts(token)
             alg = header.get("alg")
-
-            key_type = jwk.get("kty", "").upper()
-            if key_type == "RSA":
-                key = RSAKey(jwk, alg)
-            elif key_type == "EC":
-                key = ECKey(jwk, alg)
-            else:
-                raise DPoPError(f"Unsupported JWK key type: {key_type}")
-
-            jose_jwt.decode(
+            key = jwt.PyJWK.from_dict(jwk, algorithm=alg).key
+            jwt.decode(
                 token,
-                key.public_key(),
+                key,
                 algorithms=[alg],
-                options={"verify_exp": False},
+                options={"verify_exp": False, "verify_aud": False},
             )
-        except ImportError:
-            logger.warning("python-jose not available -- DPoP signature verification skipped")
         except Exception as e:
             raise DPoPError(f"DPoP signature verification failed: {e}") from e
 
