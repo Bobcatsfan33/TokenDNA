@@ -115,8 +115,8 @@ mTLS does **not** protect against:
 ## Internal API plane (:8443) — peer authorization (T-2)
 
 The data-store mTLS above protects FastAPI ↔ Redis/ClickHouse/Postgres. The
-**internal API plane** adds a second listener so the collector, edge worker,
-and batch jobs reach the API itself over mutual TLS:
+**internal API plane** adds a second listener so approved connector services,
+the edge worker, and batch jobs reach the API itself over mutual TLS:
 
 | Port | Surface | Auth |
 |------|---------|------|
@@ -142,9 +142,10 @@ and batch jobs reach the API itself over mutual TLS:
   (enable with `internalPKI.enabled=true`) defines a cert-manager `Issuer` +
   `Certificate`s (90d cert / 30d renew, ECDSA P-256). Deleting a leaf secret
   triggers automatic reissue with no application restart.
-- **Collector client**: `collector/tokendna_collector/transport/internal_client.py`
-  presents the collector cert and verifies the API against the internal CA
-  (stdlib `ssl`, consistent with the collector's minimal-dependency design).
+- **Connector clients**: customer-owned connectors must present an approved
+  SPIFFE identity and verify the API against the internal CA. The `collector`
+  SPIFFE name remains a compatibility identifier; no collector client package
+  ships from this repository.
 
 **Negative tests** (`tests/test_mtls_peer.py`): no client cert → 403 (mTLS
 required); valid cert with unlisted SPIFFE URI → 403; listener context is TLS

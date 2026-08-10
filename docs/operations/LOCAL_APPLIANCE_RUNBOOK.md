@@ -10,7 +10,9 @@ The appliance includes:
 - Postgres for identity, policy, audit, and product state.
 - Redis for rate limiting and runtime cache.
 - ClickHouse for analytical event flows.
-- TokenDNA SDK, collector, and platform packages for local agent and identity integrations.
+- TokenDNA SDK for local agent integrations. Customer connector services use
+  the SDK and documented control-plane APIs; no standalone collector or
+  platform package ships from this repository.
 
 ## First Install
 

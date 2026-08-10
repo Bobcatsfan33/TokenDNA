@@ -21,13 +21,21 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUT = ROOT / "dist" / "release-bundle" / "tokendna-release-manifest.json"
 
 
-def _read_version() -> str:
+def _read_sdk_version() -> str:
     init_file = ROOT / "tokendna_sdk" / "__init__.py"
     text = init_file.read_text(encoding="utf-8")
     for line in text.splitlines():
         if line.startswith("__version__"):
             return line.split("=", 1)[1].strip().strip('"')
     return "0.0.0"
+
+
+def _read_product_version() -> str:
+    version_file = ROOT / "VERSION"
+    version = version_file.read_text(encoding="utf-8").strip()
+    if not version:
+        raise RuntimeError("VERSION must not be empty")
+    return version
 
 
 def _git_sha() -> str | None:
@@ -59,6 +67,12 @@ def _file_entry(path: Path) -> dict[str, Any]:
     }
 
 
+def _require_paths(paths: list[Path], label: str) -> None:
+    missing = [path.relative_to(ROOT).as_posix() for path in paths if not path.exists()]
+    if missing:
+        raise RuntimeError(f"missing {label}: " + ", ".join(missing))
+
+
 def build_manifest(image_tag: str, output: Path) -> dict[str, Any]:
     required_docs = [
         ROOT / "docs" / "operations" / "LOCAL_APPLIANCE_RUNBOOK.md",
@@ -69,13 +83,21 @@ def build_manifest(image_tag: str, output: Path) -> dict[str, Any]:
         ROOT / "docs" / "ato" / "customer-responsibility-matrix.md",
         ROOT / "docs" / "ato" / "continuous-monitoring-plan.md",
     ]
-    missing = [path.relative_to(ROOT).as_posix() for path in required_docs if not path.exists()]
-    if missing:
-        raise RuntimeError("missing release docs: " + ", ".join(missing))
+    release_paths = [
+        ROOT / "VERSION",
+        ROOT / "Dockerfile",
+        ROOT / "docker-compose.yml",
+        ROOT / "docker-compose.production.yml",
+        ROOT / "tokendna_sdk",
+        ROOT / "dashboard" / "index.html",
+    ]
+    _require_paths(required_docs, "release docs")
+    _require_paths(release_paths, "release components")
 
     manifest = {
         "product": "TokenDNA AI Agent Identity Control Plane",
-        "version": _read_version(),
+        "product_version": _read_product_version(),
+        "sdk_version": _read_sdk_version(),
         "git_sha": _git_sha(),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "deployment_model": "customer-local appliance",
@@ -86,8 +108,6 @@ def build_manifest(image_tag: str, output: Path) -> dict[str, Any]:
             },
             "python_packages": [
                 {"name": "tokendna-sdk", "path": "tokendna_sdk"},
-                {"name": "tokendna-collector", "path": "collector"},
-                {"name": "tokendna-platform", "path": "platform"},
             ],
             "operator_console": {"path": "dashboard/index.html"},
         },
@@ -118,7 +138,17 @@ def main() -> None:
     args = parser.parse_args()
 
     manifest = build_manifest(args.image_tag, args.output)
-    print(json.dumps({"ok": True, "output": str(args.output), "version": manifest["version"]}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "output": str(args.output),
+                "product_version": manifest["product_version"],
+                "sdk_version": manifest["sdk_version"],
+            },
+            sort_keys=True,
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -2,12 +2,13 @@
 #
 # Code-owner review is REQUIRED on the security-sensitive paths below
 # (enforced by scripts/org/protect.sh -> require_code_owner_reviews=true).
-# No unreviewed code reaches these paths.
+# No unreviewed code should reach these paths once the external governance gate
+# is activated with scripts/org/protect.sh.
 #
 # A named SECOND MAINTAINER must be added alongside @Bobcatsfan33 here before
 # the "two maintainers with enforced review" deployable gate is satisfied.
-# Replace @Bobcatsfan33-SECOND-MAINTAINER-TODO with the real handle once the
-# second maintainer accepts the invite, then re-run scripts/org/protect.sh.
+# Add the accepted maintainer to every rule below, then run protect.sh. The
+# script refuses to change GitHub while any rule lacks that independent owner.
 
 # Default owner for everything in the repo.
 *                       @Bobcatsfan33

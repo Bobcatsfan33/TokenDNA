@@ -64,6 +64,11 @@ jobs:
       - name: API route-surface guard (decomposition preserves the surface — T-1)
         run: TOKENDNA_ENV=ci python scripts/ci/openapi_route_guard.py
 
+      - name: API reference drift guard
+        run: |
+          TOKENDNA_ENV=ci python scripts/generate_api_reference.py
+          git diff --exit-code -- docs/api
+
       - name: FIPS crypto-primitive gate (SC-13)
         run: |
           # No non-approved hashlib primitive may be requested for security in
