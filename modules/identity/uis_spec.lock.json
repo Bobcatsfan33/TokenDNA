@@ -1,0 +1,8 @@
+{
+  "repository": "https://github.com/Bobcatsfan33/uis-spec",
+  "revision": "6f1cbba76a378f9013864be080b4a76b57063ed2",
+  "schema_path": "schema/uis.schema.json",
+  "schema_sha256": "cddcdf73bb9a5d9caf6093740168c196c8af525a0edf4fd739bc359f94967d50",
+  "schema_id": "https://schemas.tokendna.dev/uis/v1.0/event.json",
+  "schema_version": "1.0"
+}

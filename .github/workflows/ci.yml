@@ -36,6 +36,9 @@ jobs:
       - name: Immutable GitHub Actions guard
         run: python scripts/ci/workflow_action_pin_guard.py
 
+      - name: UIS specification contract guard
+        run: python scripts/ci/verify_uis_spec_sync.py
+
       - name: Enterprise readiness evidence integrity
         run: python scripts/ci/verify_enterprise_readiness.py
 

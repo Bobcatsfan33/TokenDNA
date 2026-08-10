@@ -16,7 +16,7 @@ def test_readiness_register_is_honest_and_internally_consistent() -> None:
     result = verify_manifest(MANIFEST)
 
     assert result["decision"] == "not-approved"
-    assert result["gate_count"] == 9
+    assert result["gate_count"] == 10
     assert len(result["open_gates"]) == 6
 
 

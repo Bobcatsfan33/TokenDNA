@@ -29,6 +29,7 @@ step-up / block, and record why.
 | `modules/product/` | Commercial layer: `commercial_tiers` (ent.* gates), `licensing` (signed-license entitlement boundary), `feature_gates`, `staged_rollout`. |
 | `modules/storage/` | Storage gateway: `pg_connection` (DSN normalization; the only sanctioned DB entrypoint). |
 | `tokendna_sdk/` | The pip-published SDK (`tokendna-sdk`), the only pip-installable part of the monorepo. |
+| `modules/identity/uis_schema_v1.json` | Vendored runtime copy of the Apache-2.0 UIS contract, pinned to `Bobcatsfan33/uis-spec` by `uis_spec.lock.json`. |
 | `edge/` | Edge (JS) enforcement worker — JWT → DPoP → revocation → drift-tier checks. |
 | `dashboard/`, `landing/`, `console` | Operator UI + marketing landing + Cytoscape console. |
 | `scripts/` | Ops + CI scripts: route guard, monolith ratchet, seeders, demo arc, adversarial + efficacy harnesses, OSCAL/STIG generators. |
@@ -93,6 +94,11 @@ An enterprise connector or collector must integrate through the documented
 control-plane APIs or SDK. Reintroducing a standalone collector requires its
 own maintained package, threat model, release artifact, tests, and support
 commitment; no such component is implied by this checkout.
+
+UIS is the stable wire contract across this boundary. TokenDNA serves the
+canonical schema at `/api/schema/uis.json`; every other schema-bundle surface
+returns that same artifact. `verify_uis_spec_sync.py` prevents the vendored
+runtime schema from silently diverging from the pinned open specification.
 
 ## 5. API surface discipline (T-1)
 

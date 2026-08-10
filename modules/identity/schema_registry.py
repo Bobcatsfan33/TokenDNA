@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from modules.identity.uis_protocol import get_uis_spec
+from modules.identity.uis import schema_dict
 
 SCHEMA_ARTIFACT_VERSION = "1.0.0"
 
@@ -50,14 +50,8 @@ def _attestation_spec() -> dict[str, Any]:
 
 
 def build_uis_schema_artifact() -> dict[str, Any]:
-    return {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://schemas.tokendna.dev/uis.schema.json",
-        "title": "TokenDNA UIS Event",
-        "type": "object",
-        "version": SCHEMA_ARTIFACT_VERSION,
-        "spec": get_uis_spec(),
-    }
+    """Return the canonical UIS artifact, not a second wrapper schema."""
+    return schema_dict()
 
 
 def build_attestation_schema_artifact() -> dict[str, Any]:
@@ -121,4 +115,3 @@ def publish_identity_schema_artifacts(
         "manifest": str(manifest_path),
         "bundle_version": SCHEMA_ARTIFACT_VERSION,
     }
-

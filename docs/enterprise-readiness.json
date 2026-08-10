@@ -15,7 +15,7 @@
       "owner": "engineering",
       "acceptance": "Blocking CI covers the full test suite, dependency audit, CodeQL, secrets, route surface, production configuration, Postgres, policy, adversarial, stress, efficacy, Helm, and container vulnerability checks.",
       "evidence": [
-        {"path": ".github/workflows/ci.yml", "sha256": "335e048d34443c52e58bed1340daa8684f37185281ad04943f1648ea44685926"},
+        {"path": ".github/workflows/ci.yml", "sha256": "fa421eb55147c68b68ab1198190ff9a42d5ded2dde89f1be31c009dcf8df6ae9"},
         {"path": "requirements.txt", "sha256": "9e12b555d41b82a3935849ec6390d62846151b0b5b2b1eab137d87c0f6cf8d81"},
         {"path": "requirements-prod.txt", "sha256": "59fbbb86fe199285400e6fcafa729893cb4029c27da96367da8c7fc44c2a3bdb"},
         {"path": "scripts/ci/openapi_routes.json", "sha256": "74afb2bbd1ea269ef58f506abe157a7b868f122265de2caa3d3e48634f66e073"}
@@ -45,6 +45,19 @@
         {"path": "scripts/build_release_bundle.py", "sha256": "301f89c4dd1e60944328ea4b2fcd8a535dc4a726f05163c95eafd83f6341376a"},
         {"path": "docs/api/openapi.json", "sha256": "d9309a988947a1f6e55772bc93420e2660d806f764002f757c76765ed57296a6"},
         {"path": "docs/governance/SDLC_POLICY.md", "sha256": "9407d707a3ecf11d2790ab2450991aeba3b52824d900e0eb5404c48eab989532"}
+      ]
+    },
+    {
+      "id": "open-uis-contract-integrity",
+      "kind": "repository",
+      "required": true,
+      "status": "closed",
+      "owner": "identity-platform-engineering",
+      "acceptance": "Every TokenDNA schema surface returns the byte-identical UIS artifact pinned to an immutable uis-spec revision.",
+      "evidence": [
+        {"path": "modules/identity/uis_spec.lock.json", "sha256": "dbf221e7453025bbb010e5c256b7ce4b1cad93dd4500511ab176680846e4cc47"},
+        {"path": "modules/identity/uis_schema_v1.json", "sha256": "cddcdf73bb9a5d9caf6093740168c196c8af525a0edf4fd739bc359f94967d50"},
+        {"path": "scripts/ci/verify_uis_spec_sync.py", "sha256": "d3ce57b13d14a49ee433313522d0f9d21fd3806d16e4c0c745b59fcdcf970c87"}
       ]
     },
     {
