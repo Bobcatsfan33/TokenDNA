@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "product": "TokenDNA AI Agent Identity Control Plane",
   "productVersion": "3.0.0",
-  "assessedCommit": "482328efa7456ca5db9d2617d888c985e7b63e71",
+  "assessedCommit": "dd03fd18469043138ade4b912b11c36c865d93cd",
   "assessedAt": "2026-08-10T14:00:00Z",
   "deploymentDecision": "not-approved",
   "approval": null,
