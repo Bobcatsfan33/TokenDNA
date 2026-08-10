@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "product": "TokenDNA AI Agent Identity Control Plane",
   "productVersion": "3.0.0",
-  "assessedCommit": "3b384a63489a11ec69595c614eaaf3f9f23c12bd",
+  "assessedCommit": "8a7ea76352104781647026b95954a0bcd24ca9ce",
   "assessedAt": "2026-08-10T14:00:00Z",
   "deploymentDecision": "not-approved",
   "approval": null,
@@ -15,8 +15,8 @@
       "owner": "engineering",
       "acceptance": "Blocking CI covers the full test suite, dependency audit, CodeQL, secrets, route surface, production configuration, Postgres, policy, adversarial, stress, efficacy, Helm, and container vulnerability checks.",
       "evidence": [
-        {"path": ".github/workflows/ci.yml", "sha256": "fa421eb55147c68b68ab1198190ff9a42d5ded2dde89f1be31c009dcf8df6ae9"},
-        {"path": "requirements.txt", "sha256": "9e12b555d41b82a3935849ec6390d62846151b0b5b2b1eab137d87c0f6cf8d81"},
+        {"path": ".github/workflows/ci.yml", "sha256": "9f6ba256f0611d1c165430a2c835f50b4a61f228c567526aefc507479e688582"},
+        {"path": "requirements.txt", "sha256": "0241868872d9e45ef735bba24819594c7440fae36345b3de047441c84b8c0c4a"},
         {"path": "requirements-prod.txt", "sha256": "59fbbb86fe199285400e6fcafa729893cb4029c27da96367da8c7fc44c2a3bdb"},
         {"path": "scripts/ci/openapi_routes.json", "sha256": "74afb2bbd1ea269ef58f506abe157a7b868f122265de2caa3d3e48634f66e073"}
       ]
@@ -29,7 +29,7 @@
       "owner": "release-engineering",
       "acceptance": "Runtime bases and third-party Actions are immutable; fixable HIGH/CRITICAL image findings block CI.",
       "evidence": [
-        {"path": "Dockerfile", "sha256": "e9e1b09b872e1c87190ee97fbd773119fa00673d392d4dc0f993a0669aec7d7f"},
+        {"path": "Dockerfile", "sha256": "5657f094afb6f2c9c687b436df43eab8a21931c56250301d69a3c7642291897a"},
         {"path": "Dockerfile.fips", "sha256": "89a33474194eb54407b198c2756fe07594d0f9069a3be74ac235e5d6b30daecd"},
         {"path": "scripts/ci/workflow_action_pin_guard.py", "sha256": "fd716ed03497f0d75a7be5b107d33cb4e8fb368bcb4c4dbc40dda344ce23ca37"}
       ]
@@ -58,6 +58,22 @@
         {"path": "modules/identity/uis_spec.lock.json", "sha256": "dbf221e7453025bbb010e5c256b7ce4b1cad93dd4500511ab176680846e4cc47"},
         {"path": "modules/identity/uis_schema_v1.json", "sha256": "cddcdf73bb9a5d9caf6093740168c196c8af525a0edf4fd739bc359f94967d50"},
         {"path": "scripts/ci/verify_uis_spec_sync.py", "sha256": "d3ce57b13d14a49ee433313522d0f9d21fd3806d16e4c0c745b59fcdcf970c87"}
+      ]
+    },
+    {
+      "id": "enterprise-idp-code-controls",
+      "kind": "repository",
+      "required": true,
+      "status": "closed",
+      "owner": "identity-platform-engineering",
+      "acceptance": "SAML and SCIM code enforces issuer and audience binding, atomic replay controls, tenant uniqueness and membership isolation, safe role deprovisioning, conditional writes, durable migrations, production preflight, and final-image SAML linkage verification.",
+      "evidence": [
+        {"path": "modules/auth/saml.py", "sha256": "74781d0800d7a0d3684dcfa145992e4dc69f2d121670690e072034436f2ff550"},
+        {"path": "modules/auth/scim.py", "sha256": "6440b99d20a440c4d4975c27308096cf58bb256457423ab4db21845f3449c218"},
+        {"path": "modules/tenants/middleware.py", "sha256": "8c513427be444c5e1603f01be52c3fc62d4dc1dbba7a94daca67a70555b8560a"},
+        {"path": "scripts/preflight_prod.py", "sha256": "36069df4a2aad454a77b2ee7c95378550c6f4ab571e55be8ad2f066649f8bbae"},
+        {"path": "scripts/idp_ga_validation.py", "sha256": "4f3f9e64c1596cfaa27dc502329d98e56254024e305f2b7c3bb761757a9c0983"},
+        {"path": "tests/test_saml_scim.py", "sha256": "5d167d704f6b75428b5ad7199754f00343d80f85e0fea299e2453c829cdc16c0"}
       ]
     },
     {
