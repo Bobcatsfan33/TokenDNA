@@ -118,6 +118,7 @@ def build_manifest(image_tag: str, output: Path) -> dict[str, Any]:
             "python scripts/collect_ato_evidence.py --fail-on-missing",
             "python scripts/migrate_storage.py",
             "python scripts/postgres_smoke.py",
+            "python scripts/ci/verify_enterprise_readiness.py --require-approved",
             "docker compose -f docker-compose.yml -f docker-compose.production.yml run --rm tokendna-deployment-gate",
         ],
         "runbooks": [_file_entry(path) for path in required_docs],

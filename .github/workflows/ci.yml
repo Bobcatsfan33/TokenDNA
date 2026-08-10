@@ -34,6 +34,9 @@ jobs:
       - name: Immutable GitHub Actions guard
         run: python scripts/ci/workflow_action_pin_guard.py
 
+      - name: Enterprise readiness evidence integrity
+        run: python scripts/ci/verify_enterprise_readiness.py
+
       - name: Storage backend guardrail
         run: |
           python - <<'PY'

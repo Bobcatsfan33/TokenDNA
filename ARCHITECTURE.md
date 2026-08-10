@@ -6,7 +6,8 @@ decision, how data is stored, and every gate CI enforces.
 
 > Companion docs: `CLAUDE.md` (current state + roadmap), `docs/LICENSING.md`
 > (entitlement boundary), `docs/BENCHMARK.md` (detection efficacy),
-> `docs/operations/` (RUNBOOK, HA, incident response), `docs/api/` (OpenAPI).
+> `docs/operations/` (RUNBOOK, HA, incident response), `docs/api/` (OpenAPI),
+> and `docs/enterprise-readiness.json` (production approval gates).
 
 ## 1. What it is
 

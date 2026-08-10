@@ -45,10 +45,13 @@ python scripts/generate_oscal.py
 python scripts/stig_evidence.py
 python scripts/collect_ato_evidence.py --fail-on-missing
 python scripts/build_release_bundle.py --image-tag tokendna/control-plane:<version>
+python scripts/ci/verify_enterprise_readiness.py --require-approved
 docker compose -f docker-compose.yml -f docker-compose.production.yml run --rm tokendna-deployment-gate
 ```
 
 The Docker gate verifies production preflight, applies TokenDNA storage migrations, and runs the live Postgres smoke path.
+The readiness verifier blocks production promotion while any required external
+assessment, operations, governance, compliance, or pilot gate is open.
 
 ## Customer Deployment Model
 
