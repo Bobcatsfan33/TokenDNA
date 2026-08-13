@@ -11,7 +11,7 @@ def test_runtime_dependency_versions_are_the_proven_set() -> None:
         "botocore": "1.43.51",
         "clickhouse-connect": "1.5.0",
         "eval-type-backport": "0.4.0",
-        "redis": "8.0.1",
+        "redis": "8.1.0",
         "requests": "2.34.2",
     }
 
