@@ -58,6 +58,7 @@ jobs:
   build-and-publish:
     name: Build, sign, push (${{ matrix.flavor.name }})
     runs-on: ubuntu-latest
+    environment: container-release
     timeout-minutes: 45
     strategy:
       fail-fast: false

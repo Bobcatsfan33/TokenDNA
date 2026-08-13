@@ -20,7 +20,8 @@
         {"path": "requirements-prod.txt", "sha256": "59fbbb86fe199285400e6fcafa729893cb4029c27da96367da8c7fc44c2a3bdb"},
         {"path": "scripts/ci/openapi_routes.json", "sha256": "74afb2bbd1ea269ef58f506abe157a7b868f122265de2caa3d3e48634f66e073"},
         {"path": "scripts/ci/verify_enterprise_readiness.py", "sha256": "d8e9a8101894be5ee35261228f6973c4d7ab6fccf4c7d1c179adde089effc8c7"},
-        {"path": "tests/test_enterprise_readiness_manifest.py", "sha256": "b3f26d961dfaf3bdc7037db28188ebff2720de2fe3bbc88a163581112669984d"}
+        {"path": "tests/test_enterprise_readiness_manifest.py", "sha256": "b3f26d961dfaf3bdc7037db28188ebff2720de2fe3bbc88a163581112669984d"},
+        {"path": "tests/test_repository_governance.py", "sha256": "77b78d26bf20c3fa0fb6a21454400ceda326505004819070c37f1677db7b9636"}
       ]
     },
     {
@@ -33,6 +34,7 @@
       "evidence": [
         {"path": "Dockerfile", "sha256": "5657f094afb6f2c9c687b436df43eab8a21931c56250301d69a3c7642291897a"},
         {"path": "Dockerfile.fips", "sha256": "89a33474194eb54407b198c2756fe07594d0f9069a3be74ac235e5d6b30daecd"},
+        {"path": ".github/workflows/release-docker.yml", "sha256": "7030af70ec79e6937f34b14e357e9c8d920f02355b8a98c6e95878cb6a43948a"},
         {"path": "scripts/ci/workflow_action_pin_guard.py", "sha256": "fd716ed03497f0d75a7be5b107d33cb4e8fb368bcb4c4dbc40dda344ce23ca37"}
       ]
     },
@@ -119,7 +121,8 @@
       "owner": "repository-administrator",
       "acceptance": "An independent second maintainer is active and live branch controls block self-approval, admin bypass, unsigned commits, and failed checks.",
       "evidence": [
-        {"path": "docs/external-readiness/repository-governance.md", "sha256": "44a587e564e2dd70ecc805d7fca783d99231c5ca984397c50dbf60185f8bdfeb"}
+        {"path": "docs/external-readiness/repository-governance.md", "sha256": "74e8ea3816f3a717c972c4c15c0e7ed249ecb950387b0d9b61c2ddaf96abc601"},
+        {"path": "scripts/org/protect.sh", "sha256": "23ca64e4a267050d646516fb786372fd7c880bcc9d3a86b8c246d891762b7e02"}
       ]
     },
     {
