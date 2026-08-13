@@ -35,7 +35,7 @@
       "evidence": [
         {"path": "Dockerfile", "sha256": "5657f094afb6f2c9c687b436df43eab8a21931c56250301d69a3c7642291897a"},
         {"path": "Dockerfile.fips", "sha256": "89a33474194eb54407b198c2756fe07594d0f9069a3be74ac235e5d6b30daecd"},
-        {"path": ".github/workflows/release-docker.yml", "sha256": "dfcbbf09e04ce9149be6d955dcd89a560b0841f1d26a209f74ce506dbe886353"},
+        {"path": ".github/workflows/release-docker.yml", "sha256": "1181aae8c08e8a8fa2e1b86d34fc58ed2bc036eb36f793676ba3a001c6bf868f"},
         {"path": "scripts/ci/workflow_action_pin_guard.py", "sha256": "fd716ed03497f0d75a7be5b107d33cb4e8fb368bcb4c4dbc40dda344ce23ca37"}
       ]
     },

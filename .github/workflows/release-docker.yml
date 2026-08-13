@@ -271,8 +271,8 @@ jobs:
       - name: Commercial image must FAIL the FIPS gate (exit 78)
         run: |
           set +e
-          docker run --rm -e REQUIRE_FIPS=true tokendna:smoke \
-            python -c "from modules.security.fips import assert_fips_mode; assert_fips_mode()"
+          docker run --rm --entrypoint python -e REQUIRE_FIPS=true tokendna:smoke \
+            -c "from modules.security.fips import assert_fips_mode; assert_fips_mode()"
           code=$?
           set -e
           if [ "$code" != "78" ]; then
