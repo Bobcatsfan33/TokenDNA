@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "product": "TokenDNA AI Agent Identity Control Plane",
   "productVersion": "3.0.0",
-  "assessedCommit": "8a7ea76352104781647026b95954a0bcd24ca9ce",
+  "assessedCommit": "edca5480cd35b9f06220314758f7a43ada1c5e53",
   "assessedAt": "2026-08-10T14:00:00Z",
   "deploymentDecision": "not-approved",
   "approval": null,
@@ -18,7 +18,9 @@
         {"path": ".github/workflows/ci.yml", "sha256": "9f6ba256f0611d1c165430a2c835f50b4a61f228c567526aefc507479e688582"},
         {"path": "requirements.txt", "sha256": "0241868872d9e45ef735bba24819594c7440fae36345b3de047441c84b8c0c4a"},
         {"path": "requirements-prod.txt", "sha256": "59fbbb86fe199285400e6fcafa729893cb4029c27da96367da8c7fc44c2a3bdb"},
-        {"path": "scripts/ci/openapi_routes.json", "sha256": "74afb2bbd1ea269ef58f506abe157a7b868f122265de2caa3d3e48634f66e073"}
+        {"path": "scripts/ci/openapi_routes.json", "sha256": "74afb2bbd1ea269ef58f506abe157a7b868f122265de2caa3d3e48634f66e073"},
+        {"path": "scripts/ci/verify_enterprise_readiness.py", "sha256": "d8e9a8101894be5ee35261228f6973c4d7ab6fccf4c7d1c179adde089effc8c7"},
+        {"path": "tests/test_enterprise_readiness_manifest.py", "sha256": "b3f26d961dfaf3bdc7037db28188ebff2720de2fe3bbc88a163581112669984d"}
       ]
     },
     {
