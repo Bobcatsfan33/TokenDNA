@@ -35,7 +35,7 @@
       "evidence": [
         {"path": "Dockerfile", "sha256": "5657f094afb6f2c9c687b436df43eab8a21931c56250301d69a3c7642291897a"},
         {"path": "Dockerfile.fips", "sha256": "89a33474194eb54407b198c2756fe07594d0f9069a3be74ac235e5d6b30daecd"},
-        {"path": ".github/workflows/release-docker.yml", "sha256": "7030af70ec79e6937f34b14e357e9c8d920f02355b8a98c6e95878cb6a43948a"},
+        {"path": ".github/workflows/release-docker.yml", "sha256": "dfcbbf09e04ce9149be6d955dcd89a560b0841f1d26a209f74ce506dbe886353"},
         {"path": "scripts/ci/workflow_action_pin_guard.py", "sha256": "fd716ed03497f0d75a7be5b107d33cb4e8fb368bcb4c4dbc40dda344ce23ca37"}
       ]
     },
@@ -123,7 +123,7 @@
       "acceptance": "An independent second maintainer is active and live branch controls block self-approval, admin bypass, unsigned commits, and failed checks.",
       "evidence": [
         {"path": "docs/external-readiness/repository-governance.md", "sha256": "74e8ea3816f3a717c972c4c15c0e7ed249ecb950387b0d9b61c2ddaf96abc601"},
-        {"path": "scripts/org/protect.sh", "sha256": "23ca64e4a267050d646516fb786372fd7c880bcc9d3a86b8c246d891762b7e02"}
+        {"path": "scripts/org/protect.sh", "sha256": "9823193f740a9669fb7497cfdcd4c6ca9f05b9095d204fb723a9f6b3c15c3afd"}
       ]
     },
     {

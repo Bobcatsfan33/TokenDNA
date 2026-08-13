@@ -67,6 +67,7 @@ gh api -X PUT "repos/${OWNER}/${REPO}/branches/main/protection" \
       {"context": "CodeQL Security Analysis", "app_id": 15368},
       {"context": "Secret Detection", "app_id": 15368},
       {"context": "Docker Build Check", "app_id": 15368},
+      {"context": "FIPS gate must hold", "app_id": 15368},
       {"context": "Runtime Readiness Gates", "app_id": 15368},
       {"context": "Adversarial Security Harness", "app_id": 15368},
       {"context": "Policy Regression Gate", "app_id": 15368},
