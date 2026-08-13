@@ -16,11 +16,11 @@
       "acceptance": "Blocking CI covers the full test suite, dependency audit, CodeQL, secrets, route surface, production configuration, Postgres, policy, adversarial, stress, efficacy, Helm, and container vulnerability checks.",
       "evidence": [
         {"path": ".github/workflows/ci.yml", "sha256": "9f6ba256f0611d1c165430a2c835f50b4a61f228c567526aefc507479e688582"},
-        {"path": "requirements.txt", "sha256": "928cf60627841e8b869b73f4c0737c05fadef5f0cb5ce9400edecf264ec92eaa"},
+        {"path": "requirements.txt", "sha256": "ba3e7ed52df4438ff539894e73c7be66a2e644520a67e4776025833312ff26b6"},
         {"path": "requirements-prod.txt", "sha256": "59fbbb86fe199285400e6fcafa729893cb4029c27da96367da8c7fc44c2a3bdb"},
         {"path": "scripts/ci/openapi_routes.json", "sha256": "74afb2bbd1ea269ef58f506abe157a7b868f122265de2caa3d3e48634f66e073"},
         {"path": "scripts/ci/verify_enterprise_readiness.py", "sha256": "d8e9a8101894be5ee35261228f6973c4d7ab6fccf4c7d1c179adde089effc8c7"},
-        {"path": "tests/test_dependency_matrix.py", "sha256": "e435a6f3a208cfb65bcc5a6b43dc6efc93575eef4267c489bd7d713a41eaea17"},
+        {"path": "tests/test_dependency_matrix.py", "sha256": "2300a09f5398fa9a3483fbe3555c23d784a7abbe13f5fff9866a109a079dcd2e"},
         {"path": "tests/test_enterprise_readiness_manifest.py", "sha256": "b3f26d961dfaf3bdc7037db28188ebff2720de2fe3bbc88a163581112669984d"},
         {"path": "tests/test_repository_governance.py", "sha256": "77b78d26bf20c3fa0fb6a21454400ceda326505004819070c37f1677db7b9636"}
       ]
