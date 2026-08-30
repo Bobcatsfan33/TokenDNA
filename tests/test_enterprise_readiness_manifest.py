@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 import scripts.ci.verify_enterprise_readiness as readiness_module
-from scripts.ci.verify_enterprise_readiness import ReadinessError, verify_manifest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,7 +13,7 @@ MANIFEST = ROOT / "docs" / "enterprise-readiness.json"
 
 
 def test_readiness_register_is_honest_and_internally_consistent() -> None:
-    result = verify_manifest(MANIFEST)
+    result = readiness_module.verify_manifest(MANIFEST)
 
     assert result["decision"] == "not-approved"
     assert result["gate_count"] == 11
@@ -22,8 +21,8 @@ def test_readiness_register_is_honest_and_internally_consistent() -> None:
 
 
 def test_production_promotion_fails_while_external_gates_are_open() -> None:
-    with pytest.raises(ReadinessError, match="production deployment is not approved"):
-        verify_manifest(MANIFEST, require_approved=True)
+    with pytest.raises(readiness_module.ReadinessError, match="production deployment is not approved"):
+        readiness_module.verify_manifest(MANIFEST, require_approved=True)
 
 
 def test_pull_request_verification_checks_the_base_branch(
@@ -38,7 +37,7 @@ def test_pull_request_verification_checks_the_base_branch(
     monkeypatch.setenv("GITHUB_BASE_REF", "main")
     monkeypatch.setattr(readiness_module, "_assert_assessed_commit_is_ancestor", record_reference)
 
-    result = verify_manifest(MANIFEST)
+    result = readiness_module.verify_manifest(MANIFEST)
 
     assert result["decision"] == "not-approved"
     assert checked_references == ["HEAD", "origin/main"]
@@ -55,5 +54,5 @@ def test_approval_cannot_be_self_declared_with_open_gates(tmp_path: Path) -> Non
     path = tmp_path / "readiness.json"
     path.write_text(json.dumps(manifest), encoding="utf-8")
 
-    with pytest.raises(ReadinessError, match="cannot be approved with open gates"):
-        verify_manifest(path)
+    with pytest.raises(readiness_module.ReadinessError, match="cannot be approved with open gates"):
+        readiness_module.verify_manifest(path)
