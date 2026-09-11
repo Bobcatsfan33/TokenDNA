@@ -8,10 +8,17 @@ import pytest
 
 from modules.identity import revocation_bus as rb
 
+CORE_FACTORIES = [rb.TokenDNADecisionConnector, rb.EdgeJWTConnector]
+
 
 @pytest.fixture(autouse=True)
 def isolated_db(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DB_PATH", str(tmp_path / "rb.db"))
+    # Test collection imports optional connector modules, which register global
+    # factories before this module's tests execute.  Keep these unit tests
+    # deterministic by exercising only the core connectors plus the explicit
+    # mocks each test registers.
+    monkeypatch.setattr(rb, "_DEFAULT_FACTORIES", list(CORE_FACTORIES))
     rb.reset_connectors()
     yield
     rb.reset_connectors()

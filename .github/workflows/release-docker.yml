@@ -28,6 +28,12 @@ name: Release — Publish container image to GHCR
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/release-docker.yml'
+      - 'Dockerfile'
+      - 'Dockerfile.fips'
+      - 'requirements.txt'
   push:
     tags:
       - 'v*'
@@ -57,7 +63,9 @@ env:
 jobs:
   build-and-publish:
     name: Build, sign, push (${{ matrix.flavor.name }})
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    environment: container-release
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -211,7 +219,7 @@ jobs:
       # Build both flavors locally (amd64, load — no push) so the gate is
       # self-contained and does not depend on registry tags.
       - name: Build federal image (local)
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
         with:
           context: .
           file: Dockerfile.fips
@@ -222,7 +230,7 @@ jobs:
           cache-from: type=gha
 
       - name: Build commercial image (local)
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
         with:
           context: .
           file: Dockerfile
@@ -263,8 +271,8 @@ jobs:
       - name: Commercial image must FAIL the FIPS gate (exit 78)
         run: |
           set +e
-          docker run --rm -e REQUIRE_FIPS=true tokendna:smoke \
-            python -c "from modules.security.fips import assert_fips_mode; assert_fips_mode()"
+          docker run --rm --entrypoint python -e REQUIRE_FIPS=true tokendna:smoke \
+            -c "from modules.security.fips import assert_fips_mode; assert_fips_mode()"
           code=$?
           set -e
           if [ "$code" != "78" ]; then

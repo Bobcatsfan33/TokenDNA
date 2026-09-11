@@ -17,5 +17,8 @@ and objective acceptance criteria:
 - `production-pilot.md`
 
 Run `python scripts/ci/verify_enterprise_readiness.py` to validate the register.
+On pull requests, the verifier also requires `assessedCommit` to be an ancestor of the target
+branch. Pin the assessment to the reviewed base commit, not the feature-branch tip, so the evidence
+chain remains valid after GitHub creates a squash-merge commit.
 Production promotion must run it with `--require-approved`; that command fails
 while any required gate remains open.

@@ -10,13 +10,16 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 PROTECT_SCRIPT = ROOT / "scripts" / "org" / "protect.sh"
+GITHUB_ADVANCED_SECURITY_CONTEXTS = {"CodeQL", "Trivy"}
+GITHUB_ACTIONS_APP_ID = 15368
+GITHUB_ADVANCED_SECURITY_APP_ID = 57789
 
 
-def _required_contexts() -> set[str]:
+def _required_checks() -> dict[str, int]:
     text = PROTECT_SCRIPT.read_text(encoding="utf-8")
-    match = re.search(r'"contexts":\s*(\[.*?\])', text, re.DOTALL)
+    match = re.search(r'"checks":\s*(\[.*?\])', text, re.DOTALL)
     assert match is not None
-    return set(json.loads(match.group(1)))
+    return {check["context"]: check["app_id"] for check in json.loads(match.group(1))}
 
 
 def test_protection_contexts_match_current_workflow_job_names() -> None:
@@ -27,7 +30,16 @@ def test_protection_contexts_match_current_workflow_job_names() -> None:
             if "name" in job:
                 job_names.add(job["name"])
 
-    assert _required_contexts() <= job_names
+    required_checks = _required_checks()
+    assert set(required_checks) <= job_names | GITHUB_ADVANCED_SECURITY_CONTEXTS
+    assert {
+        context: required_checks[context] for context in GITHUB_ADVANCED_SECURITY_CONTEXTS
+    } == dict.fromkeys(GITHUB_ADVANCED_SECURITY_CONTEXTS, GITHUB_ADVANCED_SECURITY_APP_ID)
+    assert all(
+        app_id == GITHUB_ACTIONS_APP_ID
+        for context, app_id in required_checks.items()
+        if context not in GITHUB_ADVANCED_SECURITY_CONTEXTS
+    )
 
 
 def test_protection_script_fails_before_github_without_second_codeowner() -> None:

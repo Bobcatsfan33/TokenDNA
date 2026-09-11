@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -25,17 +26,17 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _assert_assessed_commit_is_ancestor(commit: str, root: Path) -> None:
+def _assert_assessed_commit_is_ancestor(commit: str, root: Path, reference: str = "HEAD") -> None:
     if not GIT_SHA_RE.fullmatch(commit):
         raise ReadinessError("assessedCommit must be a full lowercase Git SHA")
     result = subprocess.run(
-        ["git", "merge-base", "--is-ancestor", commit, "HEAD"],
+        ["git", "merge-base", "--is-ancestor", commit, reference],
         cwd=root,
         capture_output=True,
         text=True,
     )
     if result.returncode != 0:
-        raise ReadinessError("assessedCommit must be an ancestor of HEAD")
+        raise ReadinessError(f"assessedCommit must be an ancestor of {reference}")
 
 
 def verify_manifest(manifest_path: Path, root: Path = ROOT, require_approved: bool = False) -> dict[str, Any]:
@@ -44,7 +45,15 @@ def verify_manifest(manifest_path: Path, root: Path = ROOT, require_approved: bo
         raise ReadinessError("unsupported schemaVersion")
     if manifest.get("productVersion") != (root / "VERSION").read_text(encoding="utf-8").strip():
         raise ReadinessError("productVersion does not match VERSION")
-    _assert_assessed_commit_is_ancestor(manifest.get("assessedCommit", ""), root)
+    assessed_commit = manifest.get("assessedCommit", "")
+    _assert_assessed_commit_is_ancestor(assessed_commit, root)
+    github_base_ref = os.environ.get("GITHUB_BASE_REF", "").strip()
+    if github_base_ref:
+        # PRs are squash-merged in this repository. A feature-branch HEAD is not an ancestor
+        # of the resulting default-branch commit, even when both trees are byte-identical.
+        # Requiring the assessment pin to come from the PR base preserves the evidence chain
+        # before and after squash merge.
+        _assert_assessed_commit_is_ancestor(assessed_commit, root, f"origin/{github_base_ref}")
 
     gates = manifest.get("gates")
     if not isinstance(gates, list) or not gates:
