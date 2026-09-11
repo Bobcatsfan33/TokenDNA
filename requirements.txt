@@ -28,7 +28,7 @@ redis==8.1.0
 async-timeout==5.0.1; python_version < "3.12"
 
 # ── ClickHouse ────────────────────────────────────────────────────────────────
-clickhouse-connect==1.6.0
+clickhouse-connect==1.8.0
 
 # ── AWS connector (optional — only needed when using AWS onboarding) ──────────
 boto3==1.43.51
