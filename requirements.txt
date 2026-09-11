@@ -2,8 +2,8 @@
 # Pin major versions for reproducibility; use `pip install -r requirements.txt`
 
 # ── Web framework ─────────────────────────────────────────────────────────────
-fastapi==0.139.0
-uvicorn[standard]==0.51.0
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
 python-multipart==0.0.31
 
 # ── JWT / OIDC ────────────────────────────────────────────────────────────────
@@ -28,7 +28,7 @@ redis==8.1.0
 async-timeout==5.0.1; python_version < "3.12"
 
 # ── ClickHouse ────────────────────────────────────────────────────────────────
-clickhouse-connect==1.6.0
+clickhouse-connect==1.8.0
 
 # ── AWS connector (optional — only needed when using AWS onboarding) ──────────
 boto3==1.43.51

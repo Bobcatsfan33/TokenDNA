@@ -9,7 +9,7 @@ def test_runtime_dependency_versions_are_the_proven_set() -> None:
     expected = {
         "boto3": "1.43.51",
         "botocore": "1.43.51",
-        "clickhouse-connect": "1.6.0",
+        "clickhouse-connect": "1.8.0",
         "eval-type-backport": "0.4.0",
         "redis": "8.1.0",
         "requests": "2.34.2",
