@@ -156,7 +156,7 @@ jobs:
       # a cosign-signed in-toto attestation. This adds an independently
       # verifiable, keyless-signed SPDX SBOM attestation bound to the digest.
       - name: Generate SPDX SBOM for the published image
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.flavor.suffix }}@${{ steps.build.outputs.digest }}
           format: spdx-json
