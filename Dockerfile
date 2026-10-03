@@ -66,7 +66,7 @@ RUN find /app -name '__pycache__' -type d -prune -exec rm -rf {} + \
 
 
 # ── Stage 3: runtime ─────────────────────────────────────────────────────────
-FROM gcr.io/distroless/python3-debian13:nonroot@sha256:f3d5ddc6c64a019fe520e7f005f2880be21e6afc461b10a3c15ef2e4edc71e33 AS runtime
+FROM gcr.io/distroless/python3-debian13:nonroot@sha256:774595d652a294b54c9bd575b2d9fdd1a4b47547dc17b8bfa4c0e953c64855b3 AS runtime
 
 # Cosign-friendly OCI labels (parsed by GHCR, scanners, and the release
 # workflow when computing the SBOM).
