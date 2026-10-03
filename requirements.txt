@@ -7,7 +7,7 @@ uvicorn[standard]==0.52.4
 python-multipart==0.0.31
 
 # ── JWT / OIDC ────────────────────────────────────────────────────────────────
-PyJWT[crypto]==2.13.0
+PyJWT[crypto]==2.15.0
 cryptography==50.0.0
 defusedxml==0.7.1
 
