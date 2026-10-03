@@ -28,12 +28,9 @@ name: Release — Publish container image to GHCR
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 on:
+  # No paths: filter — the FIPS gate must hold context reports on every PR.
+  # The publish job is already gated by: if github.event_name != 'pull_request'.
   pull_request:
-    paths:
-      - '.github/workflows/release-docker.yml'
-      - 'Dockerfile'
-      - 'Dockerfile.fips'
-      - 'requirements.txt'
   push:
     tags:
       - 'v*'
