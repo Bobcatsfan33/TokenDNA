@@ -16,7 +16,7 @@
       "acceptance": "Blocking CI covers the full test suite, dependency audit, CodeQL, secrets, route surface, production configuration, Postgres, policy, adversarial, stress, efficacy, Helm, and container vulnerability checks.",
       "evidence": [
         {"path": ".github/workflows/ci.yml", "sha256": "d88dc7587d9fe50952cf71afd5d9ac6bb0e4d9a4ac4a5221d56bfb7aa5b67cfa"},
-        {"path": "requirements.txt", "sha256": "e620bd6117c1289f1ba08d46a8061b99f8ef634c21400ca200a11344fbacab76"},
+        {"path": "requirements.txt", "sha256": "af2550543deebf48c7c8886d4da2c22dd3ad16379c41ac99e6894ecff41902b2"},
         {"path": "requirements-prod.txt", "sha256": "7c5a8d5aecc41f50dca979a1e0d8938c7cea37c987a205daa0faaf514dca755a"},
         {"path": "scripts/ci/openapi_routes.json", "sha256": "74afb2bbd1ea269ef58f506abe157a7b868f122265de2caa3d3e48634f66e073"},
         {"path": "scripts/ci/verify_enterprise_readiness.py", "sha256": "d8e9a8101894be5ee35261228f6973c4d7ab6fccf4c7d1c179adde089effc8c7"},
@@ -33,7 +33,7 @@
       "owner": "release-engineering",
       "acceptance": "Runtime bases and third-party Actions are immutable; fixable HIGH/CRITICAL image findings block CI.",
       "evidence": [
-        {"path": "Dockerfile", "sha256": "ae27350408380f1ed31cc71fb453b5b32f3efc6cc5636b5e4ebe3c4e2a9c2224"},
+        {"path": "Dockerfile", "sha256": "2c7adf5fb420cb6f93b4b36f276b95b3d57643e292229e3d7a3d0b5386c20fcc"},
         {"path": "Dockerfile.fips", "sha256": "89a33474194eb54407b198c2756fe07594d0f9069a3be74ac235e5d6b30daecd"},
         {"path": ".github/workflows/release-docker.yml", "sha256": "557a9adc627dcdd52d8d0abbf1631fca82f6d694829281101ac30640390ed940"},
         {"path": "scripts/ci/workflow_action_pin_guard.py", "sha256": "fd716ed03497f0d75a7be5b107d33cb4e8fb368bcb4c4dbc40dda344ce23ca37"}
