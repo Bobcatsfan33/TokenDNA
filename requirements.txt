@@ -32,7 +32,7 @@ clickhouse-connect==1.8.0
 
 # ── AWS connector (optional — only needed when using AWS onboarding) ──────────
 boto3==1.43.51
-botocore==1.43.51
+botocore==1.44.2
 
 # ── GeoIP (optional — only needed when GEOIP_PROVIDER=maxmind) ───────────────
 # geoip2==4.8.0                  # uncomment + download GeoLite2-City.mmdb
